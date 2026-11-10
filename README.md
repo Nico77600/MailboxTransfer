@@ -331,7 +331,7 @@ The `package` folder of this repository holds exactly the files needed to run Ma
 | **[User guide](package/docs/MailboxTransfer-UserGuide.md)** ([HTML](package/docs/MailboxTransfer-UserGuide.html)) | **For a beginner:** one step after the other, a picture for each, a glossary with **where to look** on the screen, and what to do when something goes wrong |
 | **[Reference guide](package/docs/MailboxTransfer-Guide.md)** ([HTML](package/docs/MailboxTransfer-Guide.html)) | Parameters, modes, exit codes, the exact rights, the store and PST formats, EML fidelity, limits |
 | [Events contract](package/docs/MailboxTransfer-Events.md) | The events file, the stop file and the job folder, for people who drive the tool from a script |
-| [CHANGELOG](CHANGELOG.md), [SECURITY](SECURITY.md) | |
+| [CHANGELOG](CHANGELOG.md), [SECURITY](SECURITY.md) | What changed in each version; how to report a vulnerability and how to check a release |
 
 Both guides also exist as a single HTML file with a light and a dark theme (`package/docs/*.html`), pictures included: download them and open them locally, or use the copies in the release ZIP. The pictures are generated from made-up data by `tools\New-DocumentationImages.ps1`.
 
