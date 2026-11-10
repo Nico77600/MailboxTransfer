@@ -1,0 +1,15 @@
+bin/
+data/
+out/
+logs/
+*.sqlite
+*.sqlite-*
+*.lock
+*.fxs
+*.part
+package/config/*.local.psd1
+package/config/*.cache
+
+tests/privacy-denylist.local.txt
+docs-internal/
+.github/codeql/out/

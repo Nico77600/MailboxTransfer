@@ -1,0 +1,38 @@
+# Language statistics: the guides are documentation, not code.
+package/docs/** linguist-documentation
+
+* text=auto
+
+# Binary payloads: exported FastTransfer streams and managed or native libraries.
+*.fxs -text
+*.dll -text
+*.sqlite -text
+
+# Signed and hashed package files are byte-exact: no end-of-line conversion, so the Authenticode signatures and the SHA256 of PackageIntegrity.psd1 stay valid.
+# Do not add a global autocrlf rule for these paths. Everything under package/ is hashed (except the editable configuration); the signed files are listed one by one.
+package/** -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+CHANGELOG.md -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+SECURITY.md -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+
+# Owner-signed files (the PowerShell files of the package, the module manifest included, and the inventory manifest); cr-at-eol because their working-tree line endings are CRLF.
+package/Invoke-MailboxTransfer.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/MailboxTransfer.psd1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/MailboxTransfer.psm1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Eml.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Events.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Browse.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Core.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.DemoJob.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Engine.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Fake.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Jobs.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Pages.Export.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Pages.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Pages.Run.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Pages.Source.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Run.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.Scenarios.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Gui.State.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/src/Test-PackageIntegrity.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/Start-MailboxTransferConsole.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/PackageIntegrity.psd1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol

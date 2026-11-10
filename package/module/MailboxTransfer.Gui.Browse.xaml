@@ -1,0 +1,129 @@
+<!-- The browse card: folder tree with tick boxes, message list, reading pane, selection tray. Loaded once per use (export, import source, open);
+     the window resources (MbtCard, MbtFolderTemplate...) are found through the logical tree once the card is placed in the window. -->
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Name="BrowseRoot" Style="{DynamicResource MbtCard}" Padding="14,12,14,12" Height="620" Margin="0,0,0,12" VerticalAlignment="Top">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <Grid Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock x:Name="BrowseTitle" Text="Browse" Style="{DynamicResource MbtCardTitle}"/>
+      <TextBlock x:Name="BrowseInfo" Grid.Column="1" Margin="12,1,12,0" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+      <ContentControl x:Name="BrowseBadge" Grid.Column="2" IsTabStop="False"/>
+    </Grid>
+
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="300" MinWidth="200"/>
+        <ColumnDefinition Width="6"/>
+        <ColumnDefinition Width="*" MinWidth="240"/>
+        <ColumnDefinition Width="6"/>
+        <ColumnDefinition Width="*" MinWidth="220"/>
+      </Grid.ColumnDefinitions>
+
+      <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <TextBlock Text="Folders" FontSize="12" FontWeight="SemiBold" Margin="10,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        <TreeView x:Name="FolderTree" Grid.Row="1" BorderThickness="0" Background="Transparent" FontSize="13" ItemTemplate="{DynamicResource MbtFolderTemplate}"
+                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <TreeView.ItemContainerStyle>
+            <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+              <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+              <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+              <Setter Property="Padding" Value="0,1"/>
+            </Style>
+          </TreeView.ItemContainerStyle>
+        </TreeView>
+      </Grid>
+
+      <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" Background="Transparent" ResizeBehavior="PreviousAndNext"/>
+
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="ListTitle" FontSize="12" FontWeight="SemiBold" Margin="10,0,0,6" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        <ContentControl x:Name="ListNote" Grid.Row="1" IsTabStop="False" Margin="0,0,0,6"/>
+        <Grid x:Name="ListHeader" Grid.Row="2" Margin="10,0,10,2" Visibility="Collapsed">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="118"/>
+          </Grid.ColumnDefinitions>
+          <CheckBox x:Name="PickAll" MinWidth="0" Padding="0" Margin="0,0,8,0" AutomationProperties.Name="Select all messages of the folder"/>
+          <TextBlock Grid.Column="1" Text="Message" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+          <TextBlock Grid.Column="2" Text="Size" FontSize="12" TextAlignment="Right" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+          <TextBlock Grid.Column="3" Text="Date" FontSize="12" Margin="8,0,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Grid>
+        <ListView x:Name="MessageList" Grid.Row="3" SelectionMode="Single" BorderThickness="0" Background="Transparent" FontSize="13"
+                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListView.ItemContainerStyle>
+            <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+              <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+              <Setter Property="Padding" Value="10,3"/>
+            </Style>
+          </ListView.ItemContainerStyle>
+          <ListView.ItemTemplate>
+            <DataTemplate>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="118"/>
+                </Grid.ColumnDefinitions>
+                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Visibility="{Binding CheckVisibility}" MinWidth="0" Padding="0" Margin="0,0,8,0" VerticalAlignment="Center" AutomationProperties.Name="Select message"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding From}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock Text="{Binding AttachmentGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" Margin="6,3,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                  </StackPanel>
+                  <TextBlock x:Name="Subj" Text="{Binding Subject}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource MbtBrandText}"/>
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{Binding SizeText}" FontSize="12" TextAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <TextBlock Grid.Column="3" Text="{Binding DateText}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+              </Grid>
+              <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding SubjectNa}" Value="True">
+                  <Setter TargetName="Subj" Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+                </DataTrigger>
+              </DataTemplate.Triggers>
+            </DataTemplate>
+          </ListView.ItemTemplate>
+        </ListView>
+        <ContentControl x:Name="ListMore" Grid.Row="3" IsTabStop="False" VerticalAlignment="Bottom" HorizontalAlignment="Center"/>
+        <TextBlock x:Name="ListEmpty" Grid.Row="3" Margin="10,20,10,0" TextWrapping="Wrap" FontSize="13" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="Pick a folder on the left."/>
+      </Grid>
+
+      <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" Background="Transparent" ResizeBehavior="PreviousAndNext"/>
+
+      <Border x:Name="ReadingPane" Grid.Column="4" BorderThickness="1,0,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" Padding="14,0,0,0">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <StackPanel x:Name="ReadingHeader" Visibility="Collapsed">
+            <TextBlock x:Name="ReadSubject" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <TextBlock x:Name="ReadFrom" FontSize="13" FontWeight="SemiBold" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <TextBlock x:Name="ReadDetails" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Border x:Name="ReadAttachment" Visibility="Collapsed" BorderThickness="1" CornerRadius="4" Padding="10,5" Margin="0,8,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}">
+              <TextBlock x:Name="ReadAttachmentText" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}" TextWrapping="Wrap"/>
+            </Border>
+            <Border Height="1" Margin="0,10,0,8" Background="{DynamicResource DividerStrokeColorDefaultBrush}"/>
+          </StackPanel>
+          <TextBox x:Name="ReadBody" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" Background="Transparent" Padding="0" FontSize="13"
+                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+          <TextBlock x:Name="ReadEmpty" Grid.RowSpan="2" Margin="0,24,0,0" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" FontSize="13"
+                     Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="Select a message to read it."/>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Border x:Name="Tray" Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" Margin="0,10,0,0" Padding="0,10,0,0">
+      <StackPanel x:Name="TrayPanel" Orientation="Horizontal"/>
+    </Border>
+  </Grid>
+</Border>
