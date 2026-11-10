@@ -60,8 +60,8 @@ Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC slee
 ## Get started
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-path-dark.png">
-  <img alt="The path of the console in six pages: 1 Task, pick what to do; 2 From, choose the source; 3 To, choose where it goes; 4 Plan, read before you start; 5 Run, wait, stop, continue; 6 Done, read the result" src="package/docs/images/readme-path-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-start-dark.png">
+  <img alt="The guided path. Get ready once: 1 get your rights, 2 put the tool on the PC, 3 write your two numbers, 4 open the console. Then task A, browse and export: 5 sign in and pick the mailbox, 6 tick, choose where to save, read the plan, 7 read the result. Or task B, import: 5 pick the file and the mailbox, 6 read the plan and type IMPORT, 7 read the result. Or task C, check and repair a PST: 5 pick the file, 6 check then repair into a new file, 7 read before and after" src="package/docs/images/readme-start-light.png">
 </picture>
 
 One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. A fourth task, *Open an export or a PST*, reads a file like a mailbox and needs no step of its own. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
@@ -189,6 +189,11 @@ cd C:\Tools\MailboxTransfer
 | **Open an export or a PST** | Read it like a mailbox | No |
 
 Every task goes **Task, From, To, Plan, Run, Done**. One question per page, the safe choice is the default and says *recommended*, and the plan is read before anything starts. Only an import asks you to type `IMPORT`. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-path-dark.png">
+  <img alt="The path of the console in six pages: 1 Task, pick what to do; 2 From, choose the source; 3 To, choose where it goes; 4 Plan, read before you start; 5 Run, wait, stop, continue; 6 Done, read the result" src="package/docs/images/readme-path-light.png">
+</picture>
 
 ### How it stays safe
 
