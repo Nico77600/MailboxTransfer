@@ -1,0 +1,30 @@
+{
+  "runtimeRoot": "package",
+  "testMode": "pester",
+  "testEntry": null,
+  "tests": [
+    "tests/MailboxTransfer.Tests.ps1",
+    "tests/PackageIntegrity.Tests.ps1",
+    "tests/Store.Tests.ps1",
+    "tests/Transfer.Tests.ps1",
+    "tests/Browse.Tests.ps1",
+    "tests/AuxLive.Tests.ps1",
+    "tests/AppOnly.Tests.ps1",
+    "tests/Events.Tests.ps1",
+    "tests/Events.Folders.Tests.ps1",
+    "tests/Eml.Tests.ps1",
+    "tests/FastTransfer.Tests.ps1",
+    "tests/FxImport.Tests.ps1",
+    "tests/Pst.Tests.ps1",
+    "tests/PstChecker.Tests.ps1",
+    "tests/PstCopy.Tests.ps1",
+    "tests/PstExport.Tests.ps1",
+    "tests/PstImport.Tests.ps1",
+    "tests/PstRepair.Tests.ps1",
+    "tests/ReviewFixes.Tests.ps1",
+    "tests/Gui.Logic.Tests.ps1",
+    "tests/Gui.Smoke.Tests.ps1"
+  ],
+  "packageBuilder": "tools/New-MailboxTransferPackage.ps1",
+  "packageEntry": "Invoke-MailboxTransfer.ps1"
+}

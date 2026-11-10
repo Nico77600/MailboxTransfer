@@ -1,0 +1,20 @@
+{
+  "name": "MailboxTransfer",
+  "version": "1.0.0",
+  "visibility": "public",
+  "status": "release",
+  "runtimeIdentifier": ["win-x64", "win-arm64"],
+  "powerShell": {
+    "minimum": "7.5",
+    "commandLineMinimum": "7.4",
+    "bundled": false
+  },
+  "sqlite": {
+    "Microsoft.Data.Sqlite": "10.0.12",
+    "SQLitePCLRaw": "2.1.12",
+    "folder": "lib/sqlite"
+  },
+  "notShipped": {
+    "Microsoft.Identity.Client": "taken at run time from the installed module Microsoft.Graph.Authentication"
+  }
+}

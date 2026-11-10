@@ -1,0 +1,7 @@
+Mailbox Transfer: this archive is the source code, not the tool.
+
+To use Mailbox Transfer, download the release ZIP, signed by the owner, from:
+
+    https://github.com/Nico77600/MailboxTransfer/releases/latest
+
+On that page, under Assets, download MailboxTransfer-<version>.zip, not the Source code archives.
