@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-banner-dark.png">
-    <img alt="Mailbox Transfer: exports and imports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified store or to PST files, imports PST files, stores and EML files, and checks and repairs PST files; verified, resumable, with a guided Windows console and a PowerShell 7 command line" src="package/docs/images/readme-banner-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-banner-dark.svg">
+    <img alt="Mailbox Transfer: exports and imports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified store or to PST files, imports PST files, stores and EML files, and checks and repairs PST files; verified, resumable, with a guided Windows console and a PowerShell 7 command line" src="package/docs/images/readme-banner-light.svg">
   </picture>
 </p>
 
@@ -21,10 +21,10 @@
 </p>
 
 **Author:** Nicolas Fabert  
-**Version:** 1.0.1 ([changelog](CHANGELOG.md))
+**Version:** 1.1.0 ([changelog](CHANGELOG.md))
 
 > [!TIP]
-> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.0.1.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
+> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.1.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
 
 > [!IMPORTANT]
 > Windows marks files downloaded from the Internet. After you extract the ZIP, check the publisher first (right-click a `.ps1`, for example `Invoke-MailboxTransfer.ps1`, Properties, Digital Signatures: `Nicolas Fabert`), then unblock the extracted folder once:
@@ -73,7 +73,7 @@ One path for everyone. Set the tool up once (**1 to 4**), then take task **A** t
 #     Checking and repairing a PST needs no right at all.
 
 # 2 · On the PC, in PowerShell 7.5+: put the tool in its folder and unblock it.
-#     Download MailboxTransfer-1.0.1.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
+#     Download MailboxTransfer-1.1.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
 Get-ChildItem C:\Tools\MailboxTransfer -Recurse -File -Force | Unblock-File
 
 # 3 · Write your two numbers: tenant id and application id, in a file you create (the user guide, chapter 3, shows how)
@@ -346,7 +346,7 @@ An export store and PST files contain **complete mail**: protect them like the m
 Invoke-Pester -Path .\tests -Output Detailed        # no network, no tenant, no mailbox needed
 ```
 
-The tests drive the real engine against a fake Microsoft Graph and synthetic PST files, the console in a headless WPF window on a fake engine, and the package integrity logic on a copy of the package. Large real-data corpora (kept outside the repository) add checks when they are present and are skipped otherwise. The cloud checks (a test tenant) are run by the maintainer with the scripts in `tools\`; nothing in the automated tests contacts the cloud. The engine is that of 1.0.0, validated offline and on one Microsoft 365 test tenant, including writing into a shared mailbox with a certificate.
+The tests drive the real engine against a fake Microsoft Graph and synthetic PST files, the console in a headless WPF window on a fake engine, and the package integrity logic on a copy of the package. Large real-data corpora (kept outside the repository) add checks when they are present and are skipped otherwise. The cloud checks (a test tenant) are run by the maintainer with the scripts in `tools\`; nothing in the automated tests contacts the cloud. The engine was validated offline and on one Microsoft 365 test tenant (version 1.0.0; 1.1.0 only renames a folder of the PST export), including writing into a shared mailbox with a certificate.
 
 ## License
 
