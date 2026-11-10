@@ -19,7 +19,7 @@
                   under one top folder "Recoverable Items" in the store and in the PST, never mixed with the normal folders. An import of such an export
                   puts them in a normal folder named "Restored deleted items", never back into Recoverable Items.
     Mode ExportPst  Converts the store into PST files with our own writer (no Outlook, no third-party component): the real folder tree of each
-                  location under one top folder (Primary, Archive, "Archive auxiliaire n (guid8)"), the standard folders first, split at -PstMaxSizeGB
+                  location under one top folder (Primary, Archive, "Auxiliary archive n (guid8)"), the standard folders first, split at -PstMaxSizeGB
                   (default 50 = 51,200 MiB) on item boundaries, <name>.pst, <name>-002.pst... and <name>.manifest.json. The auxiliary archives are merged
                   into the Archive tree (same folder entry key) unless -SeparateAuxArchives. Resumable: run it again after an interruption, the finished
                   parts (verified by size and PST header) are kept. Each part is checked (Test-MbtPst) unless -SkipCheck. The store is only read.
@@ -268,7 +268,7 @@
     Export, ExportPst: the same limit in MiB (smaller than 1 GB: tests, small drives). Wins over -PstMaxSizeGB.
 
 .PARAMETER SeparateAuxArchives
-    Export, ExportPst: one top folder per auxiliary archive ("Archive auxiliaire 1 (guid8)") instead of merging them into the Archive tree.
+    Export, ExportPst: one top folder per auxiliary archive ("Auxiliary archive 1 (guid8)") instead of merging them into the Archive tree.
 
 .PARAMETER SkipCheck
     Export, ExportPst: do not run the integrity checker (Test-MbtPst) on each finished PST.
@@ -341,7 +341,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.1
+    Version : 1.1.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -1272,8 +1272,8 @@ exit $exitCode
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCP6/bkRHYpb6I1
-# UjxadFNuwlW5gghXvE4EHwY1G8Dd56CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDcq1BuosjJ/598
+# d/tis+6stz2dPay4SbkqoYBGe9U4MKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -1350,23 +1350,23 @@ exit $exitCode
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDYryoFYKc4
-# kK2GwAernXXx+MfuB2f8FikdXT3lMOvIgjANBgkqhkiG9w0BAQEFAASCAgAwVtBO
-# nK3BN4aipYteQ/76hycwo0i1yw6FDCM0FKI0Zl/BckcigV1LHHbmlcUddc66BhDQ
-# YdiYBc5buBjmpfP4imioFDOePCYei/XyqPdc5TdFkaPKYLugotNWKA75e/Ng9PMo
-# FGO0xEBzHtai4vWTk6tI0awA6dXp5mKOO1F2pvKqoWPM+B0L/4cMHOjdXC1jEuLG
-# sttnVuEWDxik2lLwXFtUFuMSVrnJiJXLqMNOmxs94e/yOsxRXvG13j5MTqYS1vS+
-# T8XIet9kGNT8C5mhLgzA8qvH8dJHWbfLHp8YgmL3TOmW6xAro0HRzzxu4WcOUj0k
-# zcR5X2JzYN3gXm7nBjSEyiE5WPgENcIAzxGQ+ARo5QCk7yobiblZcAa/NUFyq9/G
-# PLLReq71Um/0u4eE2lahuohrlo6vuAmMVCcdoHxpoUNHzd2o3qhdxQnGT47vFU/C
-# Akm1n02bks3+NjhiqJUrF+v7+NlbuD6qWJOINRTHhgg2h4NLxzhyTd1rk8yu2fBg
-# 4bjsIlArAXzq/QJgdGzsA18qM0TfUjH2oNDV/8gOQ9yeQv2zQYeT0n0DhBKrBzkD
-# FGUEVwuVsqRPmb+gUqspp7Ky9XKsdZa39yPUD/itt7zNFUhqLNDfJm+HvjGrMjLq
-# iZZbZBPGgP9xZCKj56FQULHvjnNtf4YfxeJY56GCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDyh/U3CDS6
+# u7ykBvjQnTu+r502eXGAL7Nyx2k5MhKsazANBgkqhkiG9w0BAQEFAASCAgBL/zHD
+# yIjv/9DvZeIYr4N2dAI+NuqYVvz7DLML+sSSki0lZ92I92saMKLNUKj/6vpJcYT0
+# OLaOX2MU/CkIDCxIy2L+r6r5qsjTWzcwuOodOIMFOO8LT+zA4+kHm+BJOxilV/6H
+# v0WUCXfFhnYBawgP6Rtm2QbkrtIWRS8okmplxUtO6hJYGGaGFLhgj8mAQJXQmk6i
+# MsVELlF2TjhUmd0fISIv8FPpRnxIzo5psMA7cpCrPEMop4Jp1nlJYuZDsSVxEnKz
+# YcxXPaN54vftx0KSnh3quwHob17nyFWd2/vuDTcFkuXz3rLeKaaQdk+XG6kDH4dI
+# w79zOzilODCN1gVDIY0QfyVfz6Mj6NhKovnMMPjBynOi6ziNROar5MWfnHU2MBMi
+# NRU3gggWjYJXPYmNV85x997IkNeBMAkhJsUQ7tb7QyNeAQNOPz7wDQhc6LCXJQbF
+# cePgDbaaFd41AOigLuaw5vEXuVL0eerT8hc81eYd+Q9QT1tsSGZZEM0+RrrCbXCN
+# YZFDCmb9uyGLkuAfkXf7QuAdcCq8thoJwqnBzv69T2C18FmuGktLNdo9/EGF4Qqd
+# H9uYqyAPOnp0Wct/OX428MWV6TCe3iUY46xmx/gJwRng8nWATKPnLQNiDszEumYg
+# +AjXVNS9dR/+YH7+Qwn5HkyNybEj3bu4RdcuUqGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIKh7Rk6EW5lq9489ssaw5Szl46Z2lDP0t3OYYpSTTSh7Aggh4T5HaXeZ
-# RxgPMjAyNjExMTAxMDU1MzBaMAMCAQECEA1nhXcZSIhpXGbKm6t2mWKgghGnMIIE
+# BAIBBQAEINKFbY/C79EVzfcmaYvMUdAt2NRS629MT7AxgVJAiJBjAghvV6uF0gUI
+# xBgPMjAyNjExMTAxNDA5MDBaMAMCAQECEGvulvAE9geNDWLm3ivqCQCgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -1465,13 +1465,13 @@ exit $exitCode
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDEwNTUzMFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIN/J
-# 0a/0Ks43XnNDc84WwmftUX0Ext2gbcTmH4MEYsZ7MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkwMFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIPh2
+# BAtMYdEyHzWFWpJ56G+zdVxVtT0HtkRSM3MjtkuaMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiAW8Y3zGWyTb16mQFpA3riGeEK6hqOONWw0FhSkK96DrQIhAPWm
-# AeGvo+nh/W+9qpLJcavWQsZkozjYEi9g7SFi/iYQ
+# zj0EAwIERzBFAiBfjLTo5L2tMuCe/vf1SOXedvj9QfdvoZJzl2GvIknZ9gIhANyz
+# nH87bIcKJwNrfvVdwsVyDWkxDLT1sfhSrRFPUW0F
 # SIG # End signature block

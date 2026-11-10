@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: Reference guide
-version: 1.0.1
+version: 1.1.0
 author: Nicolas Fabert
 updated: 2026-11-09
 runtime: PowerShell 7.5+ (engine and window), 7.4 for the command line
@@ -324,10 +324,10 @@ The writer, the reader, the checker and the repair are the tool's own (Unicode P
     other folders by name, with their hierarchy
     Recoverable Items           only with -IncludeRecoverableItems: its own top folder, with Deletions, Purges, Versions, DiscoveryHolds below it
   Archive                       main archive and auxiliary archives merged (default)
-  Archive auxiliaire 1 (xxxxxxxx)   only with -SeparateAuxArchives
+  Auxiliary archive 1 (xxxxxxxx) only with -SeparateAuxArchives
 ```
 
-Names, hierarchy and container class (`IPF.Note`, `IPF.Appointment`, `IPF.Contact`…) come from the recorded tree. The standard folders are ordinary folders with the right class, because one PST holds several locations and each has its own Deleted Items. The auxiliary archives are merged into the Archive tree by **folder entry key** (the same in every mailbox that holds a folder); a folder with another key stays separate.
+Names, hierarchy and container class (`IPF.Note`, `IPF.Appointment`, `IPF.Contact`…) come from the recorded tree. The standard folders are ordinary folders with the right class, because one PST holds several locations and each has its own Deleted Items. The auxiliary archives are merged into the Archive tree by **folder entry key** (the same in every mailbox that holds a folder); a folder with another key stays separate. An export started with version 1.0.x named the auxiliary archive folder in French: continuing such an export keeps that name for its next parts, so that the PST files of one export agree and no second folder appears, and a PST file made by 1.0.x is read, browsed and imported as before (a folder name is only a name).
 
 ### 6.2 Split
 

@@ -9,7 +9,9 @@
       1. Window pictures, console-*-<theme>.png: the real WPF window of the console on the fake engine (tools\New-ConsoleScreens.ps1,
          package\module\MailboxTransfer.Gui.Scenarios.ps1), contoso.com names only, with numbered red callouts drawn on the key ones.
       2. Drawings, readme-*-<theme>.png and guide-*-<theme>.png: small diagrams drawn with the same WPF classes and the same colours as the
-         window (the banner, the path, the principles, the permission matrix, the glossary, ...). They are rendered at twice their size.
+         window (the path, the principles, the permission matrix, the glossary, ...). They are rendered at twice their size.
+      3. The README banner, readme-banner-<theme>.svg: an SVG with the template of the ExchangeLogReport hero (same canvas, frame, accent bar, tint,
+         icon, eyebrow, title, pills, footer line and stat cards).
 
     Naming follows the house standard: <area>-<page or subject>-<variant>-<theme>.png. The README shows the pictures with <picture> so that the
     light or the dark one is chosen by the reader's theme.
@@ -225,7 +227,7 @@ function Add-Step([int]$N, [double]$X, [double]$Y, [double]$D = 44, [string]$Fil
 }
 
 function Save-Drawing([string]$Base, [string]$Theme, [int]$W, [int]$H, [int]$PixelWidth = 2160) {
-    # The house size of a README picture: 2160 px wide (PraRemoteMailbox, ExchangeLogReport); the banner is 2000 px wide.
+    # The house size of a README picture: 2160 px wide (PraRemoteMailbox, ExchangeLogReport).
     $s = $PixelWidth / [double]$W
     $pxH = [int][Math]::Ceiling($H * $s)
     $c = $script:Canvas; $c.Width = $W; $c.Height = $pxH / $s
@@ -240,31 +242,6 @@ function Save-Drawing([string]$Base, [string]$Theme, [int]$W, [int]$H, [int]$Pix
 
 # ---- the drawings -----------------------------------------------------------------------------------------------------------------------------
 $drawings = [ordered]@{}
-
-$drawings['readme-banner'] = @{ W = 1000; H = 339; PixelWidth = 2000; Draw = {
-        Add-Rect 0 0 1000 339 'bg' '' 0
-        Add-Rect 4 4 992 70 'accent' '' 26
-        Add-Rect 4 9 992 326 'card' 'stroke' 26 1.2
-        Add-Rect 48 62 74 74 'accent' '' 19
-        Add-Icon 0xE715 67 78 38 'onAccent'
-        [void](Add-Text 'EXCHANGE ONLINE  ·  MAILBOXES AND PST FILES' 142 60 13 'accentText' 'Bold')
-        [void](Add-Text 'Mailbox Transfer' 138 78 46 'text' 'SemiBold')
-        [void](Add-Text 'Export and import Exchange Online mailboxes, verified and resumable, with a guided Windows console. Checks and repairs PST files.' 48 160 17 'text' 'Normal' 560)
-        $x = 48
-        $x += (Add-Badge ("Version $Version") $x 262 -Filled) + 10
-        $x += (Add-Badge 'PowerShell 7.5+' $x 262) + 10
-        $x += (Add-Badge 'No Outlook needed' $x 262) + 10
-        [void](Add-Badge 'MIT license' $x 262)
-        $stats = @(@('4', 'tasks', 'Export, import, check and repair a PST, open'), @('50', 'GB per PST part', 'each part checked when written'), @('0', 'items deleted', 'an import only adds, an export only reads'))
-        $y = 34
-        foreach ($t in $stats) {
-            Add-Rect 690 $y 270 84 'card' 'stroke' 16 1.2
-            [void](Add-Text $t[0] 706 ($y + 16) 36 'accentText' 'Bold' 64 'Center')
-            [void](Add-Text $t[1] 782 ($y + 12) 17 'text' 'SemiBold' 170)
-            [void](Add-Text $t[2] 782 ($y + 36) 13.5 'text2' 'Normal' 170)
-            $y += 96
-        }
-    } }
 
 $drawings['readme-why'] = @{ W = 1280; H = 400; Draw = {
         Add-Rect 0 0 1280 400 'bg' '' 0
@@ -557,6 +534,104 @@ $drawings['guide-continue'] = @{ W = 1280; H = 380; Draw = {
         [void](Add-Text 'Nothing is lost. An item whose answer was lost is looked for, not guessed.' 40 300 20 'text2' 'Normal' 1200 'Center')
     } }
 
+# ---- the README banner (hero): an SVG, the template of the ExchangeLogReport hero (1600 x 490, same coordinates, same sizes) -----------------------
+# Same file kind as ExchangeLogReport (readme-banner-light.svg / readme-banner-dark.svg, <picture> in the README). Only the words change; the texts are
+# checked for privacy like every picture text, and measured so that a line cannot run into the stat cards (a 12 % margin for a reader without Segoe UI).
+$hero = [ordered]@{
+    Title    = 'Mailbox Transfer'
+    Eyebrow  = 'EXCHANGE ONLINE / MAILBOXES AND PST FILES'
+    Sub      = 'Export and import Exchange Online mailboxes.'
+    Lines    = @('Verified and resumable, with a guided Windows console.', 'Checks and repairs PST files, without Outlook.')
+    Pills    = @("$Version release", 'PowerShell 7.5+', 'No Outlook needed')
+    Footer   = 'Nicolas Fabert / MIT license'
+    Desc     = 'Exchange Online mailbox export and import to a verified store or to PST files, with a guided Windows console and PST check and repair.'
+    Stats    = @(
+        @{ N = '4'; Label = 'Tasks in one console'; Sub = 'Export, import, check PST, open' }
+        @{ N = '50'; Label = 'GB per PST part'; Sub = 'Each part checked when written' }
+        @{ N = '0'; Label = 'Items deleted'; Sub = 'Import adds, export only reads' }
+    )
+}
+$heroColors = @{
+    light = @{ S0 = '#ffffff'; S1 = '#f9eff2'; Line = '#dddddd'; Accent = '#b71c50'; Ring = '.08'; Text = '#242424'; Text2 = '#535353'; Card = '#ffffff'; OnAccent = '#ffffff' }
+    dark  = @{ S0 = '#262626'; S1 = '#46353b'; Line = '#535353'; Accent = '#ff89a5'; Ring = '.1'; Text = '#f5f5f5'; Text2 = '#d1d1d1'; Card = '#262626'; OnAccent = '#242424' }
+}
+function Get-HeroTextWidth([string]$Text, [double]$Size, [string]$Weight = 'Normal', [double]$Spacing = 0) {
+    $m = [Windows.Controls.TextBlock]::new(); $m.Text = $Text; $m.FontSize = $Size; $m.FontWeight = [Windows.FontWeights]::$Weight
+    $m.FontFamily = [Windows.Media.FontFamily]::new('Segoe UI'); $m.Measure([Windows.Size]::new(10000, 10000))
+    return $m.DesiredSize.Width + $Spacing * $Text.Length
+}
+function Assert-HeroFits([string]$Text, [double]$Size, [double]$Available, [string]$Weight = 'Normal', [double]$Spacing = 0) {
+    $w = (Get-HeroTextWidth $Text $Size $Weight $Spacing) * 1.12
+    if ($w -gt $Available) { throw "The banner text '$Text' is too wide ($([int]$w) px for $Available)." }
+}
+function New-HeroSvg([string]$Theme) {
+    $c = $heroColors[$Theme]; $h = $hero
+    $all = @($h.Title, $h.Eyebrow, $h.Sub, $h.Footer, $h.Desc) + $h.Lines + $h.Pills + @($h.Stats | ForEach-Object { $_.N; $_.Label; $_.Sub })
+    foreach ($s in $all) { Assert-PublicText $s }
+    Assert-HeroFits $h.Eyebrow 16 840 'Bold' 2; Assert-HeroFits $h.Title 43 880 'Bold'; Assert-HeroFits $h.Sub 27 990
+    foreach ($l in $h.Lines) { Assert-HeroFits $l 23 990 }
+    foreach ($s in $h.Stats) { Assert-HeroFits $s.Label 21 320 'SemiBold'; Assert-HeroFits $s.Sub 19 320; Assert-HeroFits $s.N 32 80 'Bold' }
+    # the pills: 13 px apart from x = 55, 48 px high; the first one (filled) is 212 px wide as in ExchangeLogReport, the others fit their text
+    $x = 55; $pills = [Text.StringBuilder]::new()
+    for ($k = 0; $k -lt $h.Pills.Count; $k++) {
+        $txt = $h.Pills[$k]
+        $w = if ($k -eq 0) { [Math]::Max(212, [int][Math]::Ceiling((Get-HeroTextWidth $txt 19 'SemiBold') + 60)) } else { [int][Math]::Ceiling((Get-HeroTextWidth $txt 19) + 60) }
+        $cx = [int]($x + $w / 2)
+        if ($k -eq 0) {
+            [void]$pills.AppendLine("    <rect x=""$x"" y=""335"" width=""$w"" height=""48"" rx=""24"" fill=""$($c.Accent)""/>")
+            [void]$pills.AppendLine("    <text x=""$cx"" y=""365"" text-anchor=""middle"" fill=""$($c.OnAccent)"" font-size=""19"" font-weight=""600"">$txt</text>")
+        } else {
+            [void]$pills.AppendLine("    <rect x=""$x"" y=""335"" width=""$w"" height=""48"" rx=""24"" fill=""$($c.Card)"" stroke=""$($c.Line)""/>")
+            [void]$pills.AppendLine("    <text x=""$cx"" y=""365"" text-anchor=""middle"" fill=""$($c.Text2)"" font-size=""19"">$txt</text>")
+        }
+        $x += $w + 13
+    }
+    if ($x - 13 -gt 1040) { throw 'The banner pills run into the stat cards.' }
+    $rows = 0..2 | ForEach-Object { 75 + 120 * $_ }
+    $cards = ($rows | ForEach-Object { "      <rect x=""1080"" y=""$_"" width=""455"" height=""100"" rx=""22""/>" }) -join "`n"
+    $nums = (0..2 | ForEach-Object { "<text x=""1110"" y=""$($rows[$_] + 61)"">$($h.Stats[$_].N)</text>" }) -join ''
+    $labels = (0..2 | ForEach-Object { "<text x=""1200"" y=""$($rows[$_] + 44)"">$($h.Stats[$_].Label)</text>" }) -join ''
+    $subs = (0..2 | ForEach-Object { "<text x=""1200"" y=""$($rows[$_] + 75)"">$($h.Stats[$_].Sub)</text>" }) -join ''
+    @"
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="490" viewBox="0 0 1600 490" role="img" aria-labelledby="title desc">
+  <title id="title">$($h.Title)</title>
+  <desc id="desc">$($h.Desc)</desc>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="$($c.S0)"/><stop offset="1" stop-color="$($c.S1)"/>
+    </linearGradient>
+    <clipPath id="card"><rect x="10" y="10" width="1580" height="470" rx="26"/></clipPath>
+  </defs>
+  <rect x="10" y="10" width="1580" height="470" rx="26" fill="url(#surface)" stroke="$($c.Line)" stroke-width="2"/>
+  <g clip-path="url(#card)"><circle cx="1430" cy="40" r="235" fill="none" stroke="$($c.Accent)" stroke-opacity="$($c.Ring)" stroke-width="70"/></g>
+  <path d="M37 13H1563" stroke="$($c.Accent)" stroke-width="5" stroke-linecap="round"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="55" y="55" width="88" height="88" rx="24" fill="$($c.Accent)"/>
+    <g fill="none" stroke="$($c.OnAccent)" stroke-width="3.5" stroke-linejoin="round"><rect x="76" y="82" width="46" height="34" rx="5"/><path d="M79 88l20 15 20-15"/></g>
+    <text x="170" y="77" fill="$($c.Accent)" font-size="16" font-weight="700" letter-spacing="2">$($h.Eyebrow)</text>
+    <text x="170" y="126" fill="$($c.Text)" font-size="43" font-weight="700">$($h.Title)</text>
+    <text x="55" y="205" fill="$($c.Text)" font-size="27">$($h.Sub)</text>
+    <text x="55" y="252" fill="$($c.Text2)" font-size="23">$($h.Lines[0])</text>
+    <text x="55" y="286" fill="$($c.Text2)" font-size="23">$($h.Lines[1])</text>
+$($pills.ToString().TrimEnd())
+    <text x="55" y="435" fill="$($c.Text2)" font-size="17">$($h.Footer)</text>
+    <g fill="$($c.Card)" stroke="$($c.Line)" stroke-width="2">
+$cards
+    </g>
+    <g fill="$($c.Accent)" font-weight="700" font-size="32">$nums</g>
+    <g fill="$($c.Text)" font-size="21" font-weight="600">$labels</g>
+    <g fill="$($c.Text2)" font-size="19">$subs</g>
+  </g>
+</svg>
+"@
+}
+foreach ($theme in 'light', 'dark') {
+    if (-not (Test-Wanted "readme-banner-$theme")) { continue }
+    $file = Join-Path $OutDir "readme-banner-$theme.svg"
+    [IO.File]::WriteAllText($file, ((New-HeroSvg $theme).Replace("`r`n", "`n").TrimEnd() + "`n"), [Text.UTF8Encoding]::new($false))
+    Write-Host "banner  $([IO.Path]::GetFileName($file))"
+}
+Get-ChildItem -LiteralPath $OutDir -Filter 'readme-banner-*.png' -ErrorAction SilentlyContinue | Remove-Item -Force   # the banner was a PNG until 1.0.1
 foreach ($key in $drawings.Keys) {
     if (-not (Test-Wanted "$key-light")) { continue }
     $d = $drawings[$key]

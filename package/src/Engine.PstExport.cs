@@ -12,7 +12,7 @@
 //  values above 64 KiB in the pack of the store and PstWriter streams them); it grows only with the folder tree and with the item
 //  records of the manifest (about 150 bytes per item).
 //
-//  Layout of the PST: IPM subtree > one top folder per location (Primary, Archive, Archive auxiliaire n (guid8)) > the folders of the
+//  Layout of the PST: IPM subtree > one top folder per location (Primary, Archive, Auxiliary archive n (guid8)) > the folders of the
 //  mailbox, with their names, their hierarchy and their container class. The auxiliary archives of an auto-expanding archive are
 //  merged into the Archive tree by default: a folder of an auxiliary archive is the same logical folder as the one of the main
 //  archive that has the same folder entry key (ExchangeEntryId.FolderKey); only a folder whose id is not in the Exchange format is
@@ -55,7 +55,12 @@ namespace MailboxTransfer
         public string PrimaryName = "Primary";
         public string ArchiveName = "Archive";
         /// <summary>{0} = number (1, 2...), {1} = the first 8 characters of the mailbox guid.</summary>
-        public string AuxArchiveNameFormat = "Archive auxiliaire {0} ({1})";
+        public string AuxArchiveNameFormat = "Auxiliary archive {0} ({1})";
+        /// <summary>
+        /// The name of that folder in versions 1.0.x (French). Only used to recognise it: an export of 1.0.x that is continued keeps writing the folder under the
+        /// name its first parts already have, so that the parts of one export agree and no second folder appears. A new export never writes it.
+        /// </summary>
+        public const string LegacyAuxArchiveNameFormat = "Archive auxiliaire {0} ({1})";
         /// <summary>Items read from the catalog at a time.</summary>
         public int PageSize = 1000;
         /// <summary>Told how many items each folder of the PST has to get and each item written, failed or kept from an earlier run (progress per folder for the console); null: not followed.</summary>
@@ -623,7 +628,34 @@ namespace MailboxTransfer
             return FileNaming.SafeStem(local + suffix);
         }
 
-        static Tree BuildTree(ExportStore store, PstExportOptions o, CancellationToken ct)
+        /// <summary>The manifest of an earlier run of the destination that this run would continue (null: a new export, Force, or no readable manifest; Run reports an unreadable one).</summary>
+        static PstExportManifest PeekManifest(PstExportOptions o)
+        {
+            if (o.Force || string.IsNullOrWhiteSpace(o.Destination)) return null;
+            try
+            {
+                string path = PstExportManifest.PathFor(System.IO.Path.GetFullPath(o.Destination));
+                return File.Exists(path) ? PstExportManifest.Load(path) : null;
+            }
+            catch (Exception ex) when (ex is JsonException || ex is InvalidDataException || ex is IOException || ex is UnauthorizedAccessException) { return null; }
+        }
+
+        /// <summary>
+        /// The top folder of an auxiliary archive: the current name, except when the export being continued already wrote that archive under the 1.0.x name
+        /// (<see cref="PstExportOptions.LegacyAuxArchiveNameFormat"/>): the same name is kept for the rest of that export.
+        /// </summary>
+        static string AuxArchiveName(PstExportOptions o, PstExportManifest resumed, StoreMailbox m, int number)
+        {
+            string legacy = string.Format(PstExportOptions.LegacyAuxArchiveNameFormat, number, Guid8(m.Id));
+            if (resumed != null)
+                foreach (PstExportLocationInfo l in resumed.Locations)
+                    if (l.Name != null && string.Equals(l.Kind, "AuxArchive", StringComparison.OrdinalIgnoreCase) && l.MailboxIds.Any(id => string.Equals(id, m.Id, StringComparison.OrdinalIgnoreCase))
+                        && (string.Equals(l.Name, legacy, StringComparison.OrdinalIgnoreCase) || l.Name.StartsWith(legacy + " (", StringComparison.OrdinalIgnoreCase)))
+                        return legacy;
+            return string.Format(o.AuxArchiveNameFormat, number, Guid8(m.Id));
+        }
+
+        static Tree BuildTree(ExportStore store, PstExportOptions o, CancellationToken ct, PstExportManifest resumed = null)
         {
             var t = new Tree();
             List<StoreMailbox> all = store.GetMailboxes().OrderBy(m => m.Key).ToList();
@@ -656,7 +688,7 @@ namespace MailboxTransfer
                 }
                 else
                 {
-                    PstExportLocation g = NewGroup(m, "AuxArchive", string.Format(o.AuxArchiveNameFormat, auxNumber, Guid8(m.Id)), names);
+                    PstExportLocation g = NewGroup(m, "AuxArchive", AuxArchiveName(o, resumed, m, auxNumber), names);
                     groups.Add(g);
                 }
             }
@@ -809,7 +841,7 @@ namespace MailboxTransfer
             if (store == null) throw new ArgumentNullException("store");
             PstExportOptions o = options ?? new PstExportOptions();
             if (!string.IsNullOrWhiteSpace(o.Destination)) FileNaming.Require(o.Destination, true, "PST destination");
-            return PlanCore(store, o, BuildTree(store, o, ct), ct);
+            return PlanCore(store, o, BuildTree(store, o, ct, PeekManifest(o)), ct);
         }
 
         static PstExportPlan PlanCore(ExportStore store, PstExportOptions o, Tree t, CancellationToken ct)
@@ -933,7 +965,7 @@ namespace MailboxTransfer
             res.ManifestPath = manifestPath;
 
             Report(progress, new PstExportProgress { Phase = "plan", Message = "reading the folders and the items of the store" });
-            Tree tree = BuildTree(store, o, ct);
+            Tree tree = BuildTree(store, o, ct, PeekManifest(o));
             PstExportPlan plan = PlanCore(store, o, tree, ct);
             res.Plan = plan;
             if (o.Folders != null)

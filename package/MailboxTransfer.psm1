@@ -29,7 +29,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.0.1
+    Version : 1.1.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -40,7 +40,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ToolVersion = '1.0.1'
+$script:ToolVersion = '1.1.0'
 $script:ToolRoot = $PSScriptRoot
 # Package integrity. A release package carries the owner-signed PackageIntegrity.psd1 manifest; when it is present, the signed
 # verifier (src\Test-PackageIntegrity.ps1) must accept the tree before any engine code is compiled. A source tree without a manifest
@@ -2963,7 +2963,7 @@ function Export-MbtPst {
         Converts an export store into PST files with our own MS-PST writer (no Outlook, no third-party component): the real folder tree of each
         location, split by size, resumable, with a JSON manifest and an integrity check of each file.
     .DESCRIPTION
-        Layout: one top folder per location (Primary, Archive, "Archive auxiliaire n (guid8)") under the PST root, then the folders of the
+        Layout: one top folder per location (Primary, Archive, "Auxiliary archive n (guid8)") under the PST root, then the folders of the
         mailbox with their names, hierarchy and container class (IPF.Note, IPF.Appointment, IPF.Contact...). The standard folders (Inbox, Drafts,
         Sent Items, Deleted Items, Outbox, Junk Email, Calendar, Contacts, Tasks, Notes, Journal, also by their French or German names) come first.
         The auxiliary archives of an auto-expanding archive are merged into the Archive tree by default (the same folder entry key = the same logical
@@ -3196,10 +3196,10 @@ Export-ModuleMember -Function @(
 )
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDDxnkKTcoCLhHZ
-# 1qgthNeLvk7sZEjt5KG6wv3G8AAJG6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB0/wuqkOoEpl41
+# PFHP1Wm/xkLBerzQ0CynmRca9j8QPaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -3271,28 +3271,28 @@ Export-ModuleMember -Function @(
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBCb1NJvxG0
-# 6DH0bXJTy5MjVS/8sx867a3A1L7H7EVkgTANBgkqhkiG9w0BAQEFAASCAgA9sxQ0
-# 6qichEr9Vnuohudr4Z78uPlEaUAroJk3inNqHKuFkByq6/4S8Pyur1dBfrGl19+9
-# nFYqJKnGZ6vzpAkNFapKnLaxUGSfOBcNU1dE9Y3VhkZ/Ykl2ilKwqtwGfuu+UiFv
-# 5bH+PajmrrFd53SE+INIWN78cSgMt5pLjsOMbnHyosQlVyhjL2LZL5LQHOpjyYiK
-# vgh4KzqyyXUgq0f1HwBLgFPl5plc5L4V6Lu4Ns9L96rXrvM5Lz9BzLlTZ+y8e506
-# jwU9XnQLdn3RAA/S6/Fnyaf/Fl7ysALBeQlwHkAjy7EixGYCPl84/0066bdDxJ2+
-# ITnSlkJRE5z85UelEUOd6Mpv+3HbEuq9TmVlHRldjUIKXbpGlqsO6rUBVW/ioec3
-# yE6Lrwbf0aTauQaTFuO8bvNiUoL8mG3sT9/HaWR+Cx1zXNjYVAitQTP8DVLAy+DK
-# un/q9iQq4SLt3r76itnnRUGEl8yqp8dMkqc7YATaOSJlUPeRKwxnfMll46aHR28p
-# 9RaJ79QkgRbfSjjBSZVEO62HFzHo2ZZCFhT+7uNMM04bDYJpGTcM3R5WQWhmyWKu
-# TxCzSxqSIxHz2skKbXP9/tdZjUTJpxY2+2WqopCkAV6MIoawOowLCN9NzlckWQS8
-# +K7lp25+DJYp4iG+A2g46+nw03MD47fTpzlJYaGCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBVUj7C4IjA
+# MCty/S3j1UTWP4ltuG+EZ3A6egMXJEcoJzANBgkqhkiG9w0BAQEFAASCAgBmxABR
+# Q9GW0s+AXkBn0O4WtLRZbMa/TC2BKjdYup7ZbBCWFAgNvBC56HNxepVxvewyFQFL
+# lOm9Dpgn30YTvNef8AY9hPUiEu4JxCcFdLUrLdGIw/ImB1JFPoEl/bZud78k8q0q
+# S70z01E2LfcabVqvL4IHeFjOdb4AyhCqavqhd3CN/Tuqccye9SeQEh4TOmJZPWxH
+# czhhyULWHXWBhLAeNQ9pBfOw3n8w6xeykNETavvkqJ6aAcIXe5UW+TYoh5ACr+Yo
+# qKv2RXf83TDe15N3V6iNogpvlfcussp63jWBx/fdfi36ApaOOJbqt6uk9x1MOd3b
+# XgjgFQV4uqCPv/p5pN4zSXQec2mOh1W9pzfBUsmI7NUxmAPLO/bsKJss2i9p08PM
+# ac1xoCkApBHPmKKAh6wELvnQwJIeVm2MMgj0AKO9Snrmb50gFOehbWtDeaDc/LS8
+# b9ZVafPc71mvgKHUGB7gDdh3OmEza1KXU2OcwVWkiebWDivhJKYkgLBg9KfeL6+O
+# PBtDxS5/SIVEQhjYHjR+qZNzYloehqBS4pmh+nsT/MSrYH57+GmmHTrD1naQkH0N
+# /yFO/IECfnk3oBWpYdTYDA+alvY+ozBdpSMBRUVqp8v7B+iz668c1N3b2668rZFu
+# 4yWl59PQGcrhX/qO5BuPhIfTc0CNtTeaYO83n6GCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEID4sU0SW+L2wjxT1cWdCdmkRoURrnsN6wM2clOc4sAYdAghSubLuuYl0
-# 5RgPMjAyNjExMTAxMDU1NDFaMAMCAQECECHHqWLljP9b7ePqsOWWjXugghGnMIIE
+# BAIBBQAEIL3EXSl8elqINpu5jNslWOlMiKUYWFRub+fzDmQms5WQAghjo+CmfwHu
+# XhgPMjAyNjExMTAxNDA5MDdaMAMCAQECEE2e7h+mvEOnOAdtlzLtZkWgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -3387,17 +3387,17 @@ Export-ModuleMember -Function @(
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDEwNTU0MVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIPEj
-# OdNDpSwdFeJ1SKGFhSmJQUWp/X8qVaUYzJlsElqdMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkwN1owKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEILcK
+# rsG4LLQgpb2t4xFYyxadE5j17j7hgR5SaK1NHqchMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiAK2dLHAkmBpISBd5WLvCmKThktKf1Vcli2E2LWtA1s0QIhAJx2
-# FpfFapKyvrmRIeAcbMqJlfMkFsLro8uCTQ6WcVpa
+# zj0EAwIESDBGAiEA5yM/X7FXpd6+2Z0PsEe6pPJNXqXxJOktLtK/sUtxPeICIQCW
+# RYywY80zcWCbSV5G/khbLJU+uASGIweLLI5HBOdWQQ==
 # SIG # End signature block

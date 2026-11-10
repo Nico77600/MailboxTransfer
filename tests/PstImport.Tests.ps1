@@ -541,6 +541,24 @@ Describe 'the import job' {
         $second.Result.ReconciledCreated | Should -Be 1
         @($svc.ItemsOf($script:Dst) | Where-Object { $_.FolderId -ne 'F-INBOX' }).Count | Should -Be 9
     }
+    It 'imports a PST of 1.0.x as before: the French name of its auxiliary archive folder is only a folder name, created once with its content' {
+        $name = [string]::Format([MailboxTransfer.PstExportOptions]::LegacyAuxArchiveNameFormat, 1, 'bbbbbbbb')
+        $pst = Join-Path $TestDrive 'oldaux.pst'
+        $w = [MailboxTransfer.PstWriter]::Create($pst, 'MailboxTransfer u@contoso.test')
+        $top = $w.CreateFolder($null, $name, 'IPF.Note'); $aux = $w.CreateFolder($top, 'Aux only', 'IPF.Note')
+        [void]$w.AddMessage($aux, (New-PstMsg 'aux 1')); [void]$w.AddMessage($aux, (New-PstMsg 'aux 2'))
+        $w.Close()
+        $plan = [MailboxTransfer.PstImportPlanner]::Build((New-Options @($pst)), $null, $null, [Threading.CancellationToken]::None)
+        $plan.Items | Should -Be 2
+        @($plan.Folders | ForEach-Object TargetPath) | Should -Contain "Imported/old/$name/Aux only"
+        $svc = New-TargetService
+        $run = Invoke-PstJob -Service $svc -Options (New-Options @($pst)) -Journal (Join-Path $TestDrive 'oldaux.db')
+        $run.Error | Should -BeNullOrEmpty
+        $run.Result.JobComplete | Should -BeTrue
+        $run.Result.JobDone | Should -Be 2
+        @($svc.FoldersOf($script:Dst) | Where-Object Name -EQ $name).Count | Should -Be 1
+        Get-Subjects $svc (Get-FolderIdByName $svc 'Aux only') | Should -Be @('aux 1', 'aux 2')
+    }
     It 'stops on Cancel and resumes later without duplicates' {
         $pst = New-ImportPst 'cancel'
         $svc = New-TargetService

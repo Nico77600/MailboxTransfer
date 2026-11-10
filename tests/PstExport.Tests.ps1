@@ -267,13 +267,13 @@ Describe 'export to PST: the real folder tree' {
             $o.MergeAuxIntoArchive = $false
             $r = [MailboxTransfer.PstExporter]::Run($store, $o, $null, $script:Ct)
             $r.Ok | Should -BeTrue
-            @($r.Plan.Locations | ForEach-Object Name) | Should -Be @('Primary', 'Archive', 'Archive auxiliaire 1 (bbbbbbbb)')
+            @($r.Plan.Locations | ForEach-Object Name) | Should -Be @('Primary', 'Archive', 'Auxiliary archive 1 (bbbbbbbb)')
             $t = Get-PstTree $dest
             $t['Archive/Moved mail'].Count | Should -Be 0
             $t['Archive/Old mail'].Subjects | Should -Be @('Old 1', 'Old 2')
-            $t['Archive auxiliaire 1 (bbbbbbbb)/Moved mail'].Subjects | Should -Be @('Moved 1', 'Moved 2', 'Moved 3')
-            $t['Archive auxiliaire 1 (bbbbbbbb)/Aux only'].Subjects | Should -Be @('Aux own')
-            $t['Archive auxiliaire 1 (bbbbbbbb)/Old mail'].Count | Should -Be 0
+            $t['Auxiliary archive 1 (bbbbbbbb)/Moved mail'].Subjects | Should -Be @('Moved 1', 'Moved 2', 'Moved 3')
+            $t['Auxiliary archive 1 (bbbbbbbb)/Aux only'].Subjects | Should -Be @('Aux own')
+            $t['Auxiliary archive 1 (bbbbbbbb)/Old mail'].Count | Should -Be 0
             $r.ItemsWritten | Should -Be 20
         } finally { $store.Dispose() }
     }
@@ -609,6 +609,107 @@ Describe 'export to PST: resume' {
             $null = New-Item -ItemType Directory -Path (Split-Path $other)
             [IO.File]::WriteAllBytes($other, [byte[]](1..10))
             { [MailboxTransfer.PstExporter]::Run($store, (New-Options $other -MiB 5 -NoCheck), $null, $script:Ct) } | Should -Throw '*without a manifest*'
+        } finally { $store.Dispose() }
+    }
+}
+
+Describe 'export to PST: the folder of an auxiliary archive (English name, 1.0.x name recognised when an export is continued)' {
+    BeforeAll {
+        $script:LegacyName = 'Archive auxiliaire 1 (bbbbbbbb)'     # what 1.0.x wrote: the one French literal of the tests, it guards the alias
+        # Primary: 4 items; auxiliary archive: 6 items of its own. Parts of 5 MiB hold 4 items: part 1 is the primary, the auxiliary archive follows in part 2 and 3.
+        function New-AuxWorld {
+            param([string]$Name)
+            $store = [MailboxTransfer.ExportStore]::Create((Join-Path $script:Tmp $Name), $Name, 'tests')
+            [void]$store.UpsertMailbox([MailboxTransfer.StoreMailbox]@{ Id = $script:P; Kind = 'Primary'; Upn = 'u@x.test'; DisplayName = 'Primary' })
+            [void]$store.UpsertMailbox([MailboxTransfer.StoreMailbox]@{ Id = $script:X; Kind = 'AuxArchive'; Upn = 'u@x.test'; DisplayName = 'AuxArchive' })
+            Add-Folder $store $script:P $script:PG 1 'Inbox'
+            Add-Folder $store $script:X $script:XG 900 'Aux only'
+            foreach ($n in 1..4) { [void](Add-Item $store $script:P (Fid $script:PG 1) "Primary $n" -Pad 1200000 -Seed $n) }
+            foreach ($n in 1..6) { [void](Add-Item $store $script:X (Fid $script:XG 900) "Aux $n" -Pad 1200000 -Seed (10 + $n)) }
+            return $store
+        }
+        function New-AuxOptions([string]$Dest, [switch]$Legacy) {
+            $o = New-Options $Dest -MiB 5
+            $o.MergeAuxIntoArchive = $false
+            if ($Legacy) { $o.AuxArchiveNameFormat = [MailboxTransfer.PstExportOptions]::LegacyAuxArchiveNameFormat }     # what 1.0.x wrote
+            return $o
+        }
+        function Get-PartTops($Dest, $Parts) {
+            $tops = foreach ($p in $Parts) { $t = Get-PstTree (Join-Path (Split-Path $Dest) $p.File); foreach ($k in $t.Keys) { ($k -split '/')[0] } }
+            return @($tops | Sort-Object -Unique)
+        }
+        # Runs an export that is cancelled in part 2 (the auxiliary archive is half written), as a 1.0.x or a 1.1 run.
+        function Start-CancelledAuxExport($Store, [string]$Dest, [switch]$Legacy) {
+            $cts = [Threading.CancellationTokenSource]::new()
+            $state = @{ Done = $false }
+            $sink = [MailboxTransfer.PstExportProgressSink]::new([Action[MailboxTransfer.PstExportProgress]]{
+                    param($e)
+                    if ($e.Phase -eq 'write' -and $e.PartIndex -eq 2 -and $e.ItemsDone -ge 6 -and -not $state.Done) { $state.Done = $true; $cts.Cancel() }
+                }.GetNewClosure())
+            $r = [MailboxTransfer.PstExporter]::Run($Store, (New-AuxOptions $Dest -Legacy:$Legacy), $sink, $cts.Token)
+            $r.Cancelled | Should -BeTrue
+            $r.Parts.Count | Should -Be 1
+            return $r
+        }
+    }
+
+    It 'names the folder in English with the number and the first 8 characters of the mailbox id, in the plan, the PST and the manifest' {
+        $store = New-AuxWorld -Name 'auxname'
+        try {
+            $dest = Join-Path $script:Tmp 'auxname\out\mail.pst'
+            [MailboxTransfer.PstExportOptions]::new().AuxArchiveNameFormat | Should -Be 'Auxiliary archive {0} ({1})'
+            @([MailboxTransfer.PstExporter]::Plan($store, (New-AuxOptions $dest)).Locations | ForEach-Object Name) | Should -Be @('Primary', 'Auxiliary archive 1 (bbbbbbbb)')
+            $r = [MailboxTransfer.PstExporter]::Run($store, (New-AuxOptions $dest), $null, $script:Ct)
+            $r.Ok | Should -BeTrue
+            $r.ItemsWritten | Should -Be 10
+            @([MailboxTransfer.PstExportManifest]::Load($r.ManifestPath).Locations | ForEach-Object Name) | Should -Be @('Primary', 'Auxiliary archive 1 (bbbbbbbb)')
+            Get-PartTops $dest $r.Parts | Should -Be @('Auxiliary archive 1 (bbbbbbbb)', 'Primary')
+            $all = foreach ($p in $r.Parts) { $t = Get-PstTree (Join-Path (Split-Path $dest) $p.File); foreach ($k in $t.Keys | Where-Object { $_ -like 'Auxiliary archive 1 (bbbbbbbb)/Aux only' }) { $t[$k].Subjects } }
+            @($all).Count | Should -Be 6
+        } finally { $store.Dispose() }
+    }
+
+    It 'continues an export of 1.0.x under the name its first part already has: no second folder, no duplicate item' {
+        $store = New-AuxWorld -Name 'auxold'
+        try {
+            $dest = Join-Path $script:Tmp 'auxold\out\mail.pst'
+            $legacy = $script:LegacyName
+            $first = Start-CancelledAuxExport $store $dest -Legacy
+            @([MailboxTransfer.PstExportManifest]::Load($first.ManifestPath).Locations | ForEach-Object Name) | Should -Be @('Primary', $legacy)
+            # the plan of the continuation (what the console shows) already says the name that will be written
+            @([MailboxTransfer.PstExporter]::Plan($store, (New-AuxOptions $dest)).Locations | ForEach-Object Name) | Should -Be @('Primary', $legacy)
+            $second = [MailboxTransfer.PstExporter]::Run($store, (New-AuxOptions $dest), $null, $script:Ct)      # 1.1 options: the new name
+            $second.Ok | Should -BeTrue
+            $second.PartsReused | Should -Be 1
+            $second.ItemsReused + $second.ItemsWritten | Should -Be 10
+            @([MailboxTransfer.PstExportManifest]::Load($second.ManifestPath).Locations | ForEach-Object Name) | Should -Be @('Primary', $legacy)
+            Get-PartTops $dest $second.Parts | Should -Be @($legacy, 'Primary')
+            $subjects = foreach ($p in $second.Parts) { $t = Get-PstTree (Join-Path (Split-Path $dest) $p.File); foreach ($k in $t.Keys) { $t[$k].Subjects } }
+            @($subjects).Count | Should -Be 10
+            @($subjects | Select-Object -Unique).Count | Should -Be 10
+            # a third run has nothing left and does not change the name either
+            $third = [MailboxTransfer.PstExporter]::Run($store, (New-AuxOptions $dest), $null, $script:Ct)
+            $third.ItemsWritten | Should -Be 0
+            @([MailboxTransfer.PstExportManifest]::Load($third.ManifestPath).Locations | ForEach-Object Name) | Should -Be @('Primary', $legacy)
+        } finally { $store.Dispose() }
+    }
+
+    It 'keeps the new name when an export of 1.1 is continued, and uses it for a new export over an old one with Force' {
+        $store = New-AuxWorld -Name 'auxnew'
+        try {
+            $dest = Join-Path $script:Tmp 'auxnew\out\mail.pst'
+            $first = Start-CancelledAuxExport $store $dest
+            $second = [MailboxTransfer.PstExporter]::Run($store, (New-AuxOptions $dest), $null, $script:Ct)
+            $second.Ok | Should -BeTrue
+            Get-PartTops $dest $second.Parts | Should -Be @('Auxiliary archive 1 (bbbbbbbb)', 'Primary')
+            # an old export started again from zero is a new export: the new name
+            $oldDest = Join-Path $script:Tmp 'auxnew\old\mail.pst'
+            $null = Start-CancelledAuxExport $store $oldDest -Legacy
+            $o = New-AuxOptions $oldDest; $o.Force = $true
+            $forced = [MailboxTransfer.PstExporter]::Run($store, $o, $null, $script:Ct)
+            $forced.Ok | Should -BeTrue
+            $forced.PartsReused | Should -Be 0
+            Get-PartTops $oldDest $forced.Parts | Should -Be @('Auxiliary archive 1 (bbbbbbbb)', 'Primary')
         } finally { $store.Dispose() }
     }
 }
