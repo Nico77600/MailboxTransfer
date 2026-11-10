@@ -2,17 +2,19 @@
 
 - Repository: https://github.com/Nico77600/MailboxTransfer
 - Default branch: `main`
-- Release: `v1.0.0` (`MailboxTransfer-1.0.0.zip`)
-- Audited revision: `05b75b5cef113fa54ba17fc7c620f9ca32647432` (public `main` and the tag `v1.0.0`, merge of pull request #1; this provenance record is the next commit)
+- Release: `v1.0.1` (`MailboxTransfer-1.0.1.zip`)
+- Base of the release branch: public `main` at `05b75b5cef113fa54ba17fc7c620f9ca32647432` (tag `v1.0.0`, merge of pull request #1, 2026-11-10)
+- Audited revision: `aa916558bc0368e5852a0ec4a9306044942ea150` (release content of the release branch; this provenance record is the next commit)
 - Audit date: 2026-11-10
-- Public commits inspected across branches and tags: 4 (the branches `main` and `publish/mailboxtransfer-1.0.0`, and the tag `v1.0.0`)
-- `Co-authored-by: Copilot` findings: none (none of the 4 public commits carries a `Co-authored-by` trailer at all)
+- Public commits inspected across branches and tags: 9 (4 before the release branch, on `main`, `publish/mailboxtransfer-1.0.0` and the tag `v1.0.0`, and the 5 commits of the release branch)
+- `Co-authored-by: Copilot` findings: none (none of the 9 commits carries a `Co-authored-by` trailer at all)
+- Previous audit: `05b75b5cef113fa54ba17fc7c620f9ca32647432`, 2026-11-10, 4 public commits, no `Co-authored-by: Copilot` finding
 
 This declaration records the public commit-history audit at the revision above. It is not a cryptographic signature and does not make claims about how source code was authored. Release assets are covered by the GitHub Actions workflow in `.github/workflows/attest-release.yml`; run it manually for an existing release when needed.
 
 ## Package integrity
 
-The release ZIP (`MailboxTransfer-1.0.0.zip`, built by `tools/New-MailboxTransferPackage.ps1`) is the user deliverable; the source archives of a release are not.
+The release ZIP (`MailboxTransfer-1.0.1.zip`, built by `tools/New-MailboxTransferPackage.ps1`) is the user deliverable; the source archives of a release are not.
 
 - Every PowerShell file of the package, `src/Test-PackageIntegrity.ps1` and the manifest `PackageIntegrity.psd1` carry the owner's Authenticode signature with a trusted timestamp. The verifier hard-codes the signer thumbprint (`0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6`).
 - The manifest lists the SHA-256 of every other protected file: the C# sources compiled in memory, the SQLite libraries, the window definitions, the HTML guides, the launcher, the README and the notices. The launcher (`.cmd`) cannot carry an Authenticode signature: the manifest protects it by hash.
