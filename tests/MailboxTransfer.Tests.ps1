@@ -946,7 +946,7 @@ Describe 'Phase 0 on the store: export, preview, read, import' {
             try { Import-MbtStoreItem -Store $store -ItemKey $key -MailboxId $script:Mbx -FolderId 'T' -Confirm:$false } catch { $caught = $_.Exception.Message }
             $caught | Should -BeLike "*auxiliary archive*$aux*AuxArchive*Get-MailboxLocation*nothing was imported*"
             @($store.GetImportItems(1, [MailboxTransfer.StoreImportState]::Failed, 10)).Count | Should -Be 1
-            $file = Join-Path $script:Tmp 'aux.fxs'
+            $file = Join-Path $script:Tmp 'auxiliary-item.fxs'
             [IO.File]::WriteAllBytes($file, $script:Msg)
             $h.Enqueue(200, $url); $h.Enqueue(409, $conflict)
             $caught = $null
@@ -1496,7 +1496,7 @@ Describe 'Engine left in the process by an older build' {
     BeforeAll {
         $script:StaleRoot = Join-Path $script:Tmp 'stale-package'
         $null = New-Item -ItemType Directory -Path $script:StaleRoot
-        Copy-Item -Path (Join-Path $script:Root '*') -Destination $script:StaleRoot -Recurse -Exclude 'config', 'docs'
+        Copy-Item -Path (Join-Path $script:Root '*') -Destination $script:StaleRoot -Recurse -Exclude 'config', 'docs', 'PackageIntegrity.psd1'
         function Invoke-StaleChild {
             param([Parameter(Mandatory)][string]$Body)
             $psd1 = Join-Path $script:StaleRoot 'MailboxTransfer.psd1'

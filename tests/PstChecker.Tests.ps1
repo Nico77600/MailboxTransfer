@@ -444,6 +444,11 @@ Describe 'constraints beyond the specification (observed in Outlook''s own valid
 
 Describe 'file name rule: a PST named like a Windows device (FILE-RESERVED-NAME)' {
     It 'warns for aux.pst, con.v2.pst and the other device names (opens in our tools, crashes Outlook), and for them only' {
+        # Windows 10 and Server 2022 read aux.* as the device itself: such a file cannot exist there, and the rule cannot be tried on a real file.
+        $probeDir = Join-Path $TestDrive 'aux-probe'
+        $canCreate = $false
+        try { $null = New-Item -ItemType Directory -Path $probeDir -Force; $q = Join-Path $probeDir 'aux.pst'; [IO.File]::WriteAllBytes($q, [byte[]]1); $canCreate = [IO.File]::Exists($q); [IO.File]::Delete($q) } catch { $canCreate = $false }
+        if (-not $canCreate) { Set-ItResult -Skipped -Because 'this Windows resolves aux.pst to the AUX device (Windows 10, Server 2022): the file cannot be created'; return }
         $dir = Join-Path $TestDrive 'devnames'
         $null = New-Item -ItemType Directory -Path $dir
         try {
@@ -472,6 +477,11 @@ Describe 'file name rule: a PST named like a Windows device (FILE-RESERVED-NAME)
         }
     }
     It 'Test-MbtPst reports it with the other findings' {
+        # Windows 10 and Server 2022 read aux.* as the device itself: such a file cannot exist there, and the rule cannot be tried on a real file.
+        $probeDir = Join-Path $TestDrive 'aux-probe'
+        $canCreate = $false
+        try { $null = New-Item -ItemType Directory -Path $probeDir -Force; $q = Join-Path $probeDir 'aux.pst'; [IO.File]::WriteAllBytes($q, [byte[]]1); $canCreate = [IO.File]::Exists($q); [IO.File]::Delete($q) } catch { $canCreate = $false }
+        if (-not $canCreate) { Set-ItResult -Skipped -Because 'this Windows resolves aux.pst to the AUX device (Windows 10, Server 2022): the file cannot be created'; return }
         Import-Module (Join-Path $script:Root 'MailboxTransfer.psd1') -Force
         $dir = Join-Path $TestDrive 'devnames2'
         $null = New-Item -ItemType Directory -Path $dir

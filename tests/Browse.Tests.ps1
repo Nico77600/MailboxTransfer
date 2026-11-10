@@ -1010,7 +1010,7 @@ Describe 'Browse: module functions and the entry script' {
         $text | Should -Match 'signed in as adele.vance@contoso.com'
         $text | Should -Match 'browsing the Primary mailbox MBX:11111111.*\(Microsoft Graph Mail API\)'
         $text | Should -Match '6 folder\(s\), source: Microsoft Graph Mail API'
-        $text | Should -Match 'Inbox\s+5 item\(s\)\s+\d+(,\d+)? (B|KiB)\s+unread 1'
+        $text | Should -Match 'Inbox\s+5 item\(s\)\s+\d+([.,]\d+)? (B|KiB)\s+unread 1'
         $text | Should -Match '  Projects\s+3 item\(s\)'
         $text | Should -Match 'Calendar\s+2 item\(s\)\s+unknown\s+\[IPF\.Appointment, import-export API\]'
         $text | Should -Match 'total: 6 folder\(s\), 13 item\(s\), .*\(2 folders with unknown size, not counted\)'
