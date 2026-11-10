@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: Reference guide
-version: 1.0.0
+version: 1.0.1
 author: Nicolas Fabert
 updated: 2026-11-09
 runtime: PowerShell 7.5+ (engine and window), 7.4 for the command line

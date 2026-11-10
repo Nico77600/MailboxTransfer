@@ -1,6 +1,6 @@
 {
   "name": "MailboxTransfer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "visibility": "public",
   "status": "release",
   "runtimeIdentifier": ["win-x64", "win-arm64"],

@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: User guide
-version: 1.0.0
+version: 1.0.1
 author: Nicolas Fabert
 updated: 2026-11-09
 runtime: PowerShell 7.5+ (engine and window)
@@ -13,13 +13,13 @@ safety: Import only adds. Export only reads. Nothing is deleted. Nothing is over
 > Follow the path, one step after the other. Each step says **what to do**, **what you should see**, and **what to do if not**. You do not need to know anything before you start: every word is explained, and the glossary at the end says **where on the screen to look**. How the tool works inside, every setting, the exact rights and the file formats are in the [reference guide](MailboxTransfer-Guide.md). It is a second file, `MailboxTransfer-Guide.html`, in the same `docs` folder as this one.
 
 > [!IMPORTANT]
-> Files downloaded from the Internet may be blocked by Windows and fail to run. Before using this project, unblock every file in the downloaded folder:
+> Windows marks files downloaded from the Internet. After you extract the ZIP, check the publisher first (right-click a `.ps1`, for example `Invoke-MailboxTransfer.ps1`, Properties, Digital Signatures: `Nicolas Fabert`), then unblock the extracted folder once:
 >
 > ```powershell
 > Get-ChildItem "C:\Tools\MailboxTransfer" -Recurse -File -Force | Unblock-File
 > ```
 >
-> Replace the example path with the folder where you downloaded or extracted this project.
+> Replace the example path with the folder where you extracted the ZIP.
 
 > [!WARNING]
 > **Stop and ask.** If a step does not go as written, do not guess and do not click again and again. Write down what you see. A photo of the screen is enough. Then call your administrator, or the person who gave you this guide. Exporting never changes a mailbox. Importing adds items to a real mailbox, so do your first import into a **test mailbox**.
@@ -177,7 +177,7 @@ You put the two numbers in the file `config\MailboxTransfer.config.local.psd1` (
 **Do:** download the tool, then put it on the PC.
 
 1. Open **https://github.com/Nico77600/MailboxTransfer/releases/latest** in your browser.
-2. Under **Assets**, click **`MailboxTransfer-1.0.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
+2. Under **Assets**, click **`MailboxTransfer-1.0.1.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
 3. Extract the ZIP into a folder such as `C:\Tools\MailboxTransfer` (right-click, *Extract All*). Write the files directly in that folder: `Start-MailboxTransferConsole.cmd` must be inside it, not one level deeper.
 4. Unblock the folder (one command, once):
 
