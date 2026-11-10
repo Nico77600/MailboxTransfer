@@ -2,6 +2,17 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
+## 1.0.1 — 2026-11-10
+
+Documentation only: no change to the engine, the console or the command line.
+
+### Changed
+- README and guide pictures redrawn to the house standard (white or dark background, 2160 px wide, framed banner); a new Get started picture; the real console pages shown in the README.
+- The unblock note says to check the publisher first, with the example folder `C:\Tools\MailboxTransfer`.
+
+### Fixed
+- The permission picture of the user guide no longer says that writing into a shared mailbox with an app-only sign-in is "coming": it has been available since 1.0.0 (reference guide, 4.6).
+
 ## 1.0.0 — 2026-11-10
 
 First public version.

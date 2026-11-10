@@ -143,10 +143,10 @@ if ($Images -eq 'Console') { return }
 
 # ---- 2. drawings: a small toolkit over WPF -----------------------------------------------------------------------------------------------------
 $palettes = @{
-    light = @{ bg = '#F7F4EF'; card = '#FFFFFF'; stroke = '#DEDEDE'; text = '#242424'; text2 = '#5C5C5C'; text3 = '#8A8A8A'; accent = '#B11F4B'; accentText = '#9A1A41'; soft = '#F7E4EA'
-        ok = '#15803D'; okBg = '#EAF7EE'; warn = '#92400E'; warnBg = '#FFF7E8'; bad = '#B91C1C'; badBg = '#FDECEC'; info = '#F3F3F3'; white = '#FFFFFF'; bar = '#B11F4B'; barSoft = '#E7B9C7' }
-    dark  = @{ bg = '#202020'; card = '#2B2B2B'; stroke = '#3D3D3D'; text = '#FFFFFF'; text2 = '#C5C5C5'; text3 = '#9A9A9A'; accent = '#FD8EA1'; accentText = '#FD8EA1'; soft = '#40303A'
-        ok = '#4ADE80'; okBg = '#24362B'; warn = '#FBBF24'; warnBg = '#3A3322'; bad = '#F87171'; badBg = '#3A2626'; info = '#2E2E2E'; white = '#FFFFFF'; bar = '#FD8EA1'; barSoft = '#6B4450' }
+    light = @{ bg = '#FFFFFF'; card = '#FFFFFF'; stroke = '#DEDEDE'; text = '#242424'; text2 = '#5C5C5C'; text3 = '#8A8A8A'; accent = '#B11F4B'; accentText = '#9A1A41'; soft = '#F7E4EA'
+        onAccent = '#FFFFFF'; ok = '#15803D'; okBg = '#EAF7EE'; warn = '#92400E'; warnBg = '#FFF7E8'; bad = '#B91C1C'; badBg = '#FDECEC'; info = '#F3F3F3'; white = '#FFFFFF'; bar = '#B11F4B'; barSoft = '#E7B9C7' }
+    dark  = @{ bg = '#0D1117'; card = '#2B2B2B'; stroke = '#3D3D3D'; text = '#FFFFFF'; text2 = '#C5C5C5'; text3 = '#9A9A9A'; accent = '#FD8EA1'; accentText = '#FD8EA1'; soft = '#40303A'
+        onAccent = '#0D1117'; ok = '#4ADE80'; okBg = '#24362B'; warn = '#FBBF24'; warnBg = '#3A3322'; bad = '#F87171'; badBg = '#3A2626'; info = '#2E2E2E'; white = '#FFFFFF'; bar = '#FD8EA1'; barSoft = '#6B4450' }
 }
 $script:Canvas = $null; $script:Pal = $null; $script:Brush = @{}
 function Get-B([string]$Key) {
@@ -197,6 +197,14 @@ function Add-Pill([string]$Text, [double]$X, [double]$Y, [string]$Fill = 'okBg',
     [void](Add-Text $Text ($X + 11) ($Y + 4) $Size $Ink 'SemiBold')
     return $w
 }
+function Add-Badge([string]$Text, [double]$X, [double]$Y, [switch]$Filled, [double]$Size = 15) {
+    $m = [Windows.Controls.TextBlock]::new(); $m.Text = $Text; $m.FontSize = $Size
+    $m.FontFamily = [Windows.Media.FontFamily]::new('Segoe UI Variable Text, Segoe UI'); $m.Measure([Windows.Size]::new(10000, 10000))
+    $w = $m.DesiredSize.Width + 28; $h = $m.DesiredSize.Height + 14
+    if ($Filled) { Add-Rect $X $Y $w $h 'accent' '' ($h / 2); [void](Add-Text $Text ($X + 14) ($Y + 7) $Size 'onAccent' 'SemiBold') }
+    else { Add-Rect $X $Y $w $h 'card' 'stroke' ($h / 2) 1.2; [void](Add-Text $Text ($X + 14) ($Y + 7) $Size 'text2') }
+    return $w
+}
 function Add-Arrow([double]$X1, [double]$Y1, [double]$X2, [double]$Y2, [string]$Color = 'text3', [double]$Thickness = 2.5, [switch]$Dash) {
     $l = [Windows.Shapes.Line]::new(); $l.X1 = $X1; $l.Y1 = $Y1; $l.X2 = $X2; $l.Y2 = $Y2; $l.Stroke = Get-B $Color; $l.StrokeThickness = $Thickness
     if ($Dash) { $l.StrokeDashArray = [Windows.Media.DoubleCollection]::new([double[]]@(3, 3)) }
@@ -216,11 +224,13 @@ function Add-Step([int]$N, [double]$X, [double]$Y, [double]$D = 44, [string]$Fil
     [void](Add-Text ([string]$N) $X ($Y + $D * 0.2) ($D * 0.42) 'white' 'Bold' $D 'Center')
 }
 
-function Save-Drawing([string]$Base, [string]$Theme, [int]$W, [int]$H) {
-    $c = $script:Canvas; $c.Width = $W; $c.Height = $H
-    $c.Measure([Windows.Size]::new($W, $H)); $c.Arrange([Windows.Rect]::new(0, 0, $W, $H)); $c.UpdateLayout()
-    $s = 2
-    $bmp = [Windows.Media.Imaging.RenderTargetBitmap]::new($W * $s, $H * $s, 96 * $s, 96 * $s, [Windows.Media.PixelFormats]::Pbgra32)
+function Save-Drawing([string]$Base, [string]$Theme, [int]$W, [int]$H, [int]$PixelWidth = 2160) {
+    # The house size of a README picture: 2160 px wide (PraRemoteMailbox, ExchangeLogReport); the banner is 2000 px wide.
+    $s = $PixelWidth / [double]$W
+    $pxH = [int][Math]::Ceiling($H * $s)
+    $c = $script:Canvas; $c.Width = $W; $c.Height = $pxH / $s
+    $c.Measure([Windows.Size]::new($W, $c.Height)); $c.Arrange([Windows.Rect]::new(0, 0, $W, $c.Height)); $c.UpdateLayout()
+    $bmp = [Windows.Media.Imaging.RenderTargetBitmap]::new($PixelWidth, $pxH, 96 * $s, 96 * $s, [Windows.Media.PixelFormats]::Pbgra32)
     $bmp.Render($c)
     $enc = [Windows.Media.Imaging.PngBitmapEncoder]::new(); $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bmp))
     $file = Join-Path $OutDir ('{0}-{1}.png' -f $Base, $Theme)
@@ -231,27 +241,34 @@ function Save-Drawing([string]$Base, [string]$Theme, [int]$W, [int]$H) {
 # ---- the drawings -----------------------------------------------------------------------------------------------------------------------------
 $drawings = [ordered]@{}
 
-$drawings['readme-banner'] = @{ W = 1280; H = 640; Draw = {
-        Add-Rect 0 0 1280 640 'bg' '' 0
-        Add-Rect 96 150 132 132 'accent' '' 34
-        Add-Icon 0xE715 132 183 64 'white'
-        [void](Add-Text 'MailboxTransfer' 256 138 76 'text' 'SemiBold')
-        [void](Add-Text 'Export and import Exchange Online mailboxes.' 260 240 34 'text2')
-        [void](Add-Text 'Verified, resumable, with a guided Windows console.' 260 288 34 'text2')
-        $x = 96
-        foreach ($t in @(@(0xE721, 'Browse before you copy'), @(0xE74E, 'PST files, checked'), @(0xE90F, 'Repair a damaged PST'), @(0xE916, 'Stop and continue'))) {
-            Add-Card $x 410 262 120
-            Add-Tile $t[0] ($x + 18) 440 52
-            [void](Add-Text $t[1] ($x + 82) 444 20 'text' 'SemiBold' 160)
-            $x += 282
+$drawings['readme-banner'] = @{ W = 1000; H = 339; PixelWidth = 2000; Draw = {
+        Add-Rect 0 0 1000 339 'bg' '' 0
+        Add-Rect 4 4 992 70 'accent' '' 26
+        Add-Rect 4 9 992 326 'card' 'stroke' 26 1.2
+        Add-Rect 48 62 74 74 'accent' '' 19
+        Add-Icon 0xE715 67 78 38 'onAccent'
+        [void](Add-Text 'EXCHANGE ONLINE  ·  MAILBOXES AND PST FILES' 142 60 13 'accentText' 'Bold')
+        [void](Add-Text 'Mailbox Transfer' 138 78 46 'text' 'SemiBold')
+        [void](Add-Text 'Export and import Exchange Online mailboxes, verified and resumable, with a guided Windows console. Checks and repairs PST files.' 48 160 17 'text' 'Normal' 560)
+        $x = 48
+        $x += (Add-Badge ("Version $Version") $x 262 -Filled) + 10
+        $x += (Add-Badge 'PowerShell 7.5+' $x 262) + 10
+        $x += (Add-Badge 'No Outlook needed' $x 262) + 10
+        [void](Add-Badge 'MIT license' $x 262)
+        $stats = @(@('4', 'tasks', 'Export, import, check and repair a PST, open'), @('50', 'GB per PST part', 'each part checked when written'), @('0', 'items deleted', 'an import only adds, an export only reads'))
+        $y = 34
+        foreach ($t in $stats) {
+            Add-Rect 690 $y 270 84 'card' 'stroke' 16 1.2
+            [void](Add-Text $t[0] 706 ($y + 16) 36 'accentText' 'Bold' 64 'Center')
+            [void](Add-Text $t[1] 782 ($y + 12) 17 'text' 'SemiBold' 170)
+            [void](Add-Text $t[2] 782 ($y + 36) 13.5 'text2' 'Normal' 170)
+            $y += 96
         }
-        [void](Add-Text 'PowerShell 7.5 · Windows · no Outlook needed' 96 570 22 'text3')
-        [void](Add-Text ("v$Version · Nicolas Fabert") 880 570 22 'text3')
     } }
 
 $drawings['readme-why'] = @{ W = 1280; H = 400; Draw = {
         Add-Rect 0 0 1280 400 'bg' '' 0
-        $items = @(@(0xE715, 'A mailbox', 'Primary, archive,' + [char]10 + 'auxiliary archives'), @(0xE74E, 'A PST file or a store', 'Checked, in parts,' + [char]10 + 'you can look inside'), @(0xE715, 'Another mailbox', 'Items are only added.' + [char]10 + 'Nothing is deleted.'))
+        $items = @(@(0xE715, 'A mailbox', ('Primary, archive,' + [char]10 + 'auxiliary archives')), @(0xE74E, 'A PST file or a store', ('Checked, in parts,' + [char]10 + 'you can look inside')), @(0xE715, 'Another mailbox', ('Items are only added.' + [char]10 + 'Nothing is deleted.')))
         $x = 80
         for ($i = 0; $i -lt 3; $i++) {
             Add-Card $x 70 300 220
@@ -281,6 +298,43 @@ $drawings['readme-tasks'] = @{ W = 1280; H = 380; Draw = {
         }
     } }
 
+$drawings['readme-start'] = @{ W = 1280; H = 540; Draw = {
+        Add-Rect 0 0 1280 540 'bg' '' 0
+        Add-Rect 10 10 1260 520 '' 'stroke' 18 1.5 -Dash
+        Add-Icon 0xE713 36 30 20 'accentText'
+        [void](Add-Text 'GET READY, ONCE' 66 30 18 'accentText' 'Bold')
+        $once = @(@('Get your rights', 'ask your administrator'), @('Put the tool on the PC', 'unzip, then unblock'), @('Write your two numbers', 'tenant id, application id'), @('Open the console', 'double-click the .cmd'))
+        for ($i = 0; $i -lt 4; $i++) {
+            $x = 36 + $i * 305
+            Add-Card $x 66 285 80
+            Add-Step ($i + 1) ($x + 14) 86 40
+            [void](Add-Text $once[$i][0] ($x + 64) 80 18 'text' 'SemiBold' 215)
+            [void](Add-Text $once[$i][1] ($x + 64) 108 16 'text2' 'Normal' 215)
+            if ($i -lt 3) { Add-Arrow ($x + 289) 106 ($x + 300) 106 'text3' 2 }
+        }
+        $branches = @(
+            @('A', 0xE896, 'Browse and export', @(@('Sign in, pick the mailbox', 'or open a shared mailbox'), @('Tick, choose where to save', 'read the plan, then Start'), @('Read the result', 'the Done page, then the log'))),
+            @('B', 0xE898, 'Import', @(@('Pick the file and the mailbox', 'a test mailbox first'), @('Read the plan, type IMPORT', 'then Start'), @('Read the result', 'what was added, what was refused'))),
+            @('C', 0xE90F, 'Check and repair a PST', @(@('Pick the file', 'nothing is written yet'), @('Check, then repair', 'into a new file: the original stays'), @('Read before and after', 'the repair report')))
+        )
+        for ($b = 0; $b -lt 3; $b++) {
+            $x = 36 + $b * 405
+            Add-Arrow ($x + 190) 154 ($x + 190) 192 'accent' 2
+            Add-Rect $x 196 380 70 'accent' '' 16
+            Add-Rect $x 201 380 311 'card' 'stroke' 16 1.2
+            Add-Rect ($x + 18) 218 44 44 'text' '' 10
+            [void](Add-Text $branches[$b][0] ($x + 18) 224 24 'bg' 'Bold' 44 'Center')
+            Add-Tile $branches[$b][1] ($x + 74) 218 44 'soft' 'accent'
+            [void](Add-Text $branches[$b][2] ($x + 132) 226 21 'text' 'SemiBold' 240)
+            for ($i = 0; $i -lt 3; $i++) {
+                $y = 290 + $i * 74
+                Add-Step ($i + 5) ($x + 20) $y 38
+                [void](Add-Text $branches[$b][3][$i][0] ($x + 74) ($y - 2) 17 'text' 'SemiBold' 290)
+                [void](Add-Text $branches[$b][3][$i][1] ($x + 74) ($y + 24) 15 'text2' 'Normal' 290)
+            }
+        }
+    } }
+
 $drawings['readme-path'] = @{ W = 1280; H = 240; Draw = {
         Add-Rect 0 0 1280 240 'bg' '' 0
         $steps = @(@('Task', 'Pick what to do'), @('From', 'Choose the source'), @('To', 'Choose where it goes'), @('Plan', 'Read before you start'), @('Run', 'Wait, stop, continue'), @('Done', 'Read the result'))
@@ -291,7 +345,7 @@ $drawings['readme-path'] = @{ W = 1280; H = 240; Draw = {
             [void](Add-Text $steps[$i][1] $x 142 16 'text2' 'Normal' 176 'Center')
             if ($i -lt 5) { Add-Arrow ($x + 128) 68 ($x + 190) 68 'text3' 2.5 }
         }
-        [void](Add-Text 'The circles are at the top of the window. The filled crimson one is the page you are on.' 40 196 18 'text3' 'Normal' 1200 'Center')
+        [void](Add-Text 'The circles are at the top of the window: the highlighted one is the page you are on.' 40 196 18 'text3' 'Normal' 1200 'Center')
     } }
 
 $drawings['readme-principles'] = @{ W = 1280; H = 400; Draw = {
@@ -360,7 +414,7 @@ $drawings['readme-permissions'] = @{ W = 1280; H = 700; Draw = {
         Add-Rect 0 0 1280 700 'bg' '' 0
         Add-Card 20 20 1240 660
         $cols = @('Folder.Read', 'Folder.ReadWrite', 'Item.Read', 'Item.Export', 'Item.ImportExport', 'Mail.Read', 'Mail.Read.Shared', 'Mail.ReadWrite')
-        $x0 = 470; $cw = 100
+        $x0 = 440; $cw = 98
         [void](Add-Text 'Delegated permissions (Microsoft Graph), the minimum for each task' 44 36 20 'text' 'SemiBold')
         for ($i = 0; $i -lt $cols.Count; $i++) {
             $label = $cols[$i]; $head = if ($label -like 'Mail.*') { 'Mail' + [char]10 + '.' + $label.Substring(5) } else { 'Mailbox' + $label.Split('.')[0] + [char]10 + '.' + $label.Split('.', 2)[1] }
@@ -381,10 +435,10 @@ $drawings['readme-permissions'] = @{ W = 1280; H = 700; Draw = {
         $y = 118
         foreach ($r in $rows) {
             Add-Rect 36 ($y - 6) 1208 52 $(if ($rows.IndexOf($r) % 2 -eq 0) { 'info' } else { 'card' }) '' 8
-            [void](Add-Text $r[0] 52 ($y + 4) 17 'text' 'Normal' 410)
+            [void](Add-Text $r[0] 52 ($y + 4) 17 'text' 'Normal' 376)
             $m = $r[1]
             if ($m.Count -eq 0) { [void](Add-Pill 'no permission, no sign-in' $x0 ($y + 4) 'okBg' 'ok') }
-            elseif ($m[0] -eq 'app') { [void](Add-Pill 'application permissions (.All), app-only sign-in: coming' $x0 ($y + 4) 'warnBg' 'warn') }
+            elseif ($m[0] -eq 'app') { [void](Add-Pill 'application permissions (.All) and an app-only sign-in with a certificate: see the reference guide, 4.6' $x0 ($y + 4) 'warnBg' 'warn') }
             else {
                 for ($i = 0; $i -lt 8; $i++) {
                     $cx = $x0 + $i * $cw + $cw / 2 - 10
@@ -511,6 +565,7 @@ foreach ($key in $drawings.Keys) {
         $script:Canvas = [Windows.Controls.Canvas]::new()
         $script:Canvas.Background = Get-B 'bg'
         & $d.Draw
-        Save-Drawing $key $theme $d.W $d.H
+        $pw = if ($d.ContainsKey('PixelWidth')) { $d.PixelWidth } else { 2160 }
+        Save-Drawing $key $theme $d.W $d.H $pw
     }
 }

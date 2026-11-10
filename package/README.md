@@ -1,17 +1,17 @@
 # Mailbox Transfer
 
-Exports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified local store or to PST files, imports PST files, stores and `.eml` files into a mailbox, and checks and repairs PST files. A guided Windows console and a PowerShell 7 command line. Author: Nicolas Fabert. Version 1.0.0.
+Exports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified local store or to PST files, imports PST files, stores and `.eml` files into a mailbox, and checks and repairs PST files. A guided Windows console and a PowerShell 7 command line. Author: Nicolas Fabert. Version 1.0.1.
 
 This folder contains everything needed to run the tool: the command line (`Invoke-MailboxTransfer.ps1`), the console (`Start-MailboxTransferConsole.ps1` and `.cmd`, `module\`), the C# engine (`src\`), SQLite (`lib\sqlite\`), the configuration and the two guides (user guide and reference guide, HTML with their pictures). Tests and build tools stay outside it, in the repository.
 
 > [!IMPORTANT]
-> Files downloaded from the Internet may be blocked by Windows and fail to run. Before using this project, unblock every file in the downloaded folder:
+> Windows marks files downloaded from the Internet. Once the ZIP is extracted, check the publisher first (right-click a `.ps1`, for example `Invoke-MailboxTransfer.ps1`, Properties, Digital Signatures: `Nicolas Fabert`), then unblock the extracted folder once:
 >
 > ```powershell
-> Get-ChildItem "C:\Chemin\Du\Dossier" -Recurse -File -Force | Unblock-File
+> Get-ChildItem "C:\Tools\MailboxTransfer" -Recurse -File -Force | Unblock-File
 > ```
 >
-> Replace the example path with the folder where you downloaded or extracted this project.
+> Replace the example path with the folder where you extracted the ZIP.
 
 ## Requirements
 
