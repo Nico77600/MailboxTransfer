@@ -95,7 +95,7 @@ Describe 'Static package contract' {
         }
     }
     It 'has one version: the module manifest, the module, the entry scripts, product.json and the top of the changelog' {
-        $v = '1.0.1'
+        $v = '1.1.0'
         (Import-PowerShellDataFile -LiteralPath (Join-Path $script:Package 'MailboxTransfer.psd1')).ModuleVersion | Should -Be $v
         [IO.File]::ReadAllText((Join-Path $script:Package 'MailboxTransfer.psm1')) | Should -Match "(?m)^\`$script:ToolVersion = '$v'"
         [IO.File]::ReadAllText((Join-Path $script:Package 'Start-MailboxTransferConsole.ps1')) | Should -Match "(?m)^\`$script:ConsoleVersion = '$v'"

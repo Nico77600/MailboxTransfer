@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: User guide
-version: 1.0.1
+version: 1.1.0
 author: Nicolas Fabert
 updated: 2026-11-09
 runtime: PowerShell 7.5+ (engine and window)
@@ -177,7 +177,7 @@ You put the two numbers in the file `config\MailboxTransfer.config.local.psd1` (
 **Do:** download the tool, then put it on the PC.
 
 1. Open **https://github.com/Nico77600/MailboxTransfer/releases/latest** in your browser.
-2. Under **Assets**, click **`MailboxTransfer-1.0.1.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
+2. Under **Assets**, click **`MailboxTransfer-1.1.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
 3. Extract the ZIP into a folder such as `C:\Tools\MailboxTransfer` (right-click, *Extract All*). Write the files directly in that folder: `Start-MailboxTransferConsole.cmd` must be inside it, not one level deeper.
 4. Unblock the folder (one command, once):
 

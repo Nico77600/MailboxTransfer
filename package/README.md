@@ -1,6 +1,6 @@
 # Mailbox Transfer
 
-Exports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified local store or to PST files, imports PST files, stores and `.eml` files into a mailbox, and checks and repairs PST files. A guided Windows console and a PowerShell 7 command line. Author: Nicolas Fabert. Version 1.0.1.
+Exports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified local store or to PST files, imports PST files, stores and `.eml` files into a mailbox, and checks and repairs PST files. A guided Windows console and a PowerShell 7 command line. Author: Nicolas Fabert. Version 1.1.0.
 
 This folder contains everything needed to run the tool: the command line (`Invoke-MailboxTransfer.ps1`), the console (`Start-MailboxTransferConsole.ps1` and `.cmd`, `module\`), the C# engine (`src\`), SQLite (`lib\sqlite\`), the configuration and the two guides (user guide and reference guide, HTML with their pictures). Tests and build tools stay outside it, in the repository.
 

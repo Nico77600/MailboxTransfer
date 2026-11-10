@@ -2,6 +2,12 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
+## 1.1.0 — 2026-11-10
+
+### Changed
+- **PST export**: the folder of an auxiliary archive (`-SeparateAuxArchives`) now has an English name, "Auxiliary archive 1 (xxxxxxxx)". An export started with 1.0.x and continued keeps the name it already has, and a PST made by 1.0.x is read and imported as before.
+- README banner redrawn to the same template as the other projects.
+
 ## 1.0.1 — 2026-11-10
 
 Documentation only: no change to the engine, the console or the command line.
