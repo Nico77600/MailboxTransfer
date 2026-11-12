@@ -16,7 +16,7 @@ Set-StrictMode -Version Latest
 $script:FakePstState = 'damaged'
 
 function New-MbtGuiFakeRandom {
-    <# A small deterministic generator (the mockup's), so the screenshots are the same every time. #>
+    <# A small deterministic generator, so the screenshots are the same every time. #>
     param([string]$Seed)
     $a = 0
     foreach ($c in $Seed.ToCharArray()) { $a = [int](([long]$a * 31 + [int]$c) -band 0x7FFFFFFF) }
@@ -38,7 +38,7 @@ function New-MbtGuiFakeNode {
 }
 
 function Get-MbtGuiFakeTree {
-    <# The mailbox of the mockup: Primary, Archive, Auxiliary archive 1 (being filled by Microsoft). -Recoverable: with Recoverable Items (the box "Include deleted items"). #>
+    <# A mailbox with its three locations: Primary, Archive, Auxiliary archive 1 (being filled by Microsoft). -Recoverable: with Recoverable Items (the box "Include deleted items"). #>
     param([switch]$Recoverable)
     $f = { param($id, $name, $glyph, $count, $gib, $kids = @()) New-MbtGuiFakeNode -Id $id -Name $name -Glyph $glyph -Count $count -SizeGiB $gib -Kids $kids }
     $deleted = @()
@@ -79,7 +79,7 @@ $script:FakeBodies = @("Hello Adele,`n`nPlease find the latest version attached.
     "Adele,`n`nA short reminder about the review. The numbers are in the table below; the open points are marked in yellow.`n`nRegards,")
 
 function Get-MbtGuiFakeItems {
-    <# Up to 12 synthetic messages of a folder (the mockup's), as rows of the list. #>
+    <# Up to 12 synthetic messages of a folder, as rows of the list. #>
     param([Parameter(Mandatory)]$Node)
     $rand = New-MbtGuiFakeRandom $Node.Id
     $n = [math]::Min([int]$Node.Count, 12)
@@ -169,6 +169,7 @@ function New-MbtGuiFakeEngine {
                         @{ Severity = 'Warning'; Text = 'Folder counters are out of date'; Code = 'CONTENTS-CELL'; Count = 4; Level = 'Recompute' }
                         @{ Severity = 'Warning'; Text = 'A message size differs from the sum of its parts'; Code = 'MSG-SIZE-COMPUTED'; Count = 1; Level = 'Recompute' }) } else { @() }) }) }
     $engine.SaveSelection = { param($Root, $Entries, $Path, $OnDone, $OnError) & $OnDone $Path }
+    $engine.SaveSelections = { param($Groups, $Path, $OnDone, $OnError) & $OnDone $Path }
     $engine.Jobs = { param($Work) @(
             [pscustomobject]@{ Task = 'import'; Title = 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' Adele Vance (Archive)'; Sub = '5,120 of 9,860 items done ' + [char]0x00B7 + ' stopped yesterday 22:41 ' + [char]0x00B7 + ' 3 items to check'; State = 'run'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'RunImportStopped' } }
             [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' Primary + Archive ' + [char]0x2192 + ' D:\Exports\adele'; Sub = 'Not finished: 2 folders are not ready at Microsoft yet. Nothing is lost.'; State = 'warn'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'DoneExportPartial' } }

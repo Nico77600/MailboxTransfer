@@ -8,7 +8,7 @@
 #>
 Set-StrictMode -Version Latest
 
-#region Plain-words errors (CONSOLE-SPEC 11) ---------------------------------------------------------
+#region Plain-words errors ---------------------------------------------------------
 
 function ConvertTo-MbtGuiMessage {
     <# What happened, in one sentence, from a raw engine message. Returns Text and Tech (the raw message, for the collapsed technical line). #>
@@ -186,7 +186,7 @@ function New-MbtGuiSignInCard {
             $inner += $code
             $inner += New-GuiText ("This code is valid until " + $s.Code.Until.ToString('HH:mm') + '.') 'Small'
             $btns = [Windows.Controls.StackPanel]::new(); $btns.Orientation = 'Horizontal'; $btns.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
-            $btns.Children.Add((New-GuiButton -Text 'Copy the code' -Small -OnClick { [Windows.Clipboard]::SetText($s.Code.Code) })) | Out-Null
+            $btns.Children.Add((New-GuiButton -Text 'Copy the code' -Small -OnClick { $null = Set-MbtGuiClipboard $s.Code.Code })) | Out-Null
             $btns.Children.Add((New-GuiButton -Text 'Open the page' -Small -OnClick { Start-Process $s.Code.Url })) | Out-Null
             $inner += $btns
         } else { $inner += New-GuiText 'Getting a code...' 'Hint' }
@@ -374,7 +374,7 @@ function Build-MbtGuiExportToPage {
         $split = [Windows.Controls.ComboBox]::new(); $split.HorizontalAlignment = 'Stretch'
         foreach ($t in '50 GB (Outlook''s default limit)', '20 GB', '10 GB', '5 GB') { [void]$split.Items.Add($t) }
         $split.SelectedIndex = switch ([int]$s.SplitGB) { 50 { 0 } 20 { 1 } 10 { 2 } 5 { 3 } default { 0 } }
-        $split.Add_SelectionChanged({ param($x, $e) $s.SplitGB = @(50, 20, 10, 5)[$x.SelectedIndex]; $s.Changed['SplitGB'] = $true })
+        Add-MbtGuiHandler $split 'SelectionChanged' { param($sender, $e) $s.SplitGB = @(50, 20, 10, 5)[$sender.SelectedIndex]; $s.Changed['SplitGB'] = $true }
         $more = New-GuiMore -Summary 'More options' -Content @(
             (New-GuiText 'Largest PST file' 'Label'), $split,
             (New-GuiText 'A message is never cut in two. A file may be a little larger than the limit if one message does not fit. This choice applies to this run only.' 'Hint'),
@@ -470,7 +470,7 @@ function New-MbtGuiSleepInfo {
         '**The PC restarts or loses power:** nothing is lost. Items that were being sent are checked first when you continue.'
         '**The internet drops:** the tool waits and tries again by itself.')
     $stack = [Windows.Controls.StackPanel]::new()
-    foreach ($t in $items) { $row = New-GuiText ([char]0x2022 + '  ' + ($t -replace '\*(?!\*)', '')) 'Body'; $row.FontSize = 13; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $stack.Children.Add($row) | Out-Null }
+    foreach ($t in $items) { $row = New-GuiText ([char]0x2022 + '  ' + ($t -replace '\*', '')) 'Body'; $row.FontSize = 13; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $stack.Children.Add($row) | Out-Null }
     return (New-GuiMore -Summary 'What if this PC sleeps, or I close the window?' -Content @($stack))
 }
 
@@ -486,7 +486,7 @@ function New-MbtGuiSettingsSection {
         $cb = [Windows.Controls.ComboBox]::new(); $cb.HorizontalAlignment = 'Stretch'
         foreach ($t in '4 (default, the Microsoft limit)', '2', '1') { [void]$cb.Items.Add($t) }
         $cb.SelectedIndex = switch ([int]$s.Conc) { 4 { 0 } 2 { 1 } 1 { 2 } default { 0 } }
-        $cb.Add_SelectionChanged({ param($x, $e) $new = @(4, 2, 1)[$x.SelectedIndex]; if ($new -ne $s.Conc) { $s.Conc = $new; $s.Changed['Conc'] = $true; Show-MbtGuiPage } }.GetNewClosure())
+        Add-MbtGuiHandler $cb 'SelectionChanged' { param($sender, $e) $new = @(4, 2, 1)[$sender.SelectedIndex]; if ($new -ne $s.Conc) { $s.Conc = $new; $s.Changed['Conc'] = $true; Show-MbtGuiPage } }
         $rows.Add($cb); $rows.Add((New-GuiText 'The tool lowers this by itself when Microsoft slows it down.' 'Hint'))
     }
     if ('retry' -in $Include) {
@@ -519,46 +519,16 @@ function New-MbtGuiSettingsCard {
 
 #region The same from the command line --------------------------------------------------------------------------
 
-function Format-MbtGuiCommandToken {
-    param([string]$Text)
-    if ($Text -match '[\s;&()$''`"]') { return ("'" + $Text.Replace("'", "''") + "'") }
-    return $Text
-}
-
 function Get-MbtGuiCommandLine {
     <#
-        The command line(s) of the task, from the arguments the console gives Invoke-MailboxTransfer.ps1, without the plumbing of the console (events
-        file, stop file, job id). With -Job: the job that ran; without: the one the Start button would begin.
+        The command line(s) of the task as an operator would type them (ConvertTo-MbtGuiCommandLine): the parameters that are a choice, no plumbing of the
+        console, no value that is the default. With -Job: the job that ran; without: the one the Start button would begin.
     #>
     param([Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'copy')][string]$Task, $Job)
-    $g = $script:Gui; $s = $g.S
-    $stub = $Job
-    $sel = $(if ($Task -eq 'export') { $g.ExportSelection } else { Get-MbtGuiTaskSelection })
-    $hasSel = [bool]($sel -and @($sel.Entries).Count)
-    if (-not $stub) {
-        $req = New-MbtGuiRequest -Task $Task
-        $folder = [IO.Path]::Combine($s.WorkFolder, 'jobs', ((Get-Date).ToString('yyyyMMdd-HHmm') + "-$Task"))
-        $n = 1
-        if ($Task -eq 'export' -and $hasSel) { $n = [math]::Max(1, @($sel.Entries | Group-Object { (Get-MbtGuiRootNode $_.Node).Id }).Count) }
-        $files = @()
-        if ($Task -eq 'export' -or ($Task -eq 'import' -and $s.ImSrc -eq 'store' -and $hasSel)) { $files = @(1..$n | ForEach-Object { [IO.Path]::Combine($folder, "selection-$_.json") }) }
-        $stub = @{ Id = "$Task-job"; Task = $Task; Folder = $folder; EventsPath = [IO.Path]::Combine($folder, 'events.jsonl'); StopPath = [IO.Path]::Combine($folder, 'stop.request')
-            ConfigPath = $(if ($req.Config) { [IO.Path]::Combine($folder, 'effective.config.psd1') } else { $null }); StorePath = $req.StorePath; SelectionFiles = $files; JobName = "$Task-$((Get-Date).ToString('MMddHHmm'))"
-            FolderFile = $(if ($hasSel -and $Task -eq 'copy' -or ($hasSel -and $Task -eq 'import' -and $s.ImSrc -in 'pst', 'eml')) { [IO.Path]::Combine($folder, 'folders.txt') } else { $null }); ItemsFile = $null }
-    }
-    $lines = [Collections.Generic.List[string]]::new()
+    $s = $script:Gui.S
+    $stub = if ($Job) { $Job } else { New-MbtGuiPreviewJob -Task $Task }
     try { $commands = @(Get-MbtGuiCommand -Task $Task -S $s -Job $stub) } catch { return '' }
-    foreach ($c in $commands) {
-        $tokens = [Collections.Generic.List[string]]::new(); $tokens.Add('.\Invoke-MailboxTransfer.ps1')
-        $a = @($c.Arguments)
-        for ($i = 0; $i -lt $a.Count; $i++) {
-            $x = [string]$a[$i]
-            if ($x -in '-EventsFile', '-StopFile', '-JobId') { $i++; continue }
-            $tokens.Add($(if ($x -match '^-[A-Za-z]+$') { $x } else { Format-MbtGuiCommandToken $x }))
-        }
-        $lines.Add(($tokens -join ' '))
-    }
-    return ($lines -join "`n")
+    return (ConvertTo-MbtGuiCommandLine -Command $commands -S $s)
 }
 
 function New-MbtGuiCommandLineCard {
@@ -570,9 +540,9 @@ function New-MbtGuiCommandLineCard {
     $box.Padding = [Windows.Thickness]::new(8, 6, 8, 6); $box.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
     [Windows.Automation.AutomationProperties]::SetName($box, 'The same from the command line')
     $state = @{ Text = $text }
-    $copy = New-GuiButton -Text 'Copy' -Small -Icon clip -OnClick { param($b, $e) if ($state.Text) { [Windows.Clipboard]::SetText($state.Text) }; $b.Content = 'Copied' }.GetNewClosure()
+    $copy = New-GuiButton -Text 'Copy' -Small -Icon clip -OnClick { param($b, $e) if ($state.Text -and (Set-MbtGuiClipboard $state.Text)) { $b.Content = 'Copied' } }.GetNewClosure()
     $copy.Margin = [Windows.Thickness]::new(0)
-    $hint = $(if ($Task -eq 'export') { 'Run it in PowerShell 7 from the tool folder. The selection files are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
+    $hint = $(if ($Task -in 'export', 'copy' -or ($Task -eq 'import' -and $script:Gui.S.ImSrc -ne 'store')) { 'Run it in PowerShell 7 from the tool folder. The files it names are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
     return (New-GuiCard -Title 'The same from the command line' -Info $hint -Right $copy -Content @($box))
 }
 

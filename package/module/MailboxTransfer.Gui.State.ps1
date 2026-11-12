@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     The window of the console: header, the stepper (Setup > Task > Verify > Run > Next steps; Task has the pages What, From, To), the page, the action bar, the dialog layer.
-    The state machine is the one of the mockup: a task chooses a flow; only the steps already passed are clickable; while a job runs nothing is.
+    The state machine: a task chooses a flow; only the steps already passed are clickable; while a job runs nothing is.
     Pages are functions (MailboxTransfer.Gui.Pages.ps1) that return the element of the page and set the action bar; the page is built again
     when the state changes, except the browse cards, which live as long as the window.
 
@@ -60,7 +60,7 @@ function New-MbtGuiState {
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
         PlanState = 'idle'; PlanMsg = ''; PlanKey = ''; PlanTotals = $null; CpFor = ''
-        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''
+        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''; JobName = ''
     }
 }
 
@@ -126,20 +126,21 @@ function New-MbtGuiWindow {
     # The theme can be changed in the window (System follows Windows): the window takes the new look and the page is built again.
     foreach ($name in 'System', 'Light', 'Dark') {
         $c["Th_$name"].Tag = $name
-        $c["Th_$name"].Add_Checked({ param($s, $e) Set-MbtGuiThemeChoice -Name ([string]$s.Tag) })
+        Add-MbtGuiHandler $c["Th_$name"] 'Checked' { param($sender, $e) Set-MbtGuiThemeChoice -Name ([string]$sender.Tag) }
     }
     # Help: the HTML user guide of the package, and the page of the latest release (the tool never checks for updates by itself; this opens the browser on a click).
-    $c.HelpGuide.Add_Click({ Open-MbtGuiHelp -Target Guide })
-    $c.HelpRelease.Add_Click({ Open-MbtGuiHelp -Target Release })
-    $c.BackButton.Add_Click({ Invoke-MbtGuiBack })
-    $c.Primary.Add_Click({ if ($script:Gui.PrimaryAction) { & $script:Gui.PrimaryAction } })
-    $timer.Add_Tick({ Step-MbtGuiTick })
-    $window.Add_PreviewKeyDown({
-            param($s, $e)
-            if ($e.Key -eq 'Escape' -and $script:Gui.DialogOpen) { Close-MbtGuiDialog; $e.Handled = $true }
-            elseif ($e.Key -eq 'Return' -and -not $script:Gui.DialogOpen -and $e.OriginalSource -isnot [Windows.Controls.TextBox] -and $c.Primary.IsEnabled -and $e.OriginalSource -isnot [Windows.Controls.Button]) { & $script:Gui.PrimaryAction; $e.Handled = $true }
-        })
-    $window.Add_Closing({ param($s, $e) Invoke-MbtGuiClosing $e })
+    Add-MbtGuiHandler $c.HelpGuide 'Click' { Open-MbtGuiHelp -Target Guide }
+    Add-MbtGuiHandler $c.HelpRelease 'Click' { Open-MbtGuiHelp -Target Release }
+    Add-MbtGuiHandler $c.BackButton 'Click' { Invoke-MbtGuiBack }
+    Add-MbtGuiHandler $c.Primary 'Click' { if ($script:Gui.PrimaryAction) { & $script:Gui.PrimaryAction } }
+    Add-MbtGuiHandler $timer 'Tick' { Step-MbtGuiTick }
+    Add-MbtGuiHandler $window 'PreviewKeyDown' {
+        param($sender, $e)
+        $gui = $script:Gui
+        if ($e.Key -eq 'Escape' -and $gui.DialogOpen) { Close-MbtGuiDialog; $e.Handled = $true }
+        elseif ($e.Key -eq 'Return' -and -not $gui.DialogOpen -and $e.OriginalSource -isnot [Windows.Controls.TextBox] -and $gui.C.Primary.IsEnabled -and $e.OriginalSource -isnot [Windows.Controls.Button] -and $gui.PrimaryAction) { & $gui.PrimaryAction; $e.Handled = $true }
+    }
+    Add-MbtGuiHandler $window 'Closing' { param($sender, $e) Invoke-MbtGuiClosing $e }
     # The window fits the screen where it opens (small laptop screen at 150 %).
     $area = [Windows.SystemParameters]::WorkArea
     $window.Width = [Math]::Min($window.Width, $area.Width); $window.Height = [Math]::Min($window.Height, $area.Height)
@@ -216,7 +217,7 @@ function Update-MbtGuiStepper {
         $sp.Children.Add($circle) | Out-Null; $sp.Children.Add($lbl) | Out-Null
         $btn.Content = $sp
         if ($cur) { Set-MbtGuiResource $btn ([Windows.Controls.Control]::BackgroundProperty) 'MbtAccentSoft' }
-        $btn.Add_Click({ param($b, $e) Set-MbtGuiStep ([int]$b.Tag) })
+        Add-MbtGuiHandler $btn 'Click' { param($sender, $e) Set-MbtGuiStep ([int]$sender.Tag) }
         $cell = [Windows.Controls.StackPanel]::new(); $cell.VerticalAlignment = 'Top'
         $cell.Children.Add($btn) | Out-Null
         if ($grp.Name -eq 'Task') { $cell.Children.Add((New-MbtGuiSubSteps -Members $grp.Members -Flow $flow -Locked $locked)) | Out-Null }
@@ -246,7 +247,7 @@ function New-MbtGuiSubSteps {
         if ($cur) { $t.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText' }
         elseif (-not $passed) { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'TextFillColorTertiaryBrush' }
         $b.Content = $t
-        $b.Add_Click({ param($x, $e) Set-MbtGuiStep ([int]$x.Tag) })
+        Add-MbtGuiHandler $b 'Click' { param($sender, $e) Set-MbtGuiStep ([int]$sender.Tag) }
         $row.Children.Add($b) | Out-Null
     }
     return $row
@@ -267,7 +268,7 @@ function Set-MbtGuiActions {
         $c.PrimaryLabel.Text = $Label
         if ($Icon) { $c.PrimaryIcon.Text = Get-MbtGlyph $Icon; $c.PrimaryIcon.Visibility = 'Visible' } else { $c.PrimaryIcon.Visibility = 'Collapsed' }
         $c.Primary.IsEnabled = $Enabled
-        $script:Gui.PrimaryAction = $OnClick
+        $script:Gui.PrimaryAction = ConvertTo-MbtGuiHandler -Block $OnClick -CallerScope 2
     } else { $c.Primary.Visibility = 'Collapsed'; $script:Gui.PrimaryAction = $null }
 }
 
@@ -315,7 +316,7 @@ function Show-MbtGuiDialog {
         $btn = New-GuiButton -Text $b.Text -Accent:([bool](Get-MbtGuiProp $b 'Accent')) -Danger:([bool](Get-MbtGuiProp $b 'Danger'))
         $btn.Margin = [Windows.Thickness]::new(8, 0, 0, 0)
         $btn.Tag = (Get-MbtGuiProp $b 'Action')
-        $btn.Add_Click({ param($x, $e) $act = $x.Tag; Close-MbtGuiDialog; if ($act) { & $act } })
+        Add-MbtGuiHandler $btn 'Click' { param($sender, $e) $act = $sender.Tag; Close-MbtGuiDialog; if ($act) { & $act } }
         $c.DialogButtons.Children.Add($btn) | Out-Null
     }
     $c.Overlay.Visibility = 'Visible'

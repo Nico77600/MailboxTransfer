@@ -18,18 +18,18 @@
 .PARAMETER Version
     The version shown in the corner of the window (default: ModuleVersion of the manifest).
 
-.PARAMETER Mockup
-    The screens of the console mockup, in the order of the flow, named 01-setup, 02-task-what, ... (Get-MbtGuiMockupShots).
+.PARAMETER Flow
+    The screens of the flow of the console, in order, named 01-setup, 02-task-what, ... (Get-MbtGuiFlowShots). Also accepted as -Mockup.
 
 .PARAMETER OutDir
     Default: <repository>\out\console-screens.
 #>
 [CmdletBinding()]
-param([string[]]$Scenario, [string[]]$Theme = @('Light', 'Dark'), [string]$OutDir, [int]$Width = 1480, [int]$Height = 940, [string]$Version, [switch]$Mockup)
+param([string[]]$Scenario, [string[]]$Theme = @('Light', 'Dark'), [string]$OutDir, [int]$Width = 1480, [int]$Height = 940, [string]$Version, [Alias('Mockup')][switch]$Flow)
 
 if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     $a = @('-NoProfile', '-STA', '-File', $PSCommandPath)
-    foreach ($k in $PSBoundParameters.Keys) { $v = $PSBoundParameters[$k]; $a += "-$k"; $a += (@($v) -join ',') }
+    foreach ($k in $PSBoundParameters.Keys) { $v = $PSBoundParameters[$k]; if ($v -is [switch]) { if ($v) { $a += "-$k" } } else { $a += "-$k"; $a += (@($v) -join ',') } }
     & (Get-Process -Id $PID).Path @a
     exit $LASTEXITCODE
 }
@@ -41,7 +41,7 @@ $Scenario = @($Scenario | ForEach-Object { $_ -split ',' } | Where-Object { $_ }
 if (-not $OutDir) { $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'out\console-screens' }
 foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') { . (Join-Path $package "module\MailboxTransfer.Gui.$f.ps1") }
 $script:GuiRoot = $package
-if ($Mockup) { $shots = @(Get-MbtGuiMockupShots) } else {
+if ($Flow) { $shots = @(Get-MbtGuiFlowShots) } else {
     if (-not $Scenario) { $Scenario = Get-MbtGuiScenarioName }
     $n = 0; $shots = @($Scenario | ForEach-Object { $n++; @{ File = ('{0:00}-{1}' -f $n, $_); Scenario = $_ } })
 }

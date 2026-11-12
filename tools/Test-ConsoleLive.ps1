@@ -177,10 +177,12 @@ try {
         param([string]$Tag, [string]$PstName, [switch]$Plan)
         $s.OutName = $PstName
         $jobStore = Join-Path $work "stores\$Tag"
-        $job = New-MbtGuiJob -WorkFolder $work -Task $(if ($Plan) { "$Tag-plan" } else { $Tag }) -EntryScript $entry -StorePath $jobStore
-        $selFile = Join-Path $job.Folder 'selection-1.json'
-        $entries = @([pscustomobject]@{ Node = $node; Kind = 'tree'; Items = 0 })
-        $null = Wait-Adapter { param($ok, $err) & $engine.SaveSelection $primary $entries $selFile $ok $err }
+        # the selection is kept in the selections folder of the work folder, in one file for all the locations, as the console does: the command line names it
+        $base = Get-MbtGuiSelectionBase -WorkFolder $work -Task export -Key ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$Tag|$ExportFolder"))))
+        $job = New-MbtGuiJob -WorkFolder $work -Task $(if ($Plan) { "$Tag-plan" } else { $Tag }) -EntryScript $entry -StorePath $jobStore -SelectionBase $base
+        $selFile = "$base.json"
+        $groups = @(@{ Root = $primary; Entries = @([pscustomobject]@{ Node = $node; Kind = 'tree'; Items = 0 }) })
+        $null = Wait-Adapter { param($ok, $err) & $engine.SaveSelections $groups $selFile $ok $err }
         $job.SelectionFiles = @($selFile)
         foreach ($c in (Get-MbtGuiCommand -Task export -S $s -Job $job -Plan:$Plan)) { $job.Queue.Enqueue($c) }
         if (-not $Plan) { Write-MbtGuiRequestFile -Job $job }

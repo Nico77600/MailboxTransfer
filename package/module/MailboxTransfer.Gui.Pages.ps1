@@ -4,8 +4,8 @@
     Mailbox Transfer console - the pages Setup, Task (What, From, To), Verify (dot-sourced by Start-MailboxTransferConsole.ps1).
 
 .DESCRIPTION
-    One function per page, as the mockup MailboxTransfer-Console.html: each returns the element of the page and sets the action bar. The texts are
-    the ones of CONSOLE-SPEC.md. A page is built again when the state changes (the browse cards live on, see Gui.Browse.ps1).
+    One function per page: each returns the element of the page and sets the action bar. A page is built again when the state changes (the browse
+    cards live on, see Gui.Browse.ps1).
     Features that depend on the engine (PST import, EML, shared mailboxes) read $script:Gui.Engine.Capability: a missing one is shown disabled with
     "Coming in this version", or left out, so the page lights up by itself after the merge of the engine work.
 
@@ -46,7 +46,11 @@ function New-MbtGuiBrowseFolderRow {
     param([string]$Value, [ValidateSet('Folder', 'File', 'SaveFile')][string]$Kind, [string]$Title, [string]$Filter, [scriptblock]$OnChange, [string]$Automation)
     $box = New-GuiTextBox -Text $Value -Automation $Automation
     $state = @{ Box = $box; OnChange = $OnChange }
-    if ($OnChange) { $box.Add_LostFocus({ & $state.OnChange $state.Box.Text }.GetNewClosure()); $box.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { & $state.OnChange $state.Box.Text; $e.Handled = $true } }.GetNewClosure()) }
+    if ($OnChange) {
+        $state.OnChange = ConvertTo-MbtGuiHandler -Block $OnChange -CallerScope 2
+        Add-MbtGuiHandler $box 'LostFocus' { & $state.OnChange $state.Box.Text }.GetNewClosure()
+        Add-MbtGuiHandler $box 'KeyDown' { param($sender, $e) if ($e.Key -eq 'Return') { & $state.OnChange $state.Box.Text; $e.Handled = $true } }.GetNewClosure()
+    }
     $btn = New-GuiButton -Text 'Browse...' -OnClick {
         $picked = switch ($Kind) {
             'Folder' { Select-MbtGuiFolder -Title $Title -InitialPath $state.Box.Text }
@@ -298,7 +302,7 @@ function Build-MbtGuiStartPage {
     foreach ($k in @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })) {
         $card = New-MbtGuiTaskCard -Key $k -Selected ($sel -eq $k)
         $card.Margin = [Windows.Thickness]::new(0, 0, $(if ($k -eq 'open') { 0 } else { 12 }), 0)
-        $card.Add_Click({ param($b, $e) $g.S.Sel = [string]$b.Tag; Show-MbtGuiPage })
+        Add-MbtGuiHandler $card 'Click' { param($sender, $e) $script:Gui.S.Sel = [string]$sender.Tag; Show-MbtGuiPage }
         $grid.Children.Add($card) | Out-Null
     }
     $left = New-GuiCard -Title 'Continue a job' -Info ('Found in your work folder ' + $s.WorkFolder) -Content @((New-MbtGuiJobList))
@@ -325,7 +329,7 @@ function Build-MbtGuiStartPage {
 function Initialize-MbtGuiTask {
     <# A task was chosen: what its pages start with. #>
     $g = $script:Gui; $s = $g.S
-    $s.Outcome = $null; $s.PlanState = 'idle'; $s.PlanMsg = ''; $s.RStep = $null; $s.RObj = $null; $s.Confirmed = $false; $s.ConfirmKey = ''
+    $s.Outcome = $null; $s.PlanState = 'idle'; $s.PlanMsg = ''; $s.RStep = $null; $s.RObj = $null; $s.Confirmed = $false; $s.ConfirmKey = ''; $s.JobName = ''
     $g.Run = $null; $g.Job = $null
     switch ($s.Task) {
         'export' { if (-not $s.OutFolder) { $s.OutFolder = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'MailboxTransfer' } }

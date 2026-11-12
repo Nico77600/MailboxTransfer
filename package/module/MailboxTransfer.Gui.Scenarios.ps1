@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Each scenario puts the window in one state of one page, on synthetic data (contoso.com) and the fake engine: no network, no mailbox. They are
-    the states of the mockup: Running, PC slept, Needs a decision, Stopped; Complete, Not finished, Needs a decision, Error; Damaged, Clean.
+    the states of a run (Running, PC slept, Needs a decision, Stopped), of a result (Complete, Not finished, Needs a decision, Error) and of a PST check (Damaged, Clean).
     The run model of a scenario is built from events, the way a real job feeds it, with the times set back so that elapsed time and ETA read
     like a job of hours.
 
@@ -149,7 +149,7 @@ function Show-MbtGuiRunScenario {
 }
 
 function Initialize-MbtGuiScenarioExport {
-    <# Signed in, the three locations, ticks as in the mockup. #>
+    <# Signed in, the three locations, some folders and messages ticked. #>
     param([switch]$Ticks)
     $g = $script:Gui; $s = $g.S
     $s.Task = 'export'; $s.Sel = 'export'; $s.Mailbox = 'adele.vance@contoso.com'; $s.Signed = $true; $s.Account = $s.Mailbox
@@ -255,8 +255,8 @@ function Expand-MbtGuiScenarioFold {
     $script:Gui.Window.Content.UpdateLayout()
 }
 
-function Get-MbtGuiMockupShots {
-    <# The screens of the console mockup, in the order of the flow: the file name and the scenario that draws it. #>
+function Get-MbtGuiFlowShots {
+    <# The screens of the flow of the console, in order: the file name and the scenario that draws it. #>
     @(
         @{ File = '01-setup'; Scenario = 'Setup' }, @{ File = '02-task-what'; Scenario = 'TaskWhat' }, @{ File = '03-task-from'; Scenario = 'ExportFrom' }, @{ File = '04-task-to'; Scenario = 'ExportTo' }
         @{ File = '05-verify-export'; Scenario = 'ExportPlan' }, @{ File = '06-verify-import-unticked'; Scenario = 'ImportPlan' }, @{ File = '07-verify-import-ticked'; Scenario = 'ImportPlanTicked' }

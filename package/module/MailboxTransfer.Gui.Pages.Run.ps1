@@ -6,7 +6,7 @@
 .DESCRIPTION
     Run: three columns (steps, what the step works on, details) under a header card with the status, the overall bar, the counters and the honest
     ETA. Everything on it comes from the run model (MailboxTransfer.Gui.Run.ps1), which the events of the job feed. Done: one card, one headline,
-    one pill, tiles, facts and the next step, by the exit code of the engine (CONSOLE-SPEC 3.6).
+    one pill, tiles, facts and the next step, by the exit code of the engine.
 
 .NOTES
     Author  : Nicolas Fabert
@@ -37,11 +37,29 @@ function Get-MbtGuiPlanKey {
     <# The plan is valid for exactly this request: selection, destination, effective settings (any change voids it, as in PRA). #>
     $g = $script:Gui; $s = $g.S
     $sb = [Text.StringBuilder]::new()
-    [void]$sb.Append("$($s.Task)|$($s.Dest)|$($s.OutFolder)|$($s.OutName)|$($s.SplitGB)|$($s.CheckEach)|$($s.SepAux)|$($s.KeepStore)|$($s.Conc)|$($s.Retry)|$($s.Tries)|$($s.Reconcile)|$($s.ImSrc)|$($s.ImPath)|$($s.TgtLoc)|$($s.TgtMode)|$($s.TgtName)|$($s.Mapping)|$($s.Shared)|$($s.ImShared)|$($s.RecoverableItems)|$($s.RpPath)|$($s.RpDest)|$($s.RpLevel)|$($s.RpKeep)|$($s.OpPath)|$($s.Mailbox)")
+    # what is typed or picked (addresses, names, paths) does not depend on the case; the ids of the folders ticked are machine ids and stay exact
+    [void]$sb.Append("$($s.Task)|$($s.Dest)|$($s.OutFolder)|$($s.OutName)|$($s.SplitGB)|$($s.CheckEach)|$($s.SepAux)|$($s.KeepStore)|$($s.Conc)|$($s.Retry)|$($s.Tries)|$($s.Reconcile)|$($s.ImSrc)|$($s.ImPath)|$($s.TgtLoc)|$($s.TgtMode)|$($s.TgtName)|$($s.Mapping)|$($s.Shared)|$($s.ImShared)|$($s.RecoverableItems)|$($s.RpPath)|$($s.RpDest)|$($s.RpLevel)|$($s.RpKeep)|$($s.OpPath)|$($s.Mailbox)|$($s.AuthMode)|$($s.TenantId)|$($s.ClientId)|$($s.AppTenant)|$($s.AppClient)|$($s.AppThumb)|$($s.Awake)".ToLowerInvariant())
     $sel = Get-MbtGuiTaskSelection
     if ($sel) { foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") } }
-    $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString().ToLowerInvariant())
+    $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
+}
+
+function Get-MbtGuiSelectionKey {
+    <# What was chosen for the operation (the source, the mailbox, the ticks): the selection file and the folder files are named after it, so the same choice is the same file. #>
+    $g = $script:Gui; $s = $g.S
+    $sb = [Text.StringBuilder]::new()
+    [void]$sb.Append("$($s.Task)|$($s.Mailbox)|$($s.Shared)|$($s.ImSrc)|$($s.ImPath)|$($s.OpPath)|$($s.RecoverableItems)".ToLowerInvariant())
+    $sel = Get-MbtGuiTaskSelection
+    if ($sel) { foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") } }
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sb.ToString())))
+}
+
+function Get-MbtGuiJobName {
+    <# The name of the import job of this plan (the same in the line that is shown and in the run); a new plan gets a new one. #>
+    $s = $script:Gui.S
+    if (-not $s.JobName) { $s.JobName = "import-$(New-MbtGuiJobId)" }
+    return $s.JobName
 }
 
 function New-MbtGuiPlanStateMessage {
@@ -79,46 +97,53 @@ function New-MbtGuiRequest {
         'import' { if ($s.ImSrc -eq 'store') { $s.ImPath } else { [IO.Path]::Combine($storeRoot, 'import') } }
         default { $null }
     }
-    [pscustomobject]@{ Task = $Task; StorePath = $store; Config = (Get-MbtGuiEffectiveConfig -State $s -WorkFolder $s.WorkFolder) }
+    [pscustomobject]@{ Task = $Task; StorePath = $store }
 }
 
-function Save-MbtGuiSelectionFiles {
-    <# One selection file per location (the engine exports one mailbox per selection). Calls OnDone with the file paths. #>
-    param([Parameter(Mandatory)]$Selection, [Parameter(Mandatory)][string]$Folder, [Parameter(Mandatory)][scriptblock]$OnDone, [scriptblock]$OnError)
+function New-MbtGuiPreviewJob {
+    <# The job the Start button would begin, without making its folder: the paths the command line names (the selection files are the ones the job will write). #>
+    param([Parameter(Mandatory)][string]$Task)
     $g = $script:Gui; $s = $g.S
-    $groups = @($Selection.Entries | Group-Object { (Get-MbtGuiRootNode $_.Node).Id })
-    if (-not $groups.Count) { & $OnDone @(); return }
-    $paths = [Collections.Generic.List[string]]::new()
-    $pending = @{ N = $groups.Count; Failed = $false }
-    $i = 0
-    foreach ($grp in $groups) {
-        $i++
-        $path = Join-Path $Folder ("selection-{0}.json" -f $i)
-        $root = Get-MbtGuiRootNode $grp.Group[0].Node
-        & $g.Engine.SaveSelection $root @($grp.Group) $path {
-            param($p)
-            $paths.Add([string]$p); $pending.N--
-            if ($pending.N -eq 0 -and -not $pending.Failed) { & $OnDone $paths.ToArray() }
-        }.GetNewClosure() {
-            param($msg)
-            if (-not $pending.Failed) { $pending.Failed = $true; if ($OnError) { & $OnError $msg } }
-        }.GetNewClosure()
+    $req = New-MbtGuiRequest -Task $Task
+    $folder = [IO.Path]::Combine($s.WorkFolder, 'jobs', ((Get-Date).ToString('yyyyMMdd-HHmm') + "-$Task"))
+    $base = Get-MbtGuiSelectionBase -WorkFolder $s.WorkFolder -Task $Task -Key (Get-MbtGuiSelectionKey)
+    $sel = Get-MbtGuiTaskSelection
+    $hasSel = [bool]($sel -and @($sel.Entries).Count)
+    $files = @(); $folderFile = $null; $itemsFile = $null
+    if ($hasSel -and ($Task -eq 'export' -or ($Task -eq 'import' -and $s.ImSrc -eq 'store'))) { $files = @("$base.json") }
+    $source = if ($Task -eq 'copy') { 'pst' } elseif ($Task -eq 'import' -and $s.ImSrc -in 'pst', 'eml') { $s.ImSrc } else { $null }
+    if ($hasSel -and $source) {
+        $choice = Get-MbtGuiFolderChoice -Selection $sel -Source $source
+        if (@($choice.Include).Count -or @($choice.Exclude).Count) { $folderFile = "$base.folders.txt" }
+        if (@($choice.Nids).Count) { $itemsFile = "$base.items.txt" }
     }
+    return @{ Id = "$Task-job"; Task = $Task; Folder = $folder; EventsPath = [IO.Path]::Combine($folder, 'events.jsonl'); StopPath = [IO.Path]::Combine($folder, 'stop.request')
+        StorePath = $req.StorePath; SelectionFiles = $files; JobName = (Get-MbtGuiJobName); FolderFile = $folderFile; ItemsFile = $itemsFile; SelectionBase = $base }
+}
+
+function Save-MbtGuiSelectionFile {
+    <# The selection of the export (one selection per location, in one file). Calls OnDone with the path in an array, as the earlier one-file-per-location version did. #>
+    param([Parameter(Mandatory)]$Selection, [Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][scriptblock]$OnDone, [scriptblock]$OnError)
+    $g = $script:Gui
+    $groups = @($Selection.Entries | Group-Object { (Get-MbtGuiRootNode $_.Node).Id } | ForEach-Object { @{ Root = (Get-MbtGuiRootNode $_.Group[0].Node); Entries = @($_.Group) } })
+    if (-not $groups.Count) { & $OnDone @(); return }
+    & $g.Engine.SaveSelections $groups $Path { param($p) & $OnDone @([string]$p) }.GetNewClosure() $OnError
 }
 
 function Start-MbtGuiPlanCheck {
     <# Plan page: the read-only run of the engine (-WhatIf) of exactly this request. Start unlocks only when it is valid. #>
     $g = $script:Gui; $s = $g.S
-    $s.PlanTotals = $null
+    $s.PlanTotals = $null; $s.JobName = ''
     Set-MbtGuiPlanState checking
     $req = New-MbtGuiRequest -Task $s.Task
+    $base = Get-MbtGuiSelectionBase -WorkFolder $s.WorkFolder -Task $s.Task -Key (Get-MbtGuiSelectionKey)
     $fail = { param($msg) $m = ConvertTo-MbtGuiMessage $msg; Set-MbtGuiPlanState error ("**The plan cannot be used.** $($m.Text)") }
     if ($g.Engine.Name -eq 'Fake') {
         & $g.Engine.Plan $req { param($r) if ($r.Ok) { if ($r.PSObject.Properties['Totals']) { $s.PlanTotals = $r.Totals }; Set-MbtGuiPlanState ok } else { & $fail $r.Message } }.GetNewClosure() $fail
         return
     }
     $sel = Get-MbtGuiTaskSelection
-    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task "$($s.Task)-plan" -EntryScript $g.EntryScript -StorePath $req.StorePath -ConfigText $req.Config
+    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task "$($s.Task)-plan" -EntryScript $g.EntryScript -StorePath $req.StorePath -JobName (Get-MbtGuiJobName) -SelectionBase $base
     $begin = {
         param($files)
         $job.SelectionFiles = @($files)
@@ -127,7 +152,7 @@ function Start-MbtGuiPlanCheck {
         $g.PlanRun = New-MbtGuiRun -Task $s.Task; $g.PlanJob = $job
         $null = Start-MbtGuiProcess -Job $job
     }.GetNewClosure()
-    if ($sel -and $sel.Entries.Count -and $s.Task -eq 'export') { Save-MbtGuiSelectionFiles -Selection $sel -Folder $job.Folder -OnDone $begin -OnError $fail }
+    if ($sel -and $sel.Entries.Count -and $s.Task -eq 'export') { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError $fail }
     else { & $begin @() }
 }
 
@@ -149,7 +174,8 @@ function Start-MbtGuiRun {
     <# Start: the job folder, the command(s), the child process; the Run page opens. #>
     $g = $script:Gui; $s = $g.S
     $req = New-MbtGuiRequest -Task $s.Task
-    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath $req.StorePath -ConfigText $req.Config
+    $base = Get-MbtGuiSelectionBase -WorkFolder $s.WorkFolder -Task $s.Task -Key (Get-MbtGuiSelectionKey)
+    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath $req.StorePath -JobName (Get-MbtGuiJobName) -SelectionBase $base
     $run = New-MbtGuiRun -Task $s.Task -Title (Get-MbtGuiRunTitle)
     $begin = {
         param($files)
@@ -165,7 +191,7 @@ function Start-MbtGuiRun {
     $sel = Get-MbtGuiTaskSelection
     # ticks choose folders of a mailbox (export) or of an export store (import); the folders ticked in a PST or in .eml files go to the engine as a list of folders (Write-MbtGuiChoiceFiles)
     $needsSel = $s.Task -eq 'export' -or ($s.Task -eq 'import' -and $s.ImSrc -eq 'store' -and $sel -and $sel.Entries.Count)
-    if ($needsSel) { Save-MbtGuiSelectionFiles -Selection $sel -Folder $job.Folder -OnDone $begin -OnError { param($m) Set-MbtGuiPlanState error ((ConvertTo-MbtGuiMessage $m).Text) } }
+    if ($needsSel) { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError { param($m) Set-MbtGuiPlanState error ((ConvertTo-MbtGuiMessage $m).Text) } }
     else { & $begin @() }
 }
 
@@ -205,7 +231,6 @@ function Resume-MbtGuiJob {
     $job.Folder = $Entry.Folder
     foreach ($k in 'EventsPath', 'StopPath', 'StatusPath', 'StdOut', 'StdErr') { $job[$k] = Join-Path $Entry.Folder (Split-Path $job[$k] -Leaf) }
     if (Test-Path -LiteralPath $job.StopPath) { Remove-Item -LiteralPath $job.StopPath -Force }
-    $job.ConfigPath = $(if (Test-Path -LiteralPath (Join-Path $Entry.Folder 'effective.config.psd1')) { Join-Path $Entry.Folder 'effective.config.psd1' } else { $null })
     # the events of the earlier runs stay in the file (with their result): the new run reads only what the new process writes
     $job.Offset = $(if (Test-Path -LiteralPath $job.EventsPath) { (Get-Item -LiteralPath $job.EventsPath).Length } else { 0L })
     foreach ($c in @($req.Commands)) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = @($c) }) }
@@ -367,7 +392,7 @@ function New-MbtGuiStepsColumn {
             $grid.Children.Add($pb) | Out-Null
         }
         $btn.Content = $grid
-        $btn.Add_Click({ param($b, $e) $g.S.RStep = [int]$b.Tag; $g.S.RObj = $null; Sync-MbtGuiRunPage -Force })
+        Add-MbtGuiHandler $btn 'Click' { param($sender, $e) $script:Gui.S.RStep = [int]$sender.Tag; $script:Gui.S.RObj = $null; Sync-MbtGuiRunPage -Force }
         $stack.Children.Add($btn) | Out-Null
         $i++
     }
@@ -392,7 +417,7 @@ function New-MbtGuiObjectRows {
         $rt = New-GuiText $right 'Small' -NoWrap; $rt.Margin = [Windows.Thickness]::new(8, 0, 0, 0); [Windows.Controls.Grid]::SetColumn($rt, 2)
         $grid.Children.Add($ic) | Out-Null; $grid.Children.Add($name) | Out-Null; $grid.Children.Add($rt) | Out-Null
         $btn.Content = $grid
-        $btn.Add_Click({ param($b, $e) $g.S.RObj = [int]$b.Tag; Sync-MbtGuiRunPage -Force })
+        Add-MbtGuiHandler $btn 'Click' { param($sender, $e) $script:Gui.S.RObj = [int]$sender.Tag; Sync-MbtGuiRunPage -Force }
         $stack.Children.Add($btn) | Out-Null
         $i++
     }
@@ -429,7 +454,8 @@ function New-MbtGuiStepDetailsColumn {
     }
     if (-not $run.Log.Count) { $logStack.Children.Add((New-GuiText 'Nothing yet.' 'Hint')) | Out-Null }
     $more = New-GuiMore -Summary 'Activity log' -Content @($logStack) -Open:([bool]$s.LogOpen)
-    $more.Add_Expanded({ $g.S.LogOpen = $true }); $more.Add_Collapsed({ $g.S.LogOpen = $false })
+    Add-MbtGuiHandler $more 'Expanded' { $script:Gui.S.LogOpen = $true }
+    Add-MbtGuiHandler $more 'Collapsed' { $script:Gui.S.LogOpen = $false }
     $content.Add($more)
     return (New-GuiCard -Title $(if ($step) { $step.Title } else { 'Details' }) -Right $pill -Content $content.ToArray())
 }
@@ -624,16 +650,16 @@ function Get-MbtGuiNextSteps {
             $store = (New-MbtGuiRequest -Task export).StorePath
             return @{ Text = 'The export store is finished and checked. You can put it into a mailbox now.'; Buttons = @(@{ Text = 'Import into a mailbox'; Icon = 'up'; Accent = $true; Action = { Start-MbtGuiImportOf -Kind store -Path $store }.GetNewClosure() }) }
         }
-        'export/partial' { return @{ Text = 'Not everything is exported yet, and nothing is lost. Continue does only what is left.'; Buttons = @($again) } }
+        'export/partial' { return @{ Text = 'Press Continue (later, for a folder that is not ready): only what is left is done.'; Buttons = @($again) } }
         'import/complete' { return @{ Text = 'The items are in the mailbox. Open Outlook and look in the new folder; nothing that was there before was changed.'; Buttons = @(@{ Text = 'Import another file'; Icon = 'up'; Action = { $g = $script:Gui; $g.S.ImPath = ''; $g.S.ImInfo = $null; $g.S.Task = 'import'; $g.S.Sel = 'import'; $g.S.Step = $script:Flows.import.IndexOf('imFrom'); Initialize-MbtGuiTask; Show-MbtGuiPage } }) } }
-        'import/partial' { return @{ Text = 'The import is not finished. Nothing is lost, and the items already in the mailbox are skipped. Continue does only what is left.'; Buttons = @($again) } }
+        'import/partial' { return @{ Text = 'Press Continue: only what is left is done.'; Buttons = @($again) } }
         'import/decision' { return @{ Text = 'Decide for each uncertain item above. When every one is decided, the job is finished.'; Buttons = @() } }
         'import/refused' { return @{ Text = 'The job is finished. The refused items cannot be imported as they are: the list above says why, item by item.'; Buttons = @() } }
         'repair/complete' { return @{ Text = 'The repaired file is a new PST; your original was not touched. Open it in Outlook, or put what it holds into a mailbox.'; Buttons = @($importPst, $howTo) } }
-        'repair/partial' { return @{ Text = 'The repair was stopped and no file was written. Start it again whenever you want.'; Buttons = @($again) } }
+        'repair/partial' { return @{ Text = 'Start the repair again whenever you want.'; Buttons = @($again) } }
         'copy/complete' { return @{ Text = 'The new PST is ready; your original was only read. Open it in Outlook, or put what it holds into a mailbox.'; Buttons = @($importPst, $howTo) } }
         'copy/refused' { return @{ Text = 'The new PST is ready except for the items listed above.'; Buttons = @($howTo) } }
-        'copy/partial' { return @{ Text = 'The copy was stopped and no file was kept. Start it again whenever you want.'; Buttons = @() } }
+        'copy/partial' { return @{ Text = 'Start the copy again whenever you want.'; Buttons = @() } }
         default {
             if ($Outcome -eq 'error') { return @{ Text = 'Fix what the message above says, then try again. Nothing that was done is lost.'; Buttons = @($retry) } }
             return @{ Text = 'Nothing else is needed.'; Buttons = @() }
@@ -704,7 +730,7 @@ function New-MbtGuiExportDone {
         'partial' {
             $notReady = @($run.Objects | Where-Object { $_.State -in 'notready', 'not-ready' })
             $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items exported', 'ok'), @((Format-MbtGuiCount $pending), 'waiting', 'warn'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
-            $msg = if ($notReady.Count) { "**$($notReady[0].Key)** is not ready at Microsoft yet. It was not exported as empty. Press **Continue** later: only these folders will be tried again." } else { 'The export is not complete. Nothing is lost. Press **Continue**: only what is left will be done.' }
+            $msg = if ($notReady.Count) { "**$($notReady[0].Key)** is not ready at Microsoft yet. It was not exported as empty, and it stays on the list." } else { "**$(Format-MbtGuiCount $pending) items are still to do.**" }
             $extra = @()
             if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
             return @($t, (New-GuiMessage -Kind warn -Icon warn -Text $msg)) + @($extra)
@@ -737,7 +763,7 @@ function New-MbtGuiImportDone {
             $hours = ''
             if ($pending -gt 0 -and $run.Total -gt 0) { $left = $run.BytesTotal - $run.Bytes; if ($left -gt 0) { $e = Get-MbtGuiPlanEta -Task import -Bytes $left; $span = ($e.Text -split " \(")[0] -replace "^about ", ""; $hours = " About $span of work remain at Microsoft's speed." } }
             $extra = @(); if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
-            return @($t, (New-GuiMessage -Kind warn -Icon warn -Text "**Not finished, nothing lost.** Press **Continue**: the items already done are skipped.$hours")) + @($extra)
+            return @($t, (New-GuiMessage -Kind warn -Icon warn -Text "**$(Format-MbtGuiCount $pending) items are still to do.** The items already done are skipped.$hours")) + @($extra)
         }
         'decision' {
             $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items in the mailbox', 'ok'), @('0', 'still to do', 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'), @((Format-MbtGuiCount ([math]::Max(1, $unknown))), 'needs your decision', 'warn'))
@@ -794,7 +820,7 @@ function New-MbtGuiCopyDone {
             if ($Outcome -eq 'refused') { $out += @(New-MbtGuiRefusedBlock -Verb 'copied') }
             return $out
         }
-        'partial' { return @((New-GuiMessage -Kind warn -Icon warn -Text '**The copy was stopped.** A stopped copy leaves no file, and your original was never touched. Start it again whenever you want.')) }
+        'partial' { return @((New-GuiMessage -Kind warn -Icon warn -Text 'A stopped copy leaves no file, and your original was never touched.')) }
         default { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'messages copied', 'ok'), @('1', 'error', 'bad'))) + @(New-MbtGuiErrorBlock $run 'The copy stopped. No file was kept.')) }
     }
 }
@@ -812,7 +838,7 @@ function New-MbtGuiRepairDone {
     param([string]$Outcome)
     $g = $script:Gui; $s = $g.S; $run = $g.Run
     switch ($Outcome) {
-        'partial' { return @((New-GuiMessage -Kind warn -Icon warn -Text '**You stopped the repair.** The new file is written under a temporary name and moved only when complete, so no half-written file is left. Your original was never touched. Start the repair again whenever you want.')) }
+        'partial' { return @((New-GuiMessage -Kind warn -Icon warn -Text 'The new file is written under a temporary name and moved only when complete, so no half-written file is left. Your original was never touched.')) }
         'error' { return @(New-MbtGuiErrorBlock $run 'The repair stopped.') }
     }
     $c = $run.Result.Counts

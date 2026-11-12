@@ -338,20 +338,20 @@ function Build-MbtGuiRepairToPage {
         $p = Test-MbtGuiRepairDestination $s
         $g.RepairHolder.Content = if ($p) { New-GuiMessage -Kind bad -Icon x -Text $p } else { $null }
         $g.C.Primary.IsEnabled = -not $p
-    }
+    }.GetNewClosure()
     $row = New-MbtGuiBrowseFolderRow -Value $s.RpDest -Kind SaveFile -Title 'New PST file' -Filter 'PST files (*.pst)|*.pst' -Automation 'New file' -OnChange { param($v) $s.RpDest = $v; & $update }.GetNewClosure()
     $hint = "A new file. The tool never overwrites a file and never touches the original. You need about as much free disk space as the PST ($(Format-MbtGuiBytes $size)$(if ($null -ne $free) { "; $(Format-MbtGuiBytes $free) free" }))."
     $newFile = New-GuiCard -Title 'New file' -Content @((New-GuiText 'Write the repaired copy as' 'Label'), $row, $holder, (New-GuiText $hint 'Hint'))
     $rec = [string]$(if ($s.RpCheck -and $s.RpCheck.PSObject.Properties['Recommended']) { $s.RpCheck.Recommended } else { 'Rebuild' })
-    $lv = { param($key, $title, $desc, [bool]$recommended)
-        $o = New-GuiOption -Type Radio -Group lvl -Title $(if ($recommended) { "$title (recommended)" } else { $title }) -Hint $desc -Checked ($s.RpLevel -eq $key) -OnChange { $s.RpLevel = $key }.GetNewClosure()
-        $o
+    $levelRows = @(
+        @('Automatic', 'Automatic', "The tool picks the lightest level that fixes what it found (here: $rec) and goes up by itself if needed.", $true),
+        @('Recompute', 'Recompute only', 'The structure is trusted. Fixes counters, sizes and indexes.', $false),
+        @('Rebuild', 'Rebuild', 'Finds folders and messages again from the file''s nodes. Needed when messages are not listed.', $false),
+        @('Salvage', 'Salvage', 'Scans the whole file for readable blocks. For files that do not open at all, or are cut short. Slowest.', $false))
+    $levels = foreach ($row in $levelRows) {
+        $key = $row[0]
+        New-GuiOption -Type Radio -Group lvl -Title $(if ($row[3]) { "$($row[1]) (recommended)" } else { $row[1] }) -Hint $row[2] -Checked ($s.RpLevel -eq $key) -OnChange { $s.RpLevel = $key }.GetNewClosure()
     }
-    $levels = @(
-        (& $lv 'Automatic' 'Automatic' "The tool picks the lightest level that fixes what it found (here: $rec) and goes up by itself if needed." $true)
-        (& $lv 'Recompute' 'Recompute only' 'The structure is trusted. Fixes counters, sizes and indexes.' $false)
-        (& $lv 'Rebuild' 'Rebuild' 'Finds folders and messages again from the file''s nodes. Needed when messages are not listed.' $false)
-        (& $lv 'Salvage' 'Salvage' 'Scans the whole file for readable blocks. For files that do not open at all, or are cut short. Slowest.' $false))
     $keep = New-GuiMore -Summary 'More options' -Content @((New-GuiOption -Type Check -Title 'Keep damaged attachments' -Hint 'An attachment with unreadable blocks is kept at its full size, with zeros in place of what could not be read, and renamed **name (damaged).ext**. Off by default: such a file is damaged, so it says so.' -Checked $s.RpKeep -OnChange { param($x, $e) $s.RpKeep = [bool]$x.IsChecked }))
     $levelCard = New-GuiCard -Title 'Repair level' -Content (@($levels) + @($keep))
     $what = New-GuiCard -Title 'What a repair does' -Content @((@('Reads the damaged file as far as it can be read.', 'Writes a **new, clean PST** with everything it found.', 'Checks both files and shows a before and after.', 'Messages it could not read are listed with the reason. Nothing is guessed.') | ForEach-Object { $t = New-GuiText ([char]0x2022 + '  ' + $_) 'Body'; $t.Margin = [Windows.Thickness]::new(0, 0, 0, 6); $t }))
@@ -462,7 +462,7 @@ function Build-MbtGuiCopyToPage {
     $split = [Windows.Controls.ComboBox]::new(); $split.HorizontalAlignment = 'Stretch'
     foreach ($t in '50 GB (Outlook''s default limit)', '20 GB', '10 GB', '5 GB') { [void]$split.Items.Add($t) }
     $split.SelectedIndex = switch ([int]$s.SplitGB) { 50 { 0 } 20 { 1 } 10 { 2 } 5 { 3 } default { 0 } }
-    $split.Add_SelectionChanged({ param($x, $e) $s.SplitGB = @(50, 20, 10, 5)[$x.SelectedIndex] }.GetNewClosure())
+    Add-MbtGuiHandler $split 'SelectionChanged' { param($sender, $e) $s.SplitGB = @(50, 20, 10, 5)[$sender.SelectedIndex] }
     $more = New-GuiMore -Summary 'More options' -Content @(
         (New-GuiText 'Largest PST file' 'Label'), $split,
         (New-GuiText 'A message is never cut in two. The files are named after the first one, then -002, -003 and so on.' 'Hint'),

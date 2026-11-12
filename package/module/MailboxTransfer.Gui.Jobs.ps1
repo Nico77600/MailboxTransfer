@@ -4,10 +4,13 @@
     Mailbox Transfer console - jobs (dot-sourced by Start-MailboxTransferConsole.ps1).
 
 .DESCRIPTION
-    A job is what the console starts in a child pwsh: export, PST write, import, check, repair (CONSOLE-SPEC 9). Here: the job folder
-    (<work folder>\jobs\<yyyyMMdd-HHmm>-<task>-<id>\ with request.json, effective.config.psd1, selection files, events.jsonl, status.json, stop.request,
-    stdout.txt, stderr.txt), the command lines (every value comes from a validated control, never from free text), the child process, the stop
-    request, and the pump that reads the events file into the run model. The pump is also what the tests drive with a fake events file.
+    A job is what the console starts in a child pwsh: export, PST write, import, check, repair. Here: the job folder
+    (<work folder>\jobs\<yyyyMMdd-HHmm>-<task>-<id>\ with request.json, events.jsonl, status.json, stop.request, stdout.txt, stderr.txt), the command lines
+    (every value comes from a validated control, never from free text), the child process, the stop request, and the pump that reads the events file
+    into the run model. The pump is also what the tests drive with a fake events file. What was chosen in the browse view (the selection of an export, the
+    folders and messages ticked in a PST) is kept in <work folder>\selections\, outside the job folder, because the command line names those files.
+    What is changed for one run (tenant, application, certificate, parallel requests, waits, tries) goes to the command line as parameters: nothing is
+    written to the configuration file, and the line the console shows gives the same result as the one it runs.
 
 .NOTES
     Author  : Nicolas Fabert
@@ -23,22 +26,6 @@ function New-MbtGuiJobFolder {
     $dir = Join-Path (Join-Path $WorkFolder 'jobs') $name
     $null = New-Item -ItemType Directory -Force -Path $dir
     return $dir
-}
-
-function Get-MbtGuiEffectiveConfig {
-    <#
-        The configuration of one run: the file plus the changes made on the Plan page (never written back to the file). Returns the text of a .psd1
-        that Import-MbtConfiguration reads, or $null when nothing is modified.
-    #>
-    param([Parameter(Mandatory)][hashtable]$State, [string]$WorkFolder)
-    $lines = [Collections.Generic.List[string]]::new()
-    $graph = [Collections.Generic.List[string]]::new()
-    if ($State.Changed.ContainsKey('Tries')) { $graph.Add("MaxAttempts = $([int]$State.Tries)") }
-    if ($State.Changed.ContainsKey('Retry')) { $graph.Add("BaseBackoffSeconds = $([int]$State.Retry)") }
-    if ($graph.Count) { $lines.Add('Graph = @{ ' + ($graph -join '; ') + ' }') }
-    if ($State.Changed.ContainsKey('WorkFolder') -and $WorkFolder) { $lines.Add("Output = @{ Root = '$($WorkFolder.Replace("'", "''"))' }") }
-    if (-not $lines.Count) { return $null }
-    return "@{`n  " + ($lines -join "`n  ") + "`n}`n"
 }
 
 function Test-MbtGuiPstName {
@@ -58,7 +45,8 @@ function Get-MbtGuiConfiguredSignIn {
     $g = Get-Variable -Name Gui -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     if (-not $g) { return $null }
     $has = if ($g.Engine -is [Collections.IDictionary]) { $g.Engine.Contains('SignInSettings') } else { [bool]$g.Engine.PSObject.Properties['SignInSettings'] }
-    if ($has) { return (& $g.Engine.SignInSettings) }
+    # a configuration file that cannot be read gives no values: the Setup page says so (a light), and the sign-in asks for them
+    if ($has) { try { return (& $g.Engine.SignInSettings) } catch { return $null } }
     return $null
 }
 
@@ -73,11 +61,16 @@ function Get-MbtGuiEffectiveSignIn {
     $typed = if ($app) { @([string]$S['AppTenant'], [string]$S['AppClient'], [string]$S['AppThumb']) } else { @([string]$S['TenantId'], [string]$S['ClientId'], '') }
     $file = if ($app) { @([string](Get-MbtGuiProp $cfg 'AppTenantId' ''), [string](Get-MbtGuiProp $cfg 'AppClientId' ''), [string](Get-MbtGuiProp $cfg 'CertificateThumbprint' '')) } else { @([string](Get-MbtGuiProp $cfg 'TenantId' ''), [string](Get-MbtGuiProp $cfg 'ClientId' ''), '') }
     $use = for ($i = 0; $i -lt 3; $i++) { if ($typed[$i].Trim()) { $typed[$i].Trim() } else { $file[$i].Trim() } }
-    $changed = for ($i = 0; $i -lt 3; $i++) { [bool]($typed[$i].Trim() -and $typed[$i].Trim() -ne $file[$i].Trim()) }
+    # not case sensitive; a thumbprint is compared by its digits (it is written with spaces or colons in the certificate details)
+    $same = { param($a, $b, $thumbprint) if ($thumbprint) { ($a -replace '[^0-9A-Fa-f]', '') -eq ($b -replace '[^0-9A-Fa-f]', '') } else { $a.Trim() -eq $b.Trim() } }
+    $changed = for ($i = 0; $i -lt 3; $i++) { [bool]($typed[$i].Trim() -and -not (& $same $typed[$i] $file[$i] ($app -and $i -eq 2))) }
+    # an engine that does not say what its configuration holds is not asked questions: nothing is reported missing
     $missing = [Collections.Generic.List[string]]::new()
-    if (-not $use[0]) { $missing.Add('Tenant') }
-    if (-not $use[1]) { $missing.Add('Application id') }
-    if ($app -and -not $use[2]) { $missing.Add('Certificate thumbprint') }
+    if ($null -ne $cfg) {
+        if (-not $use[0]) { $missing.Add('Tenant') }
+        if (-not $use[1]) { $missing.Add('Application id') }
+        if ($app -and -not $use[2]) { $missing.Add('Certificate thumbprint') }
+    }
     [pscustomobject]@{ App = $app; Tenant = $use[0]; Client = $use[1]; Thumb = $use[2]; TenantChanged = $changed[0]; ClientChanged = $changed[1]; ThumbChanged = $changed[2]
         FromFile = $file; Missing = $missing.ToArray(); Changed = [bool]($changed -contains $true) }
 }
@@ -119,13 +112,21 @@ function Get-MbtGuiFolderChoice {
     [pscustomobject]@{ Include = $inc.ToArray(); Exclude = $exc.ToArray(); Nids = $nids.ToArray() }
 }
 
+function Get-MbtGuiSelectionBase {
+    <# Where the choice of an operation is kept, without extension: <work folder>\selections\<task>-<8 characters of what was chosen>. The command line names these files. #>
+    param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Key)
+    return [IO.Path]::Combine($WorkFolder, 'selections', ('{0}-{1}' -f $Task, $Key.Substring(0, 8).ToLowerInvariant()))
+}
+
 function Write-MbtGuiFolderFiles {
-    <# Writes the choice into the job folder: folders.txt (lines "+path" take, "-path" leave out; -FolderFile of the entry script) and items.txt (node ids; -IncludeItemFile). Sets FolderFile / ItemsFile of the job. #>
+    <# Writes the choice next to the selection: <base>.folders.txt (lines "+path" take, "-path" leave out; -FolderFile of the entry script) and <base>.items.txt (node ids; -IncludeItemFile). Sets FolderFile / ItemsFile of the job. #>
     param([Parameter(Mandatory)][hashtable]$Job, [Parameter(Mandatory)]$Choice)
     $Job.FolderFile = $null; $Job.ItemsFile = $null
+    $base = if ($Job.ContainsKey('SelectionBase') -and $Job.SelectionBase) { $Job.SelectionBase } else { Join-Path $Job.Folder 'choice' }
     $lines = @($Choice.Include | ForEach-Object { "+$_" }) + @($Choice.Exclude | ForEach-Object { "-$_" })
-    if ($lines.Count) { $Job.FolderFile = Join-Path $Job.Folder 'folders.txt'; Set-Content -LiteralPath $Job.FolderFile -Value $lines -Encoding utf8 }
-    if (@($Choice.Nids).Count) { $Job.ItemsFile = Join-Path $Job.Folder 'items.txt'; Set-Content -LiteralPath $Job.ItemsFile -Value @($Choice.Nids | ForEach-Object { [string]$_ }) -Encoding utf8 }
+    if ($lines.Count -or @($Choice.Nids).Count) { $null = New-Item -ItemType Directory -Force -Path (Split-Path $base -Parent) }
+    if ($lines.Count) { $Job.FolderFile = "$base.folders.txt"; Set-Content -LiteralPath $Job.FolderFile -Value $lines -Encoding utf8 }
+    if (@($Choice.Nids).Count) { $Job.ItemsFile = "$base.items.txt"; Set-Content -LiteralPath $Job.ItemsFile -Value @($Choice.Nids | ForEach-Object { [string]$_ }) -Encoding utf8 }
 }
 
 function Get-MbtGuiCommonArguments {
@@ -134,7 +135,6 @@ function Get-MbtGuiCommonArguments {
     $a.AddRange([string[]]@(Get-MbtGuiAuthArguments -S $S))
     $a.AddRange([string[]]@('-EventsFile', $Job.EventsPath, '-StopFile', $Job.StopPath, '-JobId', $Job.Id))
     if ($S.Awake) { $a.Add('-KeepAwake') }
-    if ($Job.ConfigPath) { $a.AddRange([string[]]@('-ConfigPath', $Job.ConfigPath)) }
     if ($WhatIf) { $a.Add('-WhatIf') }
     return , $a
 }
@@ -142,7 +142,8 @@ function Get-MbtGuiCommonArguments {
 function Get-MbtGuiCommand {
     <#
         The command lines of a task (one or several, run one after the other). Returns objects with Arguments (for Invoke-MailboxTransfer.ps1) and
-        Title. Every value comes from a validated control of the console. -Plan: the read-only run (-WhatIf) of the same request.
+        Title. Every value comes from a validated control of the console. -Plan: the read-only run (-WhatIf) of the same request. An export of
+        several locations is one command: the selection file holds one selection per location, and the PST files are written by the same command.
     #>
     param(
         [Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'check', 'copy')][string]$Task,
@@ -150,34 +151,26 @@ function Get-MbtGuiCommand {
     )
     $common = Get-MbtGuiCommonArguments -S $S -Job $Job -WhatIf:$Plan
     $out = [Collections.Generic.List[object]]::new()
-    $conc = @('-Concurrency', [string][int]$S.Conc, '-MaxAttempts', [string][int]$S.Tries)
+    $tuning = [Collections.Generic.List[string]]::new()
+    $tuning.AddRange([string[]]@('-Concurrency', [string][int]$S.Conc, '-MaxAttempts', [string][int]$S.Tries))
+    if ($S.Changed.ContainsKey('Retry')) { $tuning.AddRange([string[]]@('-RetryWaitSeconds', [string][int]$S.Retry)) }
     switch ($Task) {
         'export' {
-            $files = @($Job.SelectionFiles)
             $pst = $S.Dest -eq 'pst'
             $eml = $S.Dest -eq 'eml'
-            $outPst = if ($pst) { [IO.Path]::Combine($S.OutFolder, $S.OutName) } else { $null }
-            for ($i = 0; $i -lt $files.Count; $i++) {
-                $a = [Collections.Generic.List[string]]::new()
-                # the temporary files of the export are in the job folder, not below the folder of the script
-                $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox, '-SelectionFile', $files[$i], '-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
-                $a.AddRange([string[]]$conc)
-                if ($pst -and $files.Count -eq 1) {
-                    $a.AddRange([string[]]@('-OutputPst', $outPst, '-PstMaxSizeGB', [string][int]$S.SplitGB))
-                    if (-not $S.CheckEach) { $a.Add('-SkipCheck') }
-                    if ($S.SepAux) { $a.Add('-SeparateAuxArchives') }
-                }
-                $a.AddRange([string[]]$common)
-                $out.Add([pscustomobject]@{ Title = 'Export'; Arguments = $a.ToArray() })
-            }
-            if ($pst -and $files.Count -gt 1) {
-                $a = [Collections.Generic.List[string]]::new()
-                $a.AddRange([string[]]@('-Mode', 'ExportPst', '-StorePath', $Job.StorePath, '-OutputPst', $outPst, '-PstMaxSizeGB', [string][int]$S.SplitGB))
+            $a = [Collections.Generic.List[string]]::new()
+            # the temporary files of the export are in the job folder, not below the folder of the script
+            $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox))
+            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
+            $a.AddRange([string[]]$tuning)
+            if ($pst) {
+                $a.AddRange([string[]]@('-OutputPst', [IO.Path]::Combine($S.OutFolder, $S.OutName), '-PstMaxSizeGB', [string][int]$S.SplitGB))
                 if (-not $S.CheckEach) { $a.Add('-SkipCheck') }
                 if ($S.SepAux) { $a.Add('-SeparateAuxArchives') }
-                $a.AddRange([string[]]$common)
-                $out.Add([pscustomobject]@{ Title = 'Write the PST files'; Arguments = $a.ToArray() })
             }
+            $a.AddRange([string[]]$common)
+            $out.Add([pscustomobject]@{ Title = 'Export'; Arguments = $a.ToArray() })
             if ($eml) {
                 # the items come to the export store first (resumable, checked), then each message is written as an .eml file below the folder chosen
                 $a = [Collections.Generic.List[string]]::new()
@@ -210,7 +203,7 @@ function Get-MbtGuiCommand {
             # the folders ticked in a PST or in a folder of .eml files
             if ((Get-MbtGuiProp $Job 'FolderFile') -and $S.ImSrc -in 'pst', 'eml') { $a.AddRange([string[]]@('-FolderFile', (Get-MbtGuiProp $Job 'FolderFile'))) }
             $a.AddRange([string[]]@('-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
-            $a.AddRange([string[]]$conc)
+            $a.AddRange([string[]]$tuning)
             $a.AddRange([string[]]$common)
             $out.Add([pscustomobject]@{ Title = 'Import'; Arguments = $a.ToArray() })
         }
@@ -241,23 +234,92 @@ function Get-MbtGuiCommand {
     return $out.ToArray()
 }
 
+#region The command line an operator can run ------------------------------------------------------------------------------------------------
+
+# What the console passes for its own sake: not an operator's choice, so not in the line that is shown.
+$script:MbtGuiInternalParameter = @('NoPrompt', 'EventsFile', 'StopFile', 'JobId', 'TempPath', 'ConfigPath', 'LogFolder', 'DevelopmentMode')
+# The value a parameter of Invoke-MailboxTransfer.ps1 has when it is not given (the tests compare this table with the parameter block of the script).
+$script:MbtGuiCliDefault = @{ Mailbox = 'Primary'; Concurrency = '4'; MaxAttempts = '3'; ReconcileDelaySeconds = '300'; ReconcileRounds = '3'; PstMaxSizeGB = '50'; Level = 'Automatic'; RepairLevel = 'Rebuild' }
+
+function Split-MbtGuiArgument {
+    <# The flat arguments of a command as pairs: Name (without the dash), Value ($null for a switch). #>
+    param([string[]]$Argument)
+    $pairs = [Collections.Generic.List[object]]::new()
+    $list = @($Argument)
+    for ($i = 0; $i -lt $list.Count; $i++) {
+        $token = [string]$list[$i]
+        if ($token -notmatch '^-[A-Za-z]+$') { continue }
+        $value = $null
+        if (($i + 1) -lt $list.Count -and [string]$list[$i + 1] -notmatch '^-[A-Za-z]+$') { $value = [string]$list[$i + 1]; $i++ }
+        $pairs.Add([pscustomobject]@{ Name = $token.Substring(1); Value = $value })
+    }
+    return $pairs.ToArray()
+}
+
+function Test-MbtGuiDefaultValue {
+    param([string]$Name, [string]$Value)
+    if (-not $script:MbtGuiCliDefault.ContainsKey($Name)) { return $false }
+    $default = $script:MbtGuiCliDefault[$Name]
+    $x = 0.0; $y = 0.0
+    if ([double]::TryParse($Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$x) -and [double]::TryParse($default, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$y)) { return ($x -eq $y) }
+    return ($Value -ieq $default)
+}
+
+function ConvertTo-MbtGuiShownArgument {
+    <#
+        The arguments the console runs, as the arguments an operator would type: without the plumbing of the console (silent sign-in, events, stop file, job id,
+        temporary folder) and without a value that is what the script does anyway. The sign-in of the application is written the short way when it is the one of
+        the configuration file (-AppOnly). Everything else is kept, so the line gives the same result as the run.
+    #>
+    param([Parameter(Mandatory)][string[]]$Argument, [hashtable]$S)
+    $sign = if ($S) { Get-MbtGuiEffectiveSignIn -S $S } else { $null }
+    $out = [Collections.Generic.List[object]]::new()
+    foreach ($p in (Split-MbtGuiArgument $Argument)) {
+        if ($p.Name -in $script:MbtGuiInternalParameter) { continue }
+        if ($null -ne $p.Value -and (Test-MbtGuiDefaultValue $p.Name $p.Value)) { continue }
+        if ($sign -and $p.Name -eq 'CertificateThumbprint' -and -not $sign.ThumbChanged) { $out.Add([pscustomobject]@{ Name = 'AppOnly'; Value = $null }); continue }
+        if ($sign -and $p.Name -eq 'TenantId' -and -not $sign.TenantChanged) { continue }
+        if ($sign -and $p.Name -eq 'ClientId' -and -not $sign.ClientChanged) { continue }
+        $out.Add($p)
+    }
+    return $out.ToArray()
+}
+
+function Format-MbtGuiCommandToken {
+    param([string]$Text)
+    if ($Text -match '[\s;&()$''`"]') { return ("'" + $Text.Replace("'", "''") + "'") }
+    return $Text
+}
+
+function ConvertTo-MbtGuiCommandLine {
+    <# One line of PowerShell per command of the task, as an operator would type it in the folder of the tool. #>
+    param([Parameter(Mandatory)][object[]]$Command, [hashtable]$S)
+    $lines = foreach ($c in $Command) {
+        $tokens = [Collections.Generic.List[string]]::new(); $tokens.Add('.\Invoke-MailboxTransfer.ps1')
+        foreach ($p in (ConvertTo-MbtGuiShownArgument -Argument @($c.Arguments) -S $S)) {
+            $tokens.Add('-' + $p.Name)
+            if ($null -ne $p.Value) { $tokens.Add((Format-MbtGuiCommandToken $p.Value)) }
+        }
+        $tokens -join ' '
+    }
+    return ($lines -join "`n")
+}
+
+#endregion
+
 function New-MbtGuiJob {
     <# The job object: folder, paths of its files, the commands still to run, the child process. #>
-    param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)][string]$Task, [string]$EntryScript, [string]$StorePath, [string[]]$SelectionFiles = @(), [string]$ConfigText, [string]$JobName)
+    param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)][string]$Task, [string]$EntryScript, [string]$StorePath, [string[]]$SelectionFiles = @(), [string]$JobName, [string]$SelectionBase)
     $id = New-MbtGuiJobId
     $dir = New-MbtGuiJobFolder -WorkFolder $WorkFolder -Task $Task -Id $id
     $job = @{
         Id = "$Task-$id"; Task = $Task; Folder = $dir; EntryScript = $EntryScript
         EventsPath = Join-Path $dir 'events.jsonl'; StopPath = Join-Path $dir 'stop.request'; StatusPath = Join-Path $dir 'status.json'
-        StdOut = Join-Path $dir 'stdout.txt'; StdErr = Join-Path $dir 'stderr.txt'; ConfigPath = $null
+        StdOut = Join-Path $dir 'stdout.txt'; StdErr = Join-Path $dir 'stderr.txt'; SelectionBase = $SelectionBase
         StorePath = $(if ($StorePath) { $StorePath } else { Join-Path $WorkFolder 'stores\default' }); SelectionFiles = $SelectionFiles
         JobName = $(if ($JobName) { $JobName } else { "import-$id" })
         FolderFile = $null; ItemsFile = $null
         Offset = 0L; Process = $null; Queue = [Collections.Generic.Queue[object]]::new(); Started = [datetime]::UtcNow; StopAsked = $null; Exited = $false; ExitCode = $null; Fake = $false
-    }
-    if ($ConfigText) {
-        $job.ConfigPath = Join-Path $dir 'effective.config.psd1'
-        Set-Content -LiteralPath $job.ConfigPath -Value $ConfigText -Encoding utf8
     }
     return $job
 }

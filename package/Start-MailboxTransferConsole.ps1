@@ -5,9 +5,10 @@
     Mailbox Transfer console - the window that guides an operator through browse and export, import, check and repair of a PST, and open.
 
 .DESCRIPTION
-    WPF window (Fluent theme of .NET 9 and later; light or dark like Windows). Task, From, To, Plan, Run, Done: one question per page, safe
-    defaults, the plan read before anything starts, the long jobs run by Invoke-MailboxTransfer.ps1 in a child process and followed through
-    their events file. Sign-in, browse and preview run in this process. See README, section "Console".
+    WPF window (Fluent theme of .NET 9 and later; light or dark like Windows). Setup, Task (What, From, To), Verify, Run, Next steps: one question per
+    page, safe defaults, the checks and the plan read before anything starts, the long jobs run by Invoke-MailboxTransfer.ps1 in a child process and
+    followed through their events file. Sign-in, browse and preview run in this process. The Verify page shows the command line that does the same.
+    See README, section "Console".
 
     -Demo runs the whole window on synthetic data with a fake engine and a job that only writes events: no network, no mailbox, no file outside
     the work folder. -DocScenario <name> opens one page in one state of that demo (for the documentation images). -Theme Light or Dark is for the
@@ -80,7 +81,7 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     # The module does not repeat this warning in the same process.
     [AppDomain]::CurrentDomain.SetData('MailboxTransfer.UnverifiedTreeWarned', $true)
 }
-$script:ConsoleVersion = '1.2.0 mockup'
+$script:ConsoleVersion = '1.1.0'
 $packageRoot = $PSScriptRoot
 foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') {
     . (Join-Path $packageRoot "module\MailboxTransfer.Gui.$f.ps1")

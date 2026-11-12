@@ -117,7 +117,7 @@ function Set-MbtGuiTheme {
 
 #region Text and numbers --------------------------------------------------------------------
 
-# Glyphs of Segoe Fluent Icons (Segoe MDL2 Assets as the fallback), by the names the mockup uses.
+# Glyphs of Segoe Fluent Icons (Segoe MDL2 Assets as the fallback), by the names the pages use.
 $script:Glyphs = @{
     mail = 0xE715; folder = 0xE8B7; archive = 0xE7B8; cal = 0xE787; people = 0xE716; trash = 0xE74D; send = 0xE724; pencil = 0xE70F; person = 0xE77B
     cloud = 0xE753; down = 0xE896; up = 0xE898; pst = 0xE8A5; wrench = 0xE90F; search = 0xE721; check = 0xE73E; warn = 0xE7BA; x = 0xE711; chev = 0xE76C
@@ -309,17 +309,25 @@ function ConvertTo-MbtGuiHandler {
         The handler of a control, written as a script block in the function that builds the page. The control raises its event after that function
         has returned, so the block gets a copy of the variables of that function (taken when the control is made, like a closure) and keeps its own
         scope, where the functions and the script variables of the console are. A block that is already a closure is left as it is.
+        -CallerScope: how many scopes up from this function the function that wrote the block is (2 when a New-Gui... function of this file calls it, 1 when the builder calls it).
     #>
-    param([Parameter(Mandatory)][scriptblock]$Block)
+    param([Parameter(Mandatory)][scriptblock]$Block, [int]$CallerScope = 2)
     if ($Block.Module) { return $Block }
     $skip = @('args', 'input', 'this', 'PSCmdlet', 'MyInvocation', 'PSBoundParameters', 'PSCommandPath', 'PSScriptRoot', 'foreach', 'switch', 'Error', '_', 'ExecutionContext', 'Host', 'StackTrace', 'null', 'true', 'false', '?', '^', '$')
     $locked = [Management.Automation.ScopedItemOptions]::Constant -bor [Management.Automation.ScopedItemOptions]::ReadOnly -bor [Management.Automation.ScopedItemOptions]::AllScope
     $vars = [Collections.Generic.List[psvariable]]::new()
-    foreach ($v in @(Get-Variable -Scope 2 -ErrorAction SilentlyContinue)) {
+    foreach ($v in @(Get-Variable -Scope $CallerScope -ErrorAction SilentlyContinue)) {
         if ($v.Name -notin $skip -and -not ($v.Options -band $locked)) { $vars.Add([psvariable]::new($v.Name, $v.Value)) }
     }
     $inner = $Block
     return { param($sender, $e) $null = $inner.InvokeWithContext($null, $vars, @($sender, $e)) }.GetNewClosure()
+}
+
+function Add-MbtGuiHandler {
+    <# Subscribes a script block to an event of a control (Click, Checked, SelectionChanged...). Every handler of the console goes through here or through a New-Gui... function: see ConvertTo-MbtGuiHandler. #>
+    param([Parameter(Mandatory)]$Control, [Parameter(Mandatory)][string]$Event, [Parameter(Mandatory)][scriptblock]$Block)
+    $handler = ConvertTo-MbtGuiHandler -Block $Block -CallerScope 2
+    $null = $Control.('Add_' + $Event).Invoke($handler)
 }
 
 function New-GuiButton {
@@ -568,6 +576,12 @@ function New-GuiProgressBar {
 #endregion
 
 #region Pickers -----------------------------------------------------------------------------
+
+function Set-MbtGuiClipboard {
+    <# Puts a text on the clipboard. Another program may hold the clipboard for a moment: that is not an error of the console, the button then does not say "Copied". #>
+    param([string]$Text)
+    try { [Windows.Clipboard]::SetText($Text); return $true } catch { Write-Verbose "clipboard: $($_.Exception.Message)"; return $false }
+}
 
 function Select-MbtGuiFile {
     param([string]$Title, [string]$Filter = 'All files (*.*)|*.*', [string]$InitialPath, [switch]$Save)

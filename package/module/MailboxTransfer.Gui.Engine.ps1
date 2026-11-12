@@ -71,6 +71,9 @@ function New-MbtGuiRealEngine {
         $freeText = 'unknown'; $ok = $true
         try { $root = [IO.Path]::GetPathRoot($work); $d = [IO.DriveInfo]::new($root); $freeText = "$(Format-MbtGuiBytes $d.AvailableFreeSpace) free"; $ok = $d.AvailableFreeSpace -gt 5GB } catch { $ok = $true }
         $lights.Add(@{ Name = 'Work folder'; Detail = "$work - $freeText"; Ok = $ok })
+        $configProblem = $null
+        try { $null = Import-MbtConfiguration } catch { $configProblem = $_.Exception.Message }
+        $lights.Add(@{ Name = 'Configuration file'; Detail = $(if ($configProblem) { "cannot be read: $configProblem" } else { 'read' }); Ok = (-not $configProblem) })
         $net = [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()
         $lights.Add(@{ Name = 'Network connection'; Detail = $(if ($net) { 'a connection is present' } else { 'no connection found' }); Ok = $net })
         $blocked = $false; try { $blocked = [bool](Get-Item -LiteralPath $PackageRoot -Stream Zone.Identifier -ErrorAction SilentlyContinue) -or [bool](Get-Item -LiteralPath $EntryScript -Stream Zone.Identifier -ErrorAction SilentlyContinue) } catch { }
@@ -99,8 +102,13 @@ function New-MbtGuiRealEngine {
 
     # -Silent: only the cached token (no browser, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)
     # the tenant and the application of the configuration (empty: the Sign-in card asks for them)
-    $e.SignInSettings = { $c = Import-MbtConfiguration; [pscustomobject]@{ TenantId = [string]$c.Lab.TenantId; ClientId = [string]$c.Lab.ClientId; AppTenantId = [string]$c.Auth.AppTenantId; AppClientId = [string]$c.Auth.AppClientId; CertificateThumbprint = [string]$c.Auth.CertificateThumbprint } }
-    $e.ConfigPath = { Join-Path $PackageRoot 'config\MailboxTransfer.config.psd1' }.GetNewClosure()
+    $e.SignInSettings = { $c = Import-MbtConfiguration; [pscustomobject]@{ TenantId = [string]$c.Tenant.TenantId; ClientId = [string]$c.Tenant.ClientId; AppTenantId = [string]$c.Auth.AppTenantId; AppClientId = [string]$c.Auth.AppClientId; CertificateThumbprint = [string]$c.Auth.CertificateThumbprint } }
+    # the file the values come from: the private local file when there is one (it is read after the shipped file), else the shipped file
+    $e.ConfigPath = {
+        $local = if ($null -ne $env:MAILBOXTRANSFER_LOCAL_CONFIG) { $env:MAILBOXTRANSFER_LOCAL_CONFIG } else { Join-Path $PackageRoot 'config\MailboxTransfer.config.local.psd1' }
+        if ($local -and (Test-Path -LiteralPath $local)) { return $local }
+        return (Join-Path $PackageRoot 'config\MailboxTransfer.config.psd1')
+    }.GetNewClosure()
 
     # -TenantId / -ClientId: typed in the Sign-in card when the configuration has none
     # -App: @{ Tenant; ClientId; Thumbprint } signs in as the application with its certificate (no window, no user: $Mailbox is then the mailbox it works on)
@@ -117,8 +125,8 @@ function New-MbtGuiRealEngine {
                 $missing = if ($viaRbac) { @() } else { @(Get-MbtMissingAppPermission -Token $t -Mode Import) + @(if (-not ('Mail.Read' -in $roles -or 'Mail.ReadWrite' -in $roles)) { 'Mail.Read' }) }
                 return [pscustomobject]@{ Account = $upn; TenantId = $t.TenantId; Scopes = @($t.Scopes); Missing = @($missing | Select-Object -Unique); CanReadMail = ($viaRbac -or 'Mail.Read' -in $roles -or 'Mail.ReadWrite' -in $roles); Access = $(if ($viaRbac) { 'Application (certificate, permissions from Exchange RBAC)' } else { 'Application (certificate, no user)' }) }
             }
-            if (-not $tenantId) { $tenantId = [string]$cfg.Lab.TenantId }
-            if (-not $clientId) { $clientId = [string]$cfg.Lab.ClientId }
+            if (-not $tenantId) { $tenantId = [string]$cfg.Tenant.TenantId }
+            if (-not $clientId) { $clientId = [string]$cfg.Tenant.ClientId }
             Assert-MbtSignInSettings -TenantId $tenantId -ClientId $clientId
             $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -NoPrompt:$silent -Configuration $cfg
             $t = $session.Token
@@ -245,6 +253,26 @@ function New-MbtGuiRealEngine {
                 }
             }
             Save-MbtBrowseSelection -Selection $sel -Path $path
+        }
+    }.GetNewClosure()
+
+    # -Groups: one @{ Root; Entries } per location ticked; they are written as one selection file (one selection per mailbox)
+    $e.SaveSelections = { param($Groups, $Path, $OnDone, $OnError)
+        $plain = @($Groups | ForEach-Object { @{ Location = $_.Root.Tag.Location; Entries = @($_.Entries | ForEach-Object { @{ Folder = $_.Node.Tag; Kind = $_.Kind; Items = @($_.Node.PickRows.Values) } }) } })
+        Start-MbtGuiWork -Worker $worker -Arguments @($plain, $Path) -OnDone $OnDone -OnError $OnError -Script {
+            param($groups, $path)
+            $selections = foreach ($group in $groups) {
+                $sel = New-MbtBrowseSelection -Location $group.Location
+                foreach ($en in $group.Entries) {
+                    switch ($en.Kind) {
+                        'tree' { $null = Add-MbtBrowseSelection -Selection $sel -Folder $en.Folder -IncludeSubfolders }
+                        'own' { $null = Add-MbtBrowseSelection -Selection $sel -Folder $en.Folder }
+                        default { $null = Add-MbtBrowseSelection -Selection $sel -Folder $en.Folder -Item @($en.Items | ForEach-Object { $_ }) }
+                    }
+                }
+                $sel
+            }
+            Save-MbtBrowseSelectionSet -Selection @($selections) -Path $path
         }
     }.GetNewClosure()
 
