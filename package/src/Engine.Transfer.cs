@@ -426,7 +426,7 @@ namespace MailboxTransfer
     public sealed class ImportSessionPool
     {
         readonly MailboxApi _api;
-        readonly Dictionary<string, ImportSession> _sessions = new Dictionary<string, ImportSession>(StringComparer.Ordinal);
+        readonly Dictionary<string, ImportSession> _sessions = new Dictionary<string, ImportSession>(StringComparer.OrdinalIgnoreCase);
         readonly object _lock = new object();
         public TimeSpan RenewBefore = TimeSpan.FromMinutes(2);
         /// <summary>Sessions created, and the lifetime announced by the service for each (expirationDateTime minus the creation time).</summary>

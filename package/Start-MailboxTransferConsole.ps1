@@ -68,7 +68,7 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     }
     $integritySignature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $integrityVerifier -ErrorAction Stop
     if ([string]$integritySignature.Status -cne 'Valid' -or $null -eq $integritySignature.SignerCertificate -or
-        $integritySignature.SignerCertificate.Thumbprint -cne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
+        $integritySignature.SignerCertificate.Thumbprint -ne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
         $null -eq $integritySignature.TimeStamperCertificate) {
         throw 'Package integrity: verifier must have the trusted, timestamped owner signature. Use the complete release ZIP (https://github.com/Nico77600/MailboxTransfer/releases/latest): extract it again and unblock it. A source checkout is started with -DevelopmentMode.'
     }

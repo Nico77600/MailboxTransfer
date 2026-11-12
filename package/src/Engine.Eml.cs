@@ -302,6 +302,9 @@ namespace MailboxTransfer
             return list;
         }
 
+        /// <summary>Identity of an item for a resumed run: the source (mailbox id or file name) is compared without case, the item id is an exact machine identifier.</summary>
+        static string ResumeKey(string source, string id) { return (source ?? "").ToLowerInvariant() + "|" + id; }
+
         public static EmlExportResult Run(EmlSource source, EmlExportOptions o)
         {
             if (string.IsNullOrWhiteSpace(o.OutputDirectory)) throw new ArgumentException("OutputDirectory is required.");
@@ -310,10 +313,10 @@ namespace MailboxTransfer
             var result = new EmlExportResult { OutputDirectory = root, WhatIf = o.WhatIf, ManifestPath = Path.Combine(root, ManifestName) };
             if (!o.WhatIf) Directory.CreateDirectory(root);
 
-            var done = new Dictionary<string, EmlManifestEntry>(StringComparer.Ordinal);
+            var done = new Dictionary<string, EmlManifestEntry>(StringComparer.Ordinal);   // ResumeKey -> what the manifest recorded
             if (o.Resume && !o.WhatIf)
                 foreach (EmlManifestEntry e in ReadManifest(root))
-                    if (e.State == "Exported" && e.Id != null) done[e.Source + "|" + e.Id] = e;
+                    if (e.State == "Exported" && e.Id != null) done[ResumeKey(e.Source, e.Id)] = e;
             if (!o.WhatIf && Directory.Exists(root))
                 foreach (string part in Directory.EnumerateFiles(root, "*.part", SearchOption.AllDirectories)) { try { File.Delete(part); } catch (IOException) { } }
 
@@ -358,7 +361,7 @@ namespace MailboxTransfer
                             if (o.Folders != null) o.Folders.Skip(folder.Path);
                             return;
                         }
-                        if (done.TryGetValue(source.Label + "|" + item.Id, out prior) && prior.File != null && File.Exists(Path.Combine(root, prior.File)))
+                        if (done.TryGetValue(ResumeKey(source.Label, item.Id), out prior) && prior.File != null && File.Exists(Path.Combine(root, prior.File)))
                         {
                             lock (gate) { result.Resumed++; }
                             if (o.Folders != null) o.Folders.Done(folder.Path, prior.Size);

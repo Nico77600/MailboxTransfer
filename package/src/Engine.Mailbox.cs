@@ -310,7 +310,7 @@ namespace MailboxTransfer
     public sealed class MailboxApi
     {
         public const int MaxExportBatch = 20;
-        static readonly Regex PhysicalId = new Regex(@"^MBX:[0-9A-Fa-f-]+@[0-9A-Fa-f-]+$", RegexOptions.Compiled);
+        static readonly Regex PhysicalId = new Regex(@"^MBX:[0-9A-Fa-f-]+@[0-9A-Fa-f-]+$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         static readonly Regex MailboxInUrl = new Regex(@"[Mm]ailboxes(?:/|\('?)(?<id>MBX(?::|%3[Aa])[^/'?)]+)", RegexOptions.Compiled);
 
         public GraphClient Graph { get; }
@@ -333,10 +333,10 @@ namespace MailboxTransfer
 
         public MailboxApi(GraphClient graph) { Graph = graph; }
 
-        /// <summary>"MBX:guid@guid" is written as is (as in the Microsoft documentation), any other id is escaped.</summary>
+        /// <summary>"MBX:guid@guid" is written as is (as in the Microsoft documentation; the prefix in upper case whatever the case it was given in), any other id is escaped.</summary>
         public static string MailboxPath(string mailboxId)
         {
-            string id = PhysicalId.IsMatch(mailboxId) ? mailboxId : Uri.EscapeDataString(mailboxId);
+            string id = PhysicalId.IsMatch(mailboxId) ? "MBX:" + mailboxId.Substring(4) : Uri.EscapeDataString(mailboxId);
             return "/admin/exchange/mailboxes/" + id;
         }
 

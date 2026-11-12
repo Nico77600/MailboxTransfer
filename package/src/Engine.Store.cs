@@ -447,7 +447,7 @@ namespace MailboxTransfer
         private bool _closing;
         private bool _closed;
 
-        private readonly ConcurrentDictionary<string, int> _mailboxKeys = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, int> _mailboxKeys = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, long> _folderKeys = new ConcurrentDictionary<string, long>(StringComparer.Ordinal);
 
         public string Root { get { return _root; } }
@@ -761,7 +761,7 @@ CREATE TABLE export(
 );
 CREATE TABLE mailbox(
   mailbox_key  INTEGER PRIMARY KEY,
-  mailbox_id   TEXT NOT NULL UNIQUE,          -- physical id of the mailbox (GUID)
+  mailbox_id   TEXT NOT NULL UNIQUE COLLATE NOCASE,   -- physical id of the mailbox (GUID)
   kind         INTEGER NOT NULL,              -- 0 Primary, 1 Archive
   upn          TEXT,
   display_name TEXT
@@ -848,7 +848,7 @@ CREATE INDEX ix_importitem_state ON importItem(job_id, state, import_key);
         // Tables added after schema 1 without raising the version (an older build ignores them): created when a store is created or opened for writing.
         private const string AdditiveSchemaSql = @"
 CREATE TABLE IF NOT EXISTS mailboxLocation(
-  mailbox_id     TEXT PRIMARY KEY,                   -- MBX:<guid>@<tenant>
+  mailbox_id     TEXT COLLATE NOCASE PRIMARY KEY,    -- MBX:<guid>@<tenant>
   kind           INTEGER NOT NULL,                   -- 0 Primary, 1 Archive (MainArchive), 2 AuxArchive
   upn            TEXT,
   source         TEXT NOT NULL,                      -- how it was discovered
@@ -1013,7 +1013,7 @@ CREATE TABLE IF NOT EXISTS importRoute(
             int k;
             if (_mailboxKeys.TryGetValue(mailboxId, out k)) return k;
             using (var l = Reader())
-            using (var cmd = Cmd(l.Conn, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@m", null, "@m", mailboxId))
+            using (var cmd = Cmd(l.Conn, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@m COLLATE NOCASE ORDER BY mailbox_key LIMIT 1", null, "@m", mailboxId))
             {
                 object o = cmd.ExecuteScalar();
                 if (o == null) throw new KeyNotFoundException("Unknown mailbox: " + mailboxId);
@@ -1083,12 +1083,17 @@ CREATE TABLE IF NOT EXISTS importRoute(
                 lock (_dbLock)
                 {
                     var c = W();
-                    using (var cmd = Cmd(c, "INSERT INTO mailbox(mailbox_id,kind,upn,display_name) VALUES(@i,@k,@u,@d) " +
-                        "ON CONFLICT(mailbox_id) DO UPDATE SET kind=excluded.kind, upn=excluded.upn, display_name=excluded.display_name", null,
-                        "@i", mailbox.Id, "@k", (int)mailbox.Kind, "@u", mailbox.Upn, "@d", mailbox.DisplayName))
-                        cmd.ExecuteNonQuery();
-                    using (var cmd = Cmd(c, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@i", null, "@i", mailbox.Id))
-                        mailbox.Key = Convert.ToInt32(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
+                    // Ids are compared without case, also in a store created with a case-sensitive column: the mailbox keeps the row (and the spelling) it was first written with.
+                    int? existing = FindMailboxKeyW(c, mailbox.Id);
+                    if (existing.HasValue)
+                        using (var cmd = Cmd(c, "UPDATE mailbox SET kind=@k, upn=@u, display_name=@d WHERE mailbox_key=@x", null,
+                            "@k", (int)mailbox.Kind, "@u", mailbox.Upn, "@d", mailbox.DisplayName, "@x", existing.Value))
+                            cmd.ExecuteNonQuery();
+                    else
+                        using (var cmd = Cmd(c, "INSERT INTO mailbox(mailbox_id,kind,upn,display_name) VALUES(@i,@k,@u,@d)", null,
+                            "@i", mailbox.Id, "@k", (int)mailbox.Kind, "@u", mailbox.Upn, "@d", mailbox.DisplayName))
+                            cmd.ExecuteNonQuery();
+                    mailbox.Key = FindMailboxKeyW(c, mailbox.Id).Value;
                     _mailboxKeys[mailbox.Id] = mailbox.Key;
                     return mailbox.Key;
                 }
@@ -1106,16 +1111,26 @@ CREATE TABLE IF NOT EXISTS importRoute(
                 lock (_dbLock)
                 {
                     var c = W();
-                    using (var cmd = Cmd(c, "INSERT INTO mailbox(mailbox_id,kind,upn,display_name) VALUES(@i,@k,@u,@d) ON CONFLICT(mailbox_id) DO NOTHING", null,
-                        "@i", mailbox.Id, "@k", (int)mailbox.Kind, "@u", mailbox.Upn, "@d", mailbox.DisplayName))
-                        cmd.ExecuteNonQuery();
-                    using (var cmd = Cmd(c, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@i", null, "@i", mailbox.Id))
-                        mailbox.Key = Convert.ToInt32(cmd.ExecuteScalar(), CultureInfo.InvariantCulture);
+                    if (!FindMailboxKeyW(c, mailbox.Id).HasValue)
+                        using (var cmd = Cmd(c, "INSERT INTO mailbox(mailbox_id,kind,upn,display_name) VALUES(@i,@k,@u,@d)", null,
+                            "@i", mailbox.Id, "@k", (int)mailbox.Kind, "@u", mailbox.Upn, "@d", mailbox.DisplayName))
+                            cmd.ExecuteNonQuery();
+                    mailbox.Key = FindMailboxKeyW(c, mailbox.Id).Value;
                     _mailboxKeys[mailbox.Id] = mailbox.Key;
                     return mailbox.Key;
                 }
             }
             finally { ExitOp(); }
+        }
+
+        /// <summary>Key of the mailbox with that id (case does not matter), or null. Called with the write lock held.</summary>
+        private static int? FindMailboxKeyW(SqliteConnection c, string mailboxId)
+        {
+            using (var cmd = Cmd(c, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@i COLLATE NOCASE ORDER BY mailbox_key LIMIT 1", null, "@i", mailboxId))
+            {
+                object o = cmd.ExecuteScalar();
+                return o == null ? (int?)null : Convert.ToInt32(o, CultureInfo.InvariantCulture);
+            }
         }
 
         public List<StoreMailbox> GetMailboxes()
@@ -1149,16 +1164,22 @@ CREATE TABLE IF NOT EXISTS importRoute(
                 {
                     var c = W();
                     bool isNew;
-                    using (var cmd = Cmd(c, "SELECT COUNT(*) FROM mailboxLocation WHERE mailbox_id=@i", null, "@i", loc.MailboxId))
+                    using (var cmd = Cmd(c, "SELECT COUNT(*) FROM mailboxLocation WHERE mailbox_id=@i COLLATE NOCASE", null, "@i", loc.MailboxId))
                         isNew = Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture) == 0;
-                    using (var cmd = Cmd(c, "INSERT INTO mailboxLocation(mailbox_id,kind,upn,source,detail,rank,discovered_utc) VALUES(@i,@k,@u,@s,@d,@r,@t) " +
-                        "ON CONFLICT(mailbox_id) DO UPDATE SET kind=excluded.kind, upn=COALESCE(excluded.upn, mailboxLocation.upn), source=excluded.source, " +
-                        "detail=excluded.detail, rank=excluded.rank, discovered_utc=excluded.discovered_utc WHERE excluded.rank > mailboxLocation.rank", null,
-                        "@i", loc.MailboxId, "@k", (int)loc.Kind, "@u", Db(loc.Upn), "@s", loc.Source, "@d", Db(loc.Detail == null ? null : Clip(loc.Detail, 500)),
-                        "@r", loc.Rank, "@t", ToMs(loc.DiscoveredUtc)))
-                        cmd.ExecuteNonQuery();
+                    // The id is matched without case (a table created with a case-sensitive column may hold it in another spelling), so a known mailbox is updated, never added twice.
+                    if (isNew)
+                        using (var cmd = Cmd(c, "INSERT INTO mailboxLocation(mailbox_id,kind,upn,source,detail,rank,discovered_utc) VALUES(@i,@k,@u,@s,@d,@r,@t)", null,
+                            "@i", loc.MailboxId, "@k", (int)loc.Kind, "@u", Db(loc.Upn), "@s", loc.Source, "@d", Db(loc.Detail == null ? null : Clip(loc.Detail, 500)),
+                            "@r", loc.Rank, "@t", ToMs(loc.DiscoveredUtc)))
+                            cmd.ExecuteNonQuery();
+                    else
+                        using (var cmd = Cmd(c, "UPDATE mailboxLocation SET kind=@k, upn=COALESCE(@u, upn), source=@s, detail=@d, rank=@r, discovered_utc=@t " +
+                            "WHERE mailbox_id=@i COLLATE NOCASE AND @r > rank", null,
+                            "@i", loc.MailboxId, "@k", (int)loc.Kind, "@u", Db(loc.Upn), "@s", loc.Source, "@d", Db(loc.Detail == null ? null : Clip(loc.Detail, 500)),
+                            "@r", loc.Rank, "@t", ToMs(loc.DiscoveredUtc)))
+                            cmd.ExecuteNonQuery();
                     if (!string.IsNullOrEmpty(loc.Upn))
-                        using (var cmd = Cmd(c, "UPDATE mailboxLocation SET upn=@u WHERE mailbox_id=@i AND upn IS NULL", null, "@u", loc.Upn, "@i", loc.MailboxId))
+                        using (var cmd = Cmd(c, "UPDATE mailboxLocation SET upn=@u WHERE mailbox_id=@i COLLATE NOCASE AND upn IS NULL", null, "@u", loc.Upn, "@i", loc.MailboxId))
                             cmd.ExecuteNonQuery();
                     return isNew;
                 }
@@ -1345,7 +1366,7 @@ CREATE TABLE IF NOT EXISTS importRoute(
         {
             int k;
             if (mailboxId != null && _mailboxKeys.TryGetValue(mailboxId, out k)) return k;
-            using (var cmd = Cmd(c, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@m", tx, "@m", mailboxId))
+            using (var cmd = Cmd(c, "SELECT mailbox_key FROM mailbox WHERE mailbox_id=@m COLLATE NOCASE ORDER BY mailbox_key LIMIT 1", tx, "@m", mailboxId))
             {
                 object o = cmd.ExecuteScalar();
                 if (o == null) throw new KeyNotFoundException("Unknown mailbox: " + mailboxId + " (call UpsertMailbox first).");
@@ -2250,11 +2271,11 @@ CREATE TABLE IF NOT EXISTS importRoute(
             finally { ExitOp(); }
         }
 
-        /// <summary>The most recent import job of that name, or null: a second run with the same name resumes it.</summary>
+        /// <summary>The most recent import job of that name (case does not matter), or null: a second run with the same name resumes it.</summary>
         public StoreImportJob FindImportJob(string name)
         {
             StoreImportJob found = null;
-            foreach (var j in GetImportJobs()) if (string.Equals(j.Name, name, StringComparison.Ordinal)) found = j;
+            foreach (var j in GetImportJobs()) if (string.Equals(j.Name, name, StringComparison.OrdinalIgnoreCase)) found = j;
             return found;
         }
 
@@ -2401,21 +2422,26 @@ CREATE TABLE IF NOT EXISTS importRoute(
             try
             {
                 lock (_dbLock)
-                using (var cmd = Cmd(W(), "INSERT INTO importRoute(job_id,from_mailbox,from_folder,to_mailbox,to_folder,learned_utc) VALUES(@j,@a,@b,@c,@d,@t) " +
-                    "ON CONFLICT(job_id,from_mailbox,from_folder) DO UPDATE SET to_mailbox=excluded.to_mailbox, to_folder=excluded.to_folder, learned_utc=excluded.learned_utc", null,
-                    "@j", jobId, "@a", fromMailbox, "@b", fromFolder, "@c", toMailbox, "@d", toFolder, "@t", NowMs()))
-                    cmd.ExecuteNonQuery();
+                {
+                    var c = W();
+                    using (var upd = Cmd(c, "UPDATE importRoute SET to_mailbox=@c, to_folder=@d, learned_utc=@t WHERE job_id=@j AND from_mailbox=@a COLLATE NOCASE AND from_folder=@b", null,
+                        "@j", jobId, "@a", fromMailbox, "@b", fromFolder, "@c", toMailbox, "@d", toFolder, "@t", NowMs()))
+                        if (upd.ExecuteNonQuery() > 0) return;
+                    using (var cmd = Cmd(c, "INSERT INTO importRoute(job_id,from_mailbox,from_folder,to_mailbox,to_folder,learned_utc) VALUES(@j,@a,@b,@c,@d,@t)", null,
+                        "@j", jobId, "@a", fromMailbox, "@b", fromFolder, "@c", toMailbox, "@d", toFolder, "@t", NowMs()))
+                        cmd.ExecuteNonQuery();
+                }
             }
             finally { ExitOp(); }
         }
 
-        /// <summary>The redirections learned by the runs of a job: key "fromMailbox|fromFolder" -> (toMailbox, toFolder).</summary>
+        /// <summary>The redirections learned by the runs of a job: key "fromMailbox|fromFolder" (the mailbox is compared without case, the folder id exactly) -> (toMailbox, toFolder).</summary>
         public Dictionary<string, KeyValuePair<string, string>> GetImportRoutes(long jobId)
         {
             EnterOp(false);
             try
             {
-                var map = new Dictionary<string, KeyValuePair<string, string>>(StringComparer.OrdinalIgnoreCase);
+                var map = new Dictionary<string, KeyValuePair<string, string>>(MailboxFolderKeyComparer.Instance);
                 try
                 {
                     using (var l = Reader())

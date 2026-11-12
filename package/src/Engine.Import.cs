@@ -149,6 +149,28 @@ namespace MailboxTransfer
         }
     }
 
+    /// <summary>Compares the keys "mailbox|folder id": the mailbox without case, the folder id (a machine identifier) exactly.</summary>
+    public sealed class MailboxFolderKeyComparer : IEqualityComparer<string>
+    {
+        public static readonly MailboxFolderKeyComparer Instance = new MailboxFolderKeyComparer();
+
+        public bool Equals(string a, string b)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (a == null || b == null) return false;
+            int i = a.IndexOf('|'), j = b.IndexOf('|');
+            if (i < 0 || j < 0) return string.Equals(a, b, StringComparison.Ordinal);
+            return i == j && string.Compare(a, 0, b, 0, i, StringComparison.OrdinalIgnoreCase) == 0 && string.Compare(a, i, b, j, int.MaxValue, StringComparison.Ordinal) == 0;
+        }
+
+        public int GetHashCode(string key)
+        {
+            int i = key.IndexOf('|');
+            if (i < 0) return StringComparer.Ordinal.GetHashCode(key);
+            return StringComparer.OrdinalIgnoreCase.GetHashCode(key.Substring(0, i)) * 31 + StringComparer.Ordinal.GetHashCode(key.Substring(i));
+        }
+    }
+
     /// <summary>
     /// What an import knows about the folders that live in an auxiliary archive: (planned mailbox, folder) -> (mailbox that serves it, folder id as
     /// that mailbox lists it). Shared by the workers of a job; kept in the store (table importRoute) so that a resumed run starts with it.
@@ -157,8 +179,8 @@ namespace MailboxTransfer
     {
         readonly MailboxApi _api;
         readonly ExportStore _store;
-        readonly ConcurrentDictionary<string, KeyValuePair<string, string>> _routes = new ConcurrentDictionary<string, KeyValuePair<string, string>>(StringComparer.OrdinalIgnoreCase);
-        readonly ConcurrentDictionary<string, string> _paths = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        readonly ConcurrentDictionary<string, KeyValuePair<string, string>> _routes = new ConcurrentDictionary<string, KeyValuePair<string, string>>(MailboxFolderKeyComparer.Instance);
+        readonly ConcurrentDictionary<string, string> _paths = new ConcurrentDictionary<string, string>(MailboxFolderKeyComparer.Instance);
         readonly Dictionary<string, List<FolderInfo>> _trees = new Dictionary<string, List<FolderInfo>>(StringComparer.OrdinalIgnoreCase);
         readonly object _treeLock = new object();
 
@@ -195,7 +217,7 @@ namespace MailboxTransfer
         {
             var v = new KeyValuePair<string, string>(toMailbox, toFolder);
             KeyValuePair<string, string> old;
-            if (_routes.TryGetValue(Key(mailbox, folderId), out old) && old.Key == toMailbox && old.Value == toFolder) return;
+            if (_routes.TryGetValue(Key(mailbox, folderId), out old) && MailboxApi.SameMailbox(old.Key, toMailbox) && old.Value == toFolder) return;
             _routes[Key(mailbox, folderId)] = v;
             if (JobId > 0) _store.SaveImportRoute(JobId, mailbox, folderId, toMailbox, toFolder);
         }
@@ -637,7 +659,7 @@ namespace MailboxTransfer
             StoreImportJob job = _store.FindImportJob(_o.JobName);
             bool resumed = job != null;
             if (job == null) job = _store.GetImportJob(_store.CreateImportJob(_o.JobName, target));
-            else if (!string.Equals(job.TargetMailbox, target, StringComparison.Ordinal))
+            else if (!MailboxApi.SameMailbox(job.TargetMailbox, target))
                 throw new InvalidOperationException("The import job '" + _o.JobName + "' of the store targets another mailbox (" + job.TargetMailbox + "). Give another -JobName.");
             _result.JobId = job.JobId;
             _router.Load(job.JobId);
