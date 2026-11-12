@@ -2,9 +2,12 @@
 #  Mailbox Transfer - configuration
 #  --------------------------------------------------------------------------
 #  Every key is optional: the values below are the built-in defaults.
-#  The Lab section only holds the defaults of the lab scripts (tools\*.ps1) and of the command line: every value is also a parameter of them.
+#  The Tenant section holds your tenant, your application and the mailbox to work on: the console shows them on its Setup page and the command line
+#  uses them when the matching parameter is not given (-TenantId, -ClientId, -UserPrincipalName ...). A file that still calls this section Lab is read the same way.
+#  The Auth section holds the application that signs in with a certificate (no user). The Lab section only holds what the lab scripts (tools\*.ps1) need.
 #  Do not write your own tenant, application or mailbox ids in this file. Put them in
 #  config\MailboxTransfer.config.local.psd1 (same layout, only the keys you change): git ignores it, and it is read after this file.
+#  What you change in the console for one run is never written to either file.
 #
 @{
     Graph = @{
@@ -28,6 +31,7 @@
         # Token cache (DPAPI, current user). Empty: %LOCALAPPDATA%\MailboxTransfer\token.cache
         CacheFile   = ''
         # App-only sign-in with a certificate (-CertificateThumbprint / -CertificatePath of the scripts; see docs\MailboxTransfer-Guide.md, chapter 4.6). Empty: the parameter is needed.
+        # The console shows these three values on its Setup page ("The application (certificate)").
         AppTenantId           = ''
         AppClientId           = ''
         CertificateThumbprint = ''
@@ -38,19 +42,23 @@
         Root = '.\out'
     }
 
-    # Defaults of the command line and of the lab scripts: your tenant, your application and the mailbox to work on.
+    # Your tenant, your application (signing in as a user) and the mailbox to work on.
     # Placeholders only: keep the real values in config\MailboxTransfer.config.local.psd1.
-    Lab = @{
+    Tenant = @{
         TenantId          = ''     # for instance '00000000-0000-0000-0000-000000000000' or 'contoso.onmicrosoft.com'
         ClientId          = ''     # application (client) id of the app registration
         UserPrincipalName = ''     # for instance 'adele.vance@contoso.com'
-        UserObjectId      = ''     # only for tools\Grant-LabConsent.ps1 when the directory cannot be read
         # Physical mailbox ids MBX:<mailbox guid>@<tenant id>, from Exchange Online PowerShell:
         # Get-MailboxLocation -User <upn> (Primary, MainArchive; an auto-expanding archive adds AuxArchive locations).
         # Empty: the primary one is read with GET /users/{upn}/settings/exchange (needs User.Read.All), the archive one
         # has no API and must then be given.
         PrimaryMailboxId  = ''
         ArchiveMailboxId  = ''
+    }
+
+    # Only for the lab scripts (tools\*.ps1). The keys of Tenant are accepted here too, as in earlier versions.
+    Lab = @{
+        UserObjectId      = ''     # only for tools\Grant-LabConsent.ps1 when the directory cannot be read
         # Folders of the lab scripts (tools\Invoke-Phase0.ps1).
         SourceFolder      = ''
         TargetFolder      = ''

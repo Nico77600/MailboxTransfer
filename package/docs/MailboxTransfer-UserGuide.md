@@ -198,7 +198,7 @@ Get-ChildItem "C:\Tools\MailboxTransfer" -Recurse -File -Force | Unblock-File
 
 ```powershell
 @{
-    Lab = @{
+    Tenant = @{
         TenantId = '00000000-0000-0000-0000-000000000000'
         ClientId = '00000000-0000-0000-0000-000000000000'
     }

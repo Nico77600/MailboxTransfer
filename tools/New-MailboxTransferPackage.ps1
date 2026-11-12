@@ -109,7 +109,9 @@ if (-not $DevelopmentMode -and -not (Test-Path -LiteralPath (Join-Path $Destinat
 # No private value: the shipped configuration holds defaults only (the local file is never copied).
 $config = Import-PowerShellDataFile -LiteralPath (Join-Path $Destination 'config\MailboxTransfer.config.psd1')
 foreach ($key in 'TenantId', 'ClientId', 'UserPrincipalName', 'UserObjectId', 'PrimaryMailboxId', 'ArchiveMailboxId') {
-    if ($config.ContainsKey('Lab') -and $config.Lab.ContainsKey($key) -and $config.Lab[$key]) { $problems.Add("The shipped configuration holds a value for Lab.$key.") }
+    foreach ($section in 'Tenant', 'Lab') {
+        if ($config.ContainsKey($section) -and $config[$section].ContainsKey($key) -and $config[$section][$key]) { $problems.Add("The shipped configuration holds a value for $section.$key.") }
+    }
 }
 foreach ($file in Get-ChildItem -LiteralPath $Destination -Recurse -File | Where-Object { $_.Extension -in '.fxs', '.sqlite', '.pst', '.eml' }) {
     $problems.Add("Data file in the package: $($file.FullName.Substring($Destination.Length + 1))")

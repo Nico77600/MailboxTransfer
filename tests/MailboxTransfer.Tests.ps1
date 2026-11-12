@@ -745,6 +745,7 @@ Describe 'Mailbox ids and folder creation' {
     It 'the shipped configuration holds placeholders only; the local file is read after it and the lab defaults come from there' {
         $shipped = Import-PowerShellDataFile -LiteralPath (Join-Path $script:Root 'config\MailboxTransfer.config.psd1')
         foreach ($k in @($shipped.Lab.Keys)) { $shipped.Lab[$k] | Should -BeNullOrEmpty -Because "Lab.$k of the shipped file is a placeholder" }
+        foreach ($k in @($shipped.Tenant.Keys)) { $shipped.Tenant[$k] | Should -BeNullOrEmpty -Because "Tenant.$k of the shipped file is a placeholder" }
         $lab = (Import-MbtConfiguration).Lab                         # the synthetic local file of tests\support\Import-StoreEngine.ps1
         $lab.UserPrincipalName | Should -Be $script:Upn
         $lab.UserObjectId | Should -Be '1a2b3c05-5e7f-4a1b-9c2d-3e4f5a6b7c8d'

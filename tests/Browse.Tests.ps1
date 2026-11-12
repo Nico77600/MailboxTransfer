@@ -1179,6 +1179,42 @@ Describe 'Browse: module functions and the entry script' {
         $go | Should -Match 'exporting the Archive mailbox MBX:aaaaaaaa'
         $go | Should -Match 'export finished: 4 items exported'
     }
+
+    It 'a selection file of several mailboxes (the console writes one for the locations it ticked): one Export command exports them all, a single mailbox is written as before' {
+        $w = New-World
+        $primary = Join-Path $script:Tmp 'set-primary.json'; $archive = Join-Path $script:Tmp 'set-archive.json'
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; PrimaryMailboxId = $script:Src; Folder = 'Inbox'; IncludeSubfolders = $true; SaveSelection = $primary; StorePath = (Join-Path $script:Tmp 'cli-none') }
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; Mailbox = 'Archive'; ArchiveMailboxId = $script:Arch; Folder = 'Old Mail'; SaveSelection = $archive; StorePath = (Join-Path $script:Tmp 'cli-none') }
+        $one = Save-MbtBrowseSelectionSet -Selection @(Read-MbtBrowseSelection -Path $primary) -Path (Join-Path $script:Tmp 'set-one.json')
+        (Get-Content -LiteralPath $one -Raw) | Should -Be (Get-Content -LiteralPath $primary -Raw) -Because 'one mailbox: the file of an earlier version'
+        $set = Save-MbtBrowseSelectionSet -Selection @((Read-MbtBrowseSelection -Path $primary), (Read-MbtBrowseSelection -Path $archive)) -Path (Join-Path $script:Tmp 'selections\set-both.json')
+        $read = @(Read-MbtBrowseSelectionSet -Path $set)
+        $read.Count | Should -Be 2
+        ($read | ForEach-Object Kind) -join ',' | Should -Be 'Primary,Archive'
+        @(Read-MbtBrowseSelectionSet -Path $primary).Count | Should -Be 1
+        $store = Join-Path $script:Tmp 'cli-store-set'
+        $dry = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $set; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-tmp-set'); WhatIf = $true }
+        $dry | Should -Match 'for the Primary mailbox MBX:11111111'
+        $dry | Should -Match 'for the Archive mailbox MBX:aaaaaaaa'
+        $dry | Should -Match 'WhatIf: the selection is valid, nothing was exported'
+        (Test-Path (Join-Path $store 'catalog.db')) | Should -BeFalse
+        $out = Join-Path (Join-Path $script:Tmp 'set-pst') 'both.pst'
+        $go = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $set; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-tmp-set'); Concurrency = 2; OutputPst = $out; SkipCheck = $true }
+        $go | Should -Match 'exporting the Primary mailbox MBX:11111111'
+        $go | Should -Match 'exporting the Archive mailbox MBX:aaaaaaaa'
+        $global:MbtEntryExit | Should -Be 0
+        $s = Open-MbtExportStore -Path $store -ReadOnly
+        try {
+            ($s.GetMailboxes() | ForEach-Object { $_.Kind.ToString() } | Sort-Object) -join ',' | Should -Be 'Archive,Primary'
+            ($s.GetItemStats($script:Src) | Where-Object State -EQ 'Exported').Count | Should -Be 8
+            ($s.GetItemStats($script:Arch) | Where-Object State -EQ 'Exported').Count | Should -Be 4
+        } finally { $s.Dispose() }
+        Test-Path -LiteralPath $out | Should -BeTrue -Because 'the PST is written by the same command'
+        (Get-Content -LiteralPath ([IO.Path]::ChangeExtension($out, 'manifest.json')) -Raw | ConvertFrom-Json).Parts.Count | Should -BeGreaterThan 0
+        # ExportPst takes the same file: only what the selection names
+        $again = Invoke-Entry $w @{ Mode = 'ExportPst'; SelectionFile = $set; StorePath = $store; OutputPst = (Join-Path (Join-Path $script:Tmp 'set-pst') 'again.pst'); SkipCheck = $true }
+        $again | Should -Match 'export to PST finished'
+    }
 }
 
 

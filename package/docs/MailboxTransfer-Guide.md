@@ -148,7 +148,7 @@ All examples run from the `package` folder. `-WhatIf` prints the plan in every m
 | `-ConfigPath <psd1>` | all | The configuration file (chapter 12). |
 | `-DeviceCode` | sign-in | Sign in with a code instead of the browser. The line `DEVICE CODE: <code> URL: <url>` goes to the console and to `device-code.txt`. A cached token makes it silent. |
 | `-NoPrompt` | sign-in | Silent sign-in only. Without a valid cached token: exit 2, error code `signin-required`. |
-| `-TenantId`, `-ClientId`, `-UserPrincipalName` | sign-in | Default from the `Lab` section of the configuration (chapter 12). Delegated sign-in as this user. With a certificate (next row): the application, its tenant and the **target mailbox**, never defaulted. |
+| `-TenantId`, `-ClientId`, `-UserPrincipalName` | sign-in | Default from the `Tenant` section of the configuration (chapter 12; a file that still says `Lab` is read the same way). Delegated sign-in as this user. With a certificate (next row): the application, its tenant and the **target mailbox**, never defaulted. |
 | `-CertificateThumbprint`, `-CertificatePath`, `-CertificatePassword`, `-AppOnly` | sign-in | Sign in as the application, with a certificate (chapter 4.6): from `CurrentUser\My` / `LocalMachine\My`, or a `.pfx` read in memory. `-AppOnly` takes the certificate from the `Auth` keys. Not with `-DeviceCode`. |
 | `-Mailbox` | Export, Import, Browse… | `Primary` (default), `Archive`, `AuxArchive`, `All` (Export). |
 | `-MailboxId` | Export, Import, Browse… | One location: `MBX:<guid>@<tenant>`, a bare guid, or the SMTP address or UPN of a shared or another user's mailbox. |
@@ -160,7 +160,8 @@ All examples run from the `package` folder. `-WhatIf` prints the plan in every m
 | `-MaxAttempts` | Export, Import | Tries per item (default 3). |
 | `-NotReadyTrip` | Export | After this many folders in a row that are not readable yet (default 3), the next ones are asked once and deferred. 0 = always three asks. |
 | `-Folder` | Export, Import, Browse | Only this folder and below (path as in the store, or `Inbox/Reports`). |
-| `-SelectionFile`, `-SaveSelection`, `-IncludeSubfolders`, `-ItemId` | Browse, Export | The selection, chapter 2. |
+| `-SelectionFile`, `-SaveSelection`, `-IncludeSubfolders`, `-ItemId` | Browse, Export | The selection, chapter 2. The file the console writes for several locations (primary mailbox, archive, auxiliary archive) holds one selection per mailbox: one `-Mode Export -SelectionFile` command exports them all, and `-OutputPst` writes the PST files of what was selected in all of them. |
+| `-RetryWaitSeconds` | Export, Import | The wait before a failed request is tried again, for this run only (default: `Graph.BaseBackoffSeconds`, 2; it doubles each time up to `Graph.MaxBackoffSeconds`). | |
 | `-Top`, `-Sort`, `-NoRecipients`, `-RecoverableItems`, `-BodyChars`, `-ShowMoves` | Browse | Rows shown (default 20, 0 = all), sort order, skip To and Cc, add Recoverable Items and its folders to the tree (they can be selected and exported), body characters (600), mark folders moved to an auxiliary archive. |
 | `-IncludeRecoverableItems`, `-RecoverableItemsFolders` | Export (Browse for the list) | Also export Recoverable Items under the top folder `Recoverable Items` (Primary, Archive, AuxArchive); the folders to take, by name: default `Deletions`, `Purges`, `Versions`, `DiscoveryHolds`; `Calendar Logging` and `SubstrateHolds` only when named. Not with `-SelectionFile` (select the folders in the browse view) nor with a `-Folder` outside Recoverable Items. See "Recoverable Items" in chapter 2. |
 | `-OutputPst`, `-PstMaxSizeGB`, `-PstMaxSizeMiB`, `-SeparateAuxArchives`, `-SkipCheck`, `-Force` | Export, ExportPst | The PST file or folder; part size (50 GB default, at least 1 GB; MiB wins and allows smaller); one top folder per auxiliary archive; do not check each part; start the conversion again from zero. |
@@ -210,7 +211,7 @@ One consent covering everything for a first lab: `MailboxFolder.ReadWrite`, `Mai
 
 ### 4.4 Where the mailbox ids come from
 
-In this order: `-MailboxId`; `-PrimaryMailboxId` / `-ArchiveMailboxId` (or the `Lab` section); `-LocationsFile`; the locations recorded in the store; Graph (`GET /users/{id}/settings/exchange` for the primary with `User.Read.All`, Graph beta for the archive). An address in `-MailboxId` is resolved through Graph, or else through the import-export API, which accepts the address in place of the id (`parentMailboxUrl` of the folders). If everything fails the message names what was tried and asks for `-MailboxId MBX:...` (from `Get-MailboxLocation -User <address>`).
+In this order: `-MailboxId`; `-PrimaryMailboxId` / `-ArchiveMailboxId` (or the `Tenant` section); `-LocationsFile`; the locations recorded in the store; Graph (`GET /users/{id}/settings/exchange` for the primary with `User.Read.All`, Graph beta for the archive). An address in `-MailboxId` is resolved through Graph, or else through the import-export API, which accepts the address in place of the id (`parentMailboxUrl` of the folders). If everything fails the message names what was tried and asks for `-MailboxId MBX:...` (from `Get-MailboxLocation -User <address>`).
 
 ### 4.5 Shared mailboxes and other users' mailboxes
 
@@ -236,7 +237,7 @@ Writing into a shared mailbox, or running with no person at the keyboard (schedu
 ```
 
 - The certificate is found in `CurrentUser\My`, then `LocalMachine\My` (it needs its private key), or read from a `.pfx` (loaded in memory only). Its public part (`.cer`) is uploaded to the app registration (Certificates & secrets). The token (scope `https://graph.microsoft.com/.default`) is kept in memory; nothing is written to disk.
-- `-TenantId` and `-ClientId` are never taken from the `Lab` defaults of a delegated sign-in: give them, or set `Auth.AppTenantId` / `Auth.AppClientId` (and `Auth.CertificateThumbprint` or `Auth.CertificatePath` with `-AppOnly`). `-UserPrincipalName` is required and never defaulted; the mailbox ids of the configuration are not used for it.
+- `-TenantId` and `-ClientId` are never taken from the `Tenant` defaults of a delegated sign-in: give them, or set `Auth.AppTenantId` / `Auth.AppClientId` (and `Auth.CertificateThumbprint` or `Auth.CertificatePath` with `-AppOnly`). `-UserPrincipalName` is required and never defaulted; the mailbox ids of the configuration are not used for it.
 - A mailbox in the scope is found from its address alone; `-MailboxId` with an address or an `MBX:...` id works as in the delegated mode. `-DeviceCode` and `-NoPrompt` have no meaning here.
 - The console offers **The application (certificate)** in the Sign-in card: tenant, application id, thumbprint and the mailbox, for the run only (nothing is saved). It does not show the end date of the certificate: look at it with `Get-ChildItem Cert:\CurrentUser\My | Format-Table Subject, NotAfter, Thumbprint`, and renew the certificate before it ends (a sign-in with an expired certificate fails).
 - `Get-MbtAppPermission -Mode <mode>` prints the table below for a mode. `tools\New-MbtAppOnlyLab.ps1` is an optional script for a lab: it creates a dedicated application and a self-signed certificate and prints the steps with the ids filled in (`-WhatIf` first). The product never runs it.
@@ -562,9 +563,9 @@ Memory does not depend on the size of an item, in both directions: the peak work
 | `Auth.RedirectUri` | `http://localhost` | |
 | `Auth.CacheFile` | `%LOCALAPPDATA%\MailboxTransfer\token.cache` | token cache, encrypted with DPAPI for the current user |
 | `Output.Root` | `.\out` | |
-| `Lab.TenantId`, `ClientId`, `UserPrincipalName` | empty | the defaults of the command line and the console; also parameters |
+| `Tenant.TenantId`, `ClientId`, `UserPrincipalName` | empty | the defaults of the command line and the Setup page of the console; also parameters. A file of an earlier version that says `Lab` instead of `Tenant` is read the same way |
+| `Tenant.PrimaryMailboxId`, `ArchiveMailboxId` | empty | `MBX:<guid>@<tenant>`; empty: read through Graph when allowed |
 | `Lab.UserObjectId` | empty | only for `tools\Grant-LabConsent.ps1` |
-| `Lab.PrimaryMailboxId`, `ArchiveMailboxId` | empty | `MBX:<guid>@<tenant>`; empty: read through Graph when allowed |
 | `Lab.SourceFolder`, `TargetFolder` | empty | defaults of the lab script |
 | `Auth.AppTenantId`, `AppClientId` | empty | the tenant and the application of the certificate sign-in (chapter 4.6); `-TenantId` / `-ClientId` win |
 | `Auth.CertificateThumbprint`, `CertificatePath` | empty | the certificate used by `-AppOnly`; `-CertificateThumbprint` / `-CertificatePath` win |
