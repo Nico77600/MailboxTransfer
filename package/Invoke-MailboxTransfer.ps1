@@ -106,7 +106,7 @@
     Sign in as the application with a certificate (client credentials, no user, no prompt) using Auth.CertificateThumbprint or Auth.CertificatePath of the configuration. Implied by -CertificateThumbprint or -CertificatePath. See docs\MailboxTransfer-Guide.md, chapter 4.6.
 
 .PARAMETER CertificateThumbprint
-    App-only: the thumbprint of the application's certificate (CurrentUser\My, then LocalMachine\My; it needs its private key). Works for every mode. -TenantId and -ClientId are then those of the certificate application (Auth.AppTenantId / Auth.AppClientId of the configuration); the lab application is never used.
+    App-only: the thumbprint of the application's certificate (CurrentUser\My, then LocalMachine\My; it needs its private key). Works for every mode. -TenantId and -ClientId are then those of the certificate application (Auth.AppTenantId / Auth.AppClientId of the configuration); the application of the Tenant section is never used.
 
 .PARAMETER CertificatePath
     App-only: a .pfx file with the certificate and its private key (-CertificatePassword: SecureString).
@@ -115,7 +115,7 @@
     App-only: the password of the .pfx, as a SecureString.
 
 .PARAMETER UserPrincipalName
-    The mailbox user (default: Tenant.UserPrincipalName of the configuration). Sign-in is delegated as this user. With -CertificateThumbprint / -CertificatePath it is the OWNER OF THE TARGET MAILBOX (there is no signed-in user and no /me), it is required, and the lab default is never used.
+    The mailbox user (default: Tenant.UserPrincipalName of the configuration). Sign-in is delegated as this user. With -CertificateThumbprint / -CertificatePath it is the OWNER OF THE TARGET MAILBOX (there is no signed-in user and no /me), it is required, and the configuration default is never used.
 
 .PARAMETER Mailbox
     Primary (default), Archive (the main archive; with Export its expanded folders are followed into the auxiliary archives), AuxArchive

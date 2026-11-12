@@ -2208,7 +2208,7 @@ function Assert-MbtSignInSettings {
     if (-not $ClientId) { $problems += 'the application (client) id of the app registration' }
     elseif ($ClientId -notmatch $guid) { $problems += "a valid application (client) id (a GUID, not '$ClientId')" }
     if ($problems) {
-        throw ('Sign-in needs ' + ($problems -join ' and ') + '. Give -TenantId and -ClientId, or write TenantId and ClientId in the Lab section of the configuration file (-ConfigPath); ' +
+        throw ('Sign-in needs ' + ($problems -join ' and ') + '. Give -TenantId and -ClientId, or write TenantId and ClientId in the Tenant section of the configuration file (-ConfigPath); ' +
             'keep that file out of version control (config\*.local.psd1). The application is the one registered for this tool in the tenant (public client, delegated permissions).')
     }
 }
