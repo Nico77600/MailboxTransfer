@@ -192,14 +192,17 @@ function Show-MbtGuiMessage {
     $c.ReadSubject.Text = $Row.Subject; $c.ReadFrom.Text = $Row.From
     $c.ReadDetails.Text = 'Reading the message...'; $c.ReadBody.Text = ''; $c.ReadAttachment.Visibility = 'Collapsed'
     $engine = $script:Gui.Engine
+    $Browser.Reading = $Row
     & $engine.Preview $Row $node {
         param($p)
+        # another message was picked while this one was read: its text is not shown
+        if (-not [object]::ReferenceEquals($Browser.Reading, $Row)) { return }
         $c.ReadSubject.Text = $p.Subject
-        $c.ReadFrom.Text = "$($p.From)  <$($p.Address)>"
+        $c.ReadFrom.Text = (@($(if ($p.From) { $p.From }), $(if ($p.Address -and $p.Address -ne $p.From) { "<$($p.Address)>" })) | Where-Object { $_ }) -join '  '
         $c.ReadDetails.Text = "To: $($p.To)`nReceived: $($p.Received)`nLocation: $($p.Location)`nDetails: $($p.Details)"
         $c.ReadBody.Text = $p.Body
         if ($p.Attachment) { $c.ReadAttachment.Visibility = 'Visible'; $c.ReadAttachmentText.Text = $p.Attachment } else { $c.ReadAttachment.Visibility = 'Collapsed' }
-    }.GetNewClosure() { param($msg) $c.ReadDetails.Text = "The message could not be read: $msg" }.GetNewClosure()
+    }.GetNewClosure() { param($msg) if ([object]::ReferenceEquals($Browser.Reading, $Row)) { $c.ReadDetails.Text = "The message could not be read: $msg" } }.GetNewClosure()
 }
 
 #region Selection ---------------------------------------------------------------------------

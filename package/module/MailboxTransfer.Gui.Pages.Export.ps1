@@ -153,6 +153,7 @@ function Read-MbtGuiLocations {
         $s.Locations = @($locs); $s.Reading = $false
         foreach ($l in $s.Locations) { if (-not $s.LocationChecked.ContainsKey($l.Kind)) { $s.LocationChecked[$l.Kind] = $true } }
         Sync-MbtGuiLocationRoots
+        Show-MbtGuiPage
     }.GetNewClosure() {
         param($msg) $s.Reading = $false; $s.Locations = @(); $m = ConvertTo-MbtGuiMessage $msg; $s.SignInError = $m.Text; $s.SignInTech = $m.Tech; $s.Shared = ''; Show-MbtGuiPage
     }.GetNewClosure() $s.Shared
