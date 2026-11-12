@@ -135,13 +135,16 @@ Describe 'Names and settings' {
     It 'says the name in plain words' {
         Test-MbtGuiPstName 'aux.pst' | Should -Be '"AUX" is a name Windows keeps for itself. Choose another file name.'
     }
-    It 'writes an effective configuration of the changes only, nothing when nothing changed' {
-        Get-MbtGuiEffectiveConfig -State @{ Changed = @{} } | Should -BeNullOrEmpty
-        $t = Get-MbtGuiEffectiveConfig -State @{ Changed = @{ Tries = $true; Retry = $true }; Tries = 3; Retry = 5 }
-        $t | Should -Match 'MaxAttempts = 3'
-        $t | Should -Match 'BaseBackoffSeconds = 5'
-        $f = Join-Path $TestDrive 'eff.psd1'; Set-Content -LiteralPath $f -Value $t
-        { Import-PowerShellDataFile -LiteralPath $f } | Should -Not -Throw
+    It 'the settings changed for one run go to the command line as parameters, and only when they were changed; no configuration file is written' {
+        $s = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Dest = 'store'; OutFolder = 'D:\Out'; Conc = 4; Tries = 3; Retry = 2; Reconcile = 5; Awake = $false; Changed = @{} }
+        $j = @{ Id = 'job-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; StorePath = 'D:\Store'; SelectionFiles = @('D:\Sel\a.json') }
+        (Get-MbtGuiCommand -Task export -S $s -Job $j)[0].Arguments | Should -Not -Contain '-RetryWaitSeconds'
+        $s.Changed['Retry'] = $true; $s.Retry = 5; $s.Tries = 4
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $j)[0].Arguments
+        $a[($a.IndexOf('-RetryWaitSeconds') + 1)] | Should -Be '5'
+        $a[($a.IndexOf('-MaxAttempts') + 1)] | Should -Be '4'
+        $a | Should -Not -Contain '-ConfigPath'
+        Get-Command Get-MbtGuiEffectiveConfig -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 }
 
@@ -172,16 +175,16 @@ Describe 'Commands of a job' {
             $a[($a.IndexOf('-ClientId') + 1)] | Should -Be '11111111-2222-3333-4444-555555555555'
             $a[($a.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'adele@contoso.com' -Because 'the mailbox of the card is the target mailbox'
         }
-        Get-MbtGuiEffectiveConfig -State $s | Should -BeNullOrEmpty
     }
     It 'the plan is the same request with -WhatIf' {
         (Get-MbtGuiCommand -Task export -S $script:S -Job $script:Job -Plan)[0].Arguments | Should -Contain '-WhatIf'
     }
-    It 'several locations: one export each, then one PST write' {
-        $j = $script:Job.Clone(); $j.SelectionFiles = @('a.json', 'b.json')
-        $c = @(Get-MbtGuiCommand -Task export -S $script:S -Job $j)
-        $c.Count | Should -Be 3
-        $c[2].Arguments | Should -Contain 'ExportPst'
+    It 'several locations: one command, with one selection file for all of them and the PST written by the same command' {
+        $c = @(Get-MbtGuiCommand -Task export -S $script:S -Job $script:Job)
+        $c.Count | Should -Be 1
+        $c[0].Arguments | Should -Contain '-OutputPst'
+        $c[0].Arguments | Should -Not -Contain 'ExportPst'
+        @($c[0].Arguments | Where-Object { $_ -eq '-SelectionFile' }).Count | Should -Be 1
     }
     It 'builds the import command with the job name, the new folder and the reconcile delay in seconds' {
         $a = (Get-MbtGuiCommand -Task import -S $script:S -Job $script:Job)[0].Arguments

@@ -33,6 +33,7 @@ function Find-Text($root, [string]$Text) {
             if ($o.Text -like "*$Text*") { $script:hit = $true }
             foreach ($i in $o.Inlines) { if ($i -is [Windows.Documents.Run] -and $i.Text -like "*$Text*") { $script:hit = $true } }
         }
+        if ($o -is [Windows.Controls.ContentControl] -and $o.Content -is [string] -and $o.Content -like "*$Text*") { $script:hit = $true }
         if ($o -is [Windows.Controls.ContentControl] -and $o.Content -is [Windows.DependencyObject]) { & $walk $o.Content }
         if ($o -is [Windows.Controls.Expander]) { & $walk $o.Header }
         if ($o -is [Windows.Controls.Decorator]) { & $walk $o.Child }
@@ -40,6 +41,48 @@ function Find-Text($root, [string]$Text) {
     }
     & $walk $root
     return $script:hit
+}
+function Get-TextBlockText($tb) {
+    # the text of a block, whether it was set as a string or built from runs (bold parts)
+    if ($tb.Text) { return $tb.Text }
+    $inline = $null
+    $inline = { param($i) if ($i -is [Windows.Documents.Run]) { $i.Text } elseif ($i -is [Windows.Documents.Span]) { foreach ($j in $i.Inlines) { & $inline $j } } }
+    return ((@($tb.Inlines | ForEach-Object { & $inline $_ })) -join '')
+}
+function Get-AllText($root) {
+    $texts = [Collections.Generic.List[string]]::new()
+    $walk = {
+        param($o)
+        if ($null -eq $o) { return }
+        if ($o -is [Windows.Controls.TextBlock]) { $texts.Add((Get-TextBlockText $o)) }
+        if ($o -is [Windows.Controls.ContentControl] -and $o.Content -is [Windows.DependencyObject]) { & $walk $o.Content }
+        if ($o -is [Windows.Controls.Expander]) { & $walk $o.Header }
+        if ($o -is [Windows.Controls.Decorator]) { & $walk $o.Child }
+        if ($o -is [Windows.Controls.Panel]) { foreach ($c in $o.Children) { & $walk $c } }
+    }
+    & $walk $root
+    return $texts.ToArray()
+}
+function Get-CommandLineText {
+    # the text of the box "The same from the command line" of the page that is shown
+    $found = [Collections.Generic.List[string]]::new()
+    $walk = {
+        param($o)
+        if ($o -is [Windows.Controls.TextBox] -and [Windows.Automation.AutomationProperties]::GetName($o) -eq 'The same from the command line') { $found.Add($o.Text) }
+        elseif ($o -is [Windows.DependencyObject]) { foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c } }
+    }
+    & $walk $script:Gui.C.Page.Content
+    return ($found -join "`n")
+}
+function Get-StepperState {
+    $out = [Collections.Generic.List[object]]::new()
+    $walk = {
+        param($o)
+        if ($o -is [Windows.Controls.Button]) { $out.Add([pscustomobject]@{ Label = ((Get-AllText $o.Content) -join ''); Enabled = $o.IsEnabled }) }
+        elseif ($o -is [Windows.DependencyObject]) { foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c } }
+    }
+    & $walk $script:Gui.C.Stepper
+    return $out.ToArray()
 }
 function New-FakeJob([string]$Task) {
     $dir = New-MbtGuiJobFolder -WorkFolder $Work -Task "smoke-$Task"
@@ -80,21 +123,35 @@ foreach ($theme in 'Light', 'Dark') {
     }
     if ($theme -eq 'Dark') { $g.ForceClose = $true; $window.Close(); continue }
 
-    Check 'start: primary disabled until a task is chosen' { Reset-State; Show-MbtGuiPage; -not $g.C.Primary.IsEnabled }
+    Check 'setup is the first page: the lights, the configuration file, the work folder, the sign-in and Keep awake' {
+        Reset-State; Show-MbtGuiPage; Measure-Window $window
+        (Get-MbtGuiScreen) -eq 'setup' -and (Find-Text $g.C.Page.Content 'This computer') -and (Find-Text $g.C.Page.Content 'Configuration file') -and (Find-Text $g.C.Page.Content 'Work folder') -and (Find-Text $g.C.Page.Content 'Keep this PC awake while it runs') -and (Find-Text $g.C.Page.Content 'Me (delegated, recommended)') -and (Find-Text $g.C.Page.Content 'contoso.onmicrosoft.com') -and $g.C.PrimaryLabel.Text -eq 'Choose a task' }
+    Check 'setup: a value changed for this run is marked "modified", and the file is not touched' {
+        $g.S.TenantId = 'example.onmicrosoft.com'; Show-MbtGuiPage; $a = (Find-Text $g.C.Page.Content 'this run only') -and (Find-Text $g.C.Page.Content 'example.onmicrosoft.com')
+        $g.S.TenantId = 'CONTOSO.onmicrosoft.com'; Show-MbtGuiPage; $b = -not (Find-Text $g.C.Page.Content 'modified')
+        $g.S.TenantId = ''; Show-MbtGuiPage; $a -and $b }
+    Check 'start: primary disabled until a task is chosen' { Reset-State; $g.S.Step = 1; Show-MbtGuiPage; -not $g.C.Primary.IsEnabled }
     Check 'start: choosing a task enables Continue' { $g.S.Sel = 'export'; Show-MbtGuiPage; $g.C.Primary.IsEnabled }
     Check 'start: Continue goes to From' { & $g.PrimaryAction; (Get-MbtGuiScreen) -eq 'exFrom' }
-    Check 'from: only passed steps are clickable' { $btns = @($g.C.Stepper.Children | Where-Object { $_ -is [Windows.Controls.Button] }); $btns[0].IsEnabled -and -not $btns[2].IsEnabled }
+    Check 'from: five steps, only the passed ones are clickable' {
+        $st = Get-StepperState
+        $top = @($st | Where-Object { $_.Label -match '(Setup|Verify|Run|Next steps)$' })
+        $top.Count -eq 4 -and ($st | Where-Object { $_.Label -match 'Setup$' }).Enabled -and ($st | Where-Object { $_.Label -eq 'What' }).Enabled -and -not ($st | Where-Object { $_.Label -eq 'To' }).Enabled -and -not ($st | Where-Object { $_.Label -match 'Verify$' }).Enabled }
     Check 'from: continue disabled before sign-in' { -not $g.C.Primary.IsEnabled }
-    Check 'sign-in card: no application option when the engine cannot sign in with a certificate' { Show-MbtGuiPage; -not (Find-Text $g.C.Page.Content 'The application (certificate)') }
-    Check 'sign-in card: the application option lights up with the capability' { $g.Engine.Capability.AppOnly = $true; Show-MbtGuiPage; (Find-Text $g.C.Page.Content 'The application (certificate)') -and -not (Find-Text $g.C.Page.Content 'Certificate thumbprint') }
-    Check 'sign-in card: the application asks for mailbox, tenant, application id and thumbprint' { $g.S.AuthMode = 'app'; Show-MbtGuiPage; (Find-Text $g.C.Page.Content 'Mailbox the application works on') -and (Find-Text $g.C.Page.Content 'Tenant (id or domain)') -and (Find-Text $g.C.Page.Content 'Application (client) id') -and (Find-Text $g.C.Page.Content 'Certificate thumbprint') -and -not (Find-Text $g.C.Page.Content 'Use a code instead') }
+    Check 'setup: no application option when the engine cannot sign in with a certificate' { $g.Engine.Capability.AppOnly = $false; $g.S.Step = 0; Show-MbtGuiPage; -not (Find-Text $g.C.Page.Content 'The application (certificate)') }
+    Check 'setup: the application option lights up with the capability' { $g.Engine.Capability.AppOnly = $true; Show-MbtGuiPage; (Find-Text $g.C.Page.Content 'The application (certificate)') -and -not (Find-Text $g.C.Page.Content 'Certificate thumbprint') }
+    Check 'setup: the application shows its tenant, application id and certificate from the configuration file; Change for this run opens the boxes' {
+        $g.S.AuthMode = 'app'; Show-MbtGuiPage
+        $a = (Find-Text $g.C.Page.Content 'Values for the application') -and (Find-Text $g.C.Page.Content 'Certificate thumbprint') -and (Find-Text $g.C.Page.Content 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678') -and (Find-Text $g.C.Page.Content 'Change for this run')
+        $g.S.AuthEdit = $true; Show-MbtGuiPage; $b = Find-Text $g.C.Page.Content 'Use the values of the configuration file'; $g.S.AuthEdit = $false; $a -and $b }
+    Check 'sign-in card (From): as the application it asks for the mailbox only, and offers no code' { $g.S.Step = 2; Show-MbtGuiPage; (Find-Text $g.C.Page.Content 'Mailbox the application works on') -and (Find-Text $g.C.Page.Content 'Change in Setup') -and -not (Find-Text $g.C.Page.Content 'Use a code instead') }
     Check 'sign-in as the application: the mailbox address is required' { $g.S.Mailbox = ''; Start-MbtGuiSignIn; $g.S.SignInError -match 'address' }
     Check 'sign-in as the application: tenant, application id and thumbprint are checked in plain words' {
-        $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.AppTenant = ''; Start-MbtGuiSignIn; $a = $g.S.SignInError -match 'tenant'
-        $g.S.AppTenant = 'contoso.onmicrosoft.com'; $g.S.AppClient = 'nope'; Start-MbtGuiSignIn; $b = $g.S.SignInError -match 'client'
-        $g.S.AppClient = '11111111-2222-3333-4444-555555555555'; $g.S.AppThumb = 'ABCD'; Start-MbtGuiSignIn; $c = $g.S.SignInError -match 'thumbprint'
+        $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.AppTenant = 'common'; Start-MbtGuiSignIn; $a = $g.S.SignInError -match 'tenant'
+        $g.S.AppTenant = ''; $g.S.AppClient = 'nope'; Start-MbtGuiSignIn; $b = $g.S.SignInError -match 'client'
+        $g.S.AppClient = ''; $g.S.AppThumb = 'ABCD'; Start-MbtGuiSignIn; $c = $g.S.SignInError -match 'thumbprint'
         $a -and $b -and $c -and -not $g.S.Signed }
-    Check 'sign-in as the application (fake) succeeds and says so' { $g.S.AppThumb = ('AB' * 20); $g.S.SignInError = ''; Start-MbtGuiSignIn; $ok = $g.S.Signed -and $g.S.Token.Access -match 'Application' -and (Find-Text $g.C.Page.Content 'Connected as the application'); $g.S.Signed = $false; $g.S.Locations = @(); $g.S.AuthMode = 'user'; $g.Engine.Capability.AppOnly = $false; Show-MbtGuiPage; $ok }
+    Check 'sign-in as the application (fake) succeeds with the values of the file and says so' { $g.S.AppThumb = ''; $g.S.SignInError = ''; Start-MbtGuiSignIn; $ok = $g.S.Signed -and $g.S.Token.Access -match 'Application' -and (Find-Text $g.C.Page.Content 'Connected as the application'); $g.S.Signed = $false; $g.S.Locations = @(); $g.S.AuthMode = 'user'; $g.Engine.Capability.AppOnly = $false; Show-MbtGuiPage; $ok }
     Check 'sign-in with a bad address says so' { $g.S.Mailbox = 'nope'; Start-MbtGuiSignIn; $g.S.SignInError -match 'address' }
     Check 'sign-in (fake) succeeds' { $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.SignInError = ''; Start-MbtGuiSignIn; $g.S.Signed -and @($g.S.Locations).Count -eq 3 }
     Check 'browse: three roots' { (Get-MbtGuiBrowser 'export').Roots.Count -eq 3 }
@@ -136,7 +193,14 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'plan: a valid plan unlocks Start' { Move-MbtGuiStep 1; Measure-Window $window; (Get-MbtGuiScreen) -eq 'exPlan' -and $g.S.PlanState -eq 'ok' -and $g.C.Primary.IsEnabled }
     Check 'plan: no typed confirmation for export' { -not (Find-Text $g.C.Page.Content 'Type IMPORT') }
     Check 'plan: a range, not one number' { Find-Text $g.C.Page.Content 'between' }
+    Check 'plan: the command line is the one an operator types: one line, the selection file, the PST, no plumbing' {
+        $t = Get-CommandLineText
+        $t -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Export -UserPrincipalName adele\.vance@contoso\.com -SelectionFile \S+selections\\export-[0-9a-f]{8}\.json' -and $t -match '-OutputPst D:\\Exports\\adele\\adele\.pst' -and $t -notmatch '-NoPrompt|-EventsFile|-StopFile|-JobId|-TempPath|ExportPst|-WhatIf' -and $t.Split("`n").Count -eq 1 }
     Check 'plan: changing a setting voids the plan key' { $k1 = Get-MbtGuiPlanKey; $g.S.Conc = 2; $k2 = Get-MbtGuiPlanKey; $g.S.Conc = 4; $k1 -ne $k2 }
+    Check 'plan: the case of what is typed does not void the plan key; another folder does' {
+        $k1 = Get-MbtGuiPlanKey; $g.S.Mailbox = 'ADELE.Vance@Contoso.com'; $g.S.OutFolder = $g.S.OutFolder.ToUpper(); $g.S.OutName = $g.S.OutName.ToUpper(); $k2 = Get-MbtGuiPlanKey
+        $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.OutFolder = 'D:\Exports\adele'; $g.S.OutName = 'adele.pst'
+        $k1 -eq $k2 }
 
     $script:job = $null
     Check 'run: plan and progress events build the page' {
@@ -162,7 +226,7 @@ foreach ($theme in 'Light', 'Dark') {
         (Get-MbtGuiScreen) -eq 'done' -and (Find-Text $g.C.Page.Content 'Everything was imported') }
     Check 'run: exit 2 without a stop is resumable (Not finished)' { Start-Fake 'export'; Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'continue'; counts = @{ done = 5; pending = 5 } }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'partial' -and (Find-Text $g.C.Page.Content 'Not finished') }
     Check 'run: exit 3 is a decision' { Start-Fake 'import'; Add-Line $script:job @{ e = 'decision'; key = '1'; msg = 'Two items.' }; Add-Line $script:job @{ e = 'result'; exit = 3; complete = $false; next = 'decide'; counts = @{ done = 9; unknown = 1 } }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'decision-final' -and (Find-Text $g.C.Page.Content 'Almost done') }
-    Check 'run: an error shows the plain message and offers Try again' { Start-Fake 'export'; Add-Line $script:job @{ e = 'error'; code = 'disk-full'; msg = 'The disk D: is full.'; tech = 'IOException' }; Add-Line $script:job @{ e = 'result'; exit = 1; complete = $false; next = 'retry' }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'error' -and (Find-Text $g.C.Page.Content 'Stopped by an error') -and (Find-Text $g.C.Page.Content 'disk D:') -and $g.C.PrimaryLabel.Text -eq 'Try again' }
+    Check 'run: an error shows the plain message and offers Try again' { Start-Fake 'export'; Add-Line $script:job @{ e = 'error'; code = 'disk-full'; msg = 'The disk D: is full.'; tech = 'IOException' }; Add-Line $script:job @{ e = 'result'; exit = 1; complete = $false; next = 'retry' }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'error' -and (Find-Text $g.C.Page.Content 'Stopped by an error') -and (Find-Text $g.C.Page.Content 'disk D:') -and (Find-Text $g.C.Page.Content 'Try again') -and $g.C.PrimaryLabel.Text -eq 'Start another task' }
     Check 'run: an expired sign-in is said in plain words' { Start-Fake 'import'; Add-Line $script:job @{ e = 'error'; code = 'signin-required'; msg = 'x'; tech = 'AADSTS50173' }; Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'signin'; reason = 'signin-required' }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; Find-Text $g.C.Page.Content 'sign-in has expired' }
     Check 'a child that ends without a result still ends the run' { Start-Fake 'repair'; $p = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-Command', 'exit 7' -PassThru -WindowStyle Hidden; $script:job.Process = $p; $null = $p.WaitForExit(20000); Pump $script:job $window; $g.Run.Result -and $g.Run.State -eq 'error' }
 
@@ -228,11 +292,22 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'open: without the capability the copy button is shown as coming' { Reset-State; Set-MbtGuiScenario 'Open'; Measure-Window $window; $g.OpenCopyButton -and -not $g.OpenCopyButton.IsEnabled }
     Check 'done: an import with refused items says so in plain words, explains why there is nothing to continue, and lists them with the CSV' {
         Reset-State; Set-MbtGuiScenario 'DoneImportRefused'; Measure-Window $window
-        $g.Run.State -eq 'refused' -and (Find-Text $g.C.Page.Content 'could not be imported') -and (Find-Text $g.C.Page.Content 'trying again would not help') -and (Find-Text $g.C.Page.Content 'Open the list of refused items') -and $g.C.PrimaryLabel.Text -eq 'Start a new task' }
+        $g.Run.State -eq 'refused' -and (Find-Text $g.C.Page.Content 'could not be imported') -and (Find-Text $g.C.Page.Content 'trying again would not help') -and (Find-Text $g.C.Page.Content 'Open the list of refused items') -and $g.C.PrimaryLabel.Text -eq 'Start another task' }
+    Check 'next steps: "Not finished" and "nothing is lost" are said once, in the title' {
+        $all = $true
+        foreach ($scn in 'DoneExportPartial', 'DoneImportPartial') {
+            Reset-State; Set-MbtGuiScenario $scn; Measure-Window $window
+            $t = @(Get-AllText $g.C.Page.Content)
+            $all = $all -and @($t | Where-Object { $_ -match '(?i)not finished' }).Count -eq 1 -and @($t | Where-Object { $_ -match '(?i)nothing (is )?lost' }).Count -eq 1 -and (Find-Text $g.C.Page.Content 'What to do next')
+        }
+        $all }
+    Check 'next steps: the command line of the run is shown, with the buttons to copy it and to open the reports' {
+        Reset-State; Set-MbtGuiScenario 'DoneExportComplete'; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'The same from the command line') -and (Get-CommandLineText) -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Export' -and (Find-Text $g.C.Page.Content 'Copy') -and (Find-Text $g.C.Page.Content 'Open the report') -and $g.C.PrimaryLabel.Text -eq 'Start another task' }
     Check 'plan: a shared mailbox and an auxiliary archive are worded as unknown, not as 0 B' {
         Reset-State; Set-MbtGuiScenario 'ExportPlanShared'; Measure-Window $window
         (Find-Text $g.C.Page.Content 'Shared mailbox projects@contoso.com') -and -not (Find-Text $g.C.Page.Content '0 B') -and (Find-Text $g.C.Page.Content 'of unknown size') }
-    Check 'import: the PST source is disabled (coming) when the engine lacks it' { Reset-State; $g.S.Task = 'import'; $g.S.Sel = 'import'; $g.S.Step = 1; Show-MbtGuiPage; Find-Text $g.C.Page.Content 'A PST file (coming in this version)' }
+    Check 'import: the PST source is disabled (coming) when the engine lacks it' { Reset-State; $g.S.Task = 'import'; $g.S.Sel = 'import'; $g.S.Step = (Get-MbtGuiScenarioStep 'import' 'imFrom'); Show-MbtGuiPage; Find-Text $g.C.Page.Content 'A PST file (coming in this version)' }
     Check 'import: with the engine capabilities the PST and EML sources are enabled, with the address of a shared mailbox as an input' {
         $g.Engine.Capability.PstImport = $true; $g.Engine.Capability.EmlImport = $true; $g.Engine.Capability.SharedMailbox = $true; Show-MbtGuiPage
         $ok = (Find-Text $g.C.Page.Content 'A PST file') -and -not (Find-Text $g.C.Page.Content 'A PST file (coming') -and (Find-Text $g.C.Page.Content 'A folder of EML files') -and -not (Find-Text $g.C.Page.Content 'EML files (coming')
@@ -251,9 +326,20 @@ foreach ($theme in 'Light', 'Dark') {
         $without = Find-Text (Build-MbtGuiImportToPage) 'Restored deleted items'
         $g.S.ImInfo = $saved
         $with -and -not $without }
-    Check 'import: the plan needs IMPORT typed' { $g.S.Signed = $true; $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.Step = 3; Show-MbtGuiPage; -not $g.C.Primary.IsEnabled }
+    Check 'import: Start stays grey until the box that says what will be written and where is ticked; the button repeats the action' {
+        Reset-State; Set-MbtGuiScenario 'ImportPlan'; Measure-Window $window
+        $off = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'I checked: add') -and (Find-Text $g.C.Page.Content 'Adds only.') -and (Find-Text $g.C.Page.Content 'Before anything is written') -and $g.C.Footer.Tag -match 'Tick the box to unlock Start'
+        $g.S.Confirmed = $true; $g.S.ConfirmKey = Get-MbtGuiPlanKey; Show-MbtGuiPage
+        $off -and $g.C.Primary.IsEnabled -and $g.C.PrimaryLabel.Text -eq 'Start the import into adele.vance@contoso.com' }
+    Check 'import: the tick is not cleared by a change of case, and is cleared by a real change of the plan' {
+        Reset-State; Set-MbtGuiScenario 'ImportPlanTicked'; Measure-Window $window
+        $a = $g.S.Confirmed -and $g.C.Primary.IsEnabled
+        $g.S.Mailbox = 'ADELE.VANCE@CONTOSO.COM'; $g.S.TgtName = $g.S.TgtName.ToUpper(); Show-MbtGuiPage; Measure-Window $window
+        $b = $g.S.Confirmed -and $g.C.Primary.IsEnabled
+        $g.S.TgtName = 'Imported archive-2019 2026-11-13'; Show-MbtGuiPage; Measure-Window $window
+        $c = -not $g.S.Confirmed -and -not $g.C.Primary.IsEnabled
+        $a -and $b -and $c }
     Check 'import: the default destination is a new folder' { (New-MbtGuiState -WorkFolder $Work).TgtMode -eq 'new' }
-    Check 'import: IMPORT typed (any case, spaces) unlocks Start' { $g.S.Confirm = ' iMpOrT '; Show-MbtGuiPage; $g.C.Primary.IsEnabled }
     Check 'repair: a damaged file offers a repair, a clean one does not' { Reset-State; Set-MbtGuiScenario 'RepairFromDamaged'; $a = $g.C.PrimaryLabel.Text; Reset-State; Set-MbtGuiScenario 'RepairFromClean'; $b = $g.C.PrimaryLabel.Text; $a -eq 'Repair into a new file' -and $b -eq 'Start a new task' }
     Check 'repair: the destination is never the original and never AUX' { (Test-MbtGuiRepairDestination @{ RpDest = 'D:\a.pst'; RpPath = 'D:\a.pst' }) -match 'original' -and (Test-MbtGuiRepairDestination @{ RpDest = 'D:\aux.pst'; RpPath = 'D:\a.pst' }) -match 'AUX' }
     Check 'closing without a job is allowed' { $e = [ComponentModel.CancelEventArgs]::new(); $g.Job = $null; Invoke-MbtGuiClosing $e; -not $e.Cancel }

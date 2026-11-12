@@ -643,6 +643,8 @@ Describe 'Review 3: no silent default to the lab identity' {
         $script:Cfg = [pscustomobject]@{ Lab = @{ TenantId = 'contoso.onmicrosoft.com'; ClientId = '00000000-1111-2222-3333-444444444444'; UserPrincipalName = 'Adele@contoso.com'
                 PrimaryMailboxId = 'MBX:11111111-2222-3333-4444-555555555555@t'; ArchiveMailboxId = 'MBX:66666666-7777-8888-9999-000000000000@t' } }
         . (Join-Path $script:Root 'module\MailboxTransfer.Gui.Core.ps1')
+        . (Join-Path $script:Root 'module\MailboxTransfer.Gui.Run.ps1')
+        . (Join-Path $script:Root 'module\MailboxTransfer.Gui.Jobs.ps1')
         . (Join-Path $script:Root 'module\MailboxTransfer.Gui.Pages.Export.ps1')
     }
     It 'the configured mailbox ids are given for the user of the configuration only (any case)' {
