@@ -61,16 +61,22 @@ function New-MbtGuiRealEngine {
     $worker = New-MbtGuiWorker -ModulePath $modulePath
     $e = [ordered]@{ Name = 'Real'; Worker = $worker; Capability = $cap; PackageRoot = $PackageRoot; EntryScript = $EntryScript; State = @{} }
 
-    $e.Readiness = {
+    $e.Readiness = { param($Work)
         $lights = [Collections.Generic.List[object]]::new()
         $ps = $PSVersionTable.PSVersion
         $lights.Add(@{ Name = 'PowerShell 7.5 or later'; Detail = $ps.ToString(); Ok = ($ps -ge [version]'7.5') })
         $msal = $null; try { $msal = Find-MbtMsal } catch { $msal = $null }
-        $lights.Add(@{ Name = 'Sign-in component (MSAL)'; Detail = $(if ($msal) { 'found' } else { 'not found: see the guide, "Start here"' }); Ok = [bool]$msal })
-        $work = $script:Gui.S.WorkFolder
-        $freeText = 'unknown'; $ok = $true
-        try { $root = [IO.Path]::GetPathRoot($work); $d = [IO.DriveInfo]::new($root); $freeText = "$(Format-MbtGuiBytes $d.AvailableFreeSpace) free"; $ok = $d.AvailableFreeSpace -gt 5GB } catch { $ok = $true }
-        $lights.Add(@{ Name = 'Work folder'; Detail = "$work - $freeText"; Ok = $ok })
+        $window = $null; if ($msal) { try { $window = Get-MbtWindowsSignIn } catch { $window = $null } }
+        $msalDetail = if (-not $msal) { 'not found: see the guide, "Start here"' }
+        elseif ($window -and $window.Available) { 'found; the Windows sign-in window is available' }
+        elseif ($window) { "found; the Windows sign-in window is not available ($($window.Reason)): a code is used instead" }
+        else { 'found' }
+        $lights.Add(@{ Name = 'Sign-in component (MSAL)'; Detail = $msalDetail; Ok = [bool]$msal })
+        $folder = if ($Work) { $Work } else { $WorkFolder }
+        $wf = Get-MbtWorkFolderStatus -Path $folder
+        $bytes = if (Get-Command Format-MbtGuiBytes -ErrorAction SilentlyContinue) { 'Format-MbtGuiBytes' } else { 'Format-MbtBytes' }
+        $wfDetail = if ($wf.Problem) { "$($wf.Path) $($wf.Problem)" } elseif ($null -ne $wf.FreeBytes) { "$($wf.Path) - $(& $bytes $wf.FreeBytes) free" } else { "$($wf.Path) - free space unknown" }
+        $lights.Add(@{ Name = 'Work folder'; Detail = $wfDetail; Ok = $wf.Ok })
         $configProblem = $null
         try { $null = Import-MbtConfiguration } catch { $configProblem = $_.Exception.Message }
         $lights.Add(@{ Name = 'Configuration file'; Detail = $(if ($configProblem) { "cannot be read: $configProblem" } else { 'read' }); Ok = (-not $configProblem) })
@@ -100,7 +106,7 @@ function New-MbtGuiRealEngine {
 
     $e.FreeSpace = { param($Path) try { $r = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)); return ([IO.DriveInfo]::new($r)).AvailableFreeSpace } catch { return $null } }
 
-    # -Silent: only the cached token (no browser, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)
+    # -Silent: only the cached token (no sign-in window, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)
     # the tenant and the application of the configuration (empty: the Sign-in card asks for them)
     $e.SignInSettings = { $c = Import-MbtConfiguration; [pscustomobject]@{ TenantId = [string]$c.Tenant.TenantId; ClientId = [string]$c.Tenant.ClientId; AppTenantId = [string]$c.Auth.AppTenantId; AppClientId = [string]$c.Auth.AppClientId; CertificateThumbprint = [string]$c.Auth.CertificateThumbprint } }
     # the file the values come from: the private local file when there is one (it is read after the shipped file), else the shipped file
@@ -112,9 +118,11 @@ function New-MbtGuiRealEngine {
 
     # -TenantId / -ClientId: typed in the Sign-in card when the configuration has none
     # -App: @{ Tenant; ClientId; Thumbprint } signs in as the application with its certificate (no window, no user: $Mailbox is then the mailbox it works on)
-    $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App)
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App) -OnDone $OnDone -OnError $OnError -Script {
-            param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app)
+    # -ParentWindow: the handle of the console window, which the Windows sign-in window opens over
+    $e.WindowSignIn = { Get-MbtWindowsSignIn }
+    $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App, [long]$ParentWindow) -OnDone $OnDone -OnError $OnError -Script {
+            param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app, $parent)
             $cfg = Import-MbtConfiguration
             if ($app) {
                 $session = Connect-MbtGraph -TenantId $app.Tenant -ClientId $app.ClientId -UserPrincipalName $upn -CertificateThumbprint $app.Thumbprint -Configuration $cfg
@@ -128,7 +136,7 @@ function New-MbtGuiRealEngine {
             if (-not $tenantId) { $tenantId = [string]$cfg.Tenant.TenantId }
             if (-not $clientId) { $clientId = [string]$cfg.Tenant.ClientId }
             Assert-MbtSignInSettings -TenantId $tenantId -ClientId $clientId
-            $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -NoPrompt:$silent -Configuration $cfg
+            $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -ParentWindow $parent -NoPrompt:$silent -Configuration $cfg
             $t = $session.Token
             $scopes = @($t.Scopes)
             $canMail = ('Mail.Read' -in $scopes) -or ('Mail.ReadWrite' -in $scopes)

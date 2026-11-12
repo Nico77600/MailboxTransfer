@@ -186,7 +186,7 @@ function New-MbtGuiReadinessCard {
     <# The lights of this computer, all shown: PowerShell, sign-in component, work folder and its room, network, unblocked files. #>
     $g = $script:Gui
     $lights = @()
-    try { $lights = @((& $g.Engine.Readiness).Lights) } catch { $lights = @(@{ Name = 'The engine could not be checked'; Detail = $_.Exception.Message; Ok = $false }) }
+    try { $lights = @((& $g.Engine.Readiness $g.S.WorkFolder).Lights) } catch { $lights = @(@{ Name = 'The engine could not be checked'; Detail = $_.Exception.Message; Ok = $false }) }
     $red = @($lights | Where-Object { -not $_.Ok })
     $list = [Windows.Controls.StackPanel]::new()
     foreach ($l in $lights) { $list.Children.Add((New-MbtGuiCheckRow -State $(if ($l.Ok) { 'ok' } else { 'bad' }) -Text $l.Name -Detail $l.Detail)) | Out-Null }
@@ -223,7 +223,7 @@ function New-MbtGuiSigninSetupCard {
     $switchTo = { param($mode) if ($s.AuthMode -ne $mode) { $s.AuthMode = $mode; $s.AuthEdit = $false; if ($s.Signed) { & $g.Engine.SignOut; $s.Signed = $false; $s.Locations = @(); $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() } }; $s.SignInError = ''; Show-MbtGuiPage } }.GetNewClosure()
     $content = [Collections.Generic.List[object]]::new()
     $content.Add((New-GuiText 'Sign in as' 'Label'))
-    $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'Me (delegated, recommended)' -Hint 'A window from Microsoft opens. You see the mailboxes you are allowed to open.' -Checked (-not $app) -Margin '0,4,0,0' -OnChange { & $switchTo 'user' }.GetNewClosure()))
+    $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'Me (delegated, recommended)' -Hint 'A Microsoft sign-in window opens over the console. You see the mailboxes you are allowed to open.' -Checked (-not $app) -Margin '0,4,0,0' -OnChange { & $switchTo 'user' }.GetNewClosure()))
     if ($appOn) { $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'The application (certificate)' -Hint 'No window and no user: for scheduled or bulk jobs, and to write into a shared mailbox. Your administrator sets the application up first (see the app-only guide).' -Checked $app -Margin '0,4,0,0' -OnChange { & $switchTo 'app' }.GetNewClosure())) }
     $eff = Get-MbtGuiEffectiveSignIn -S $s
     $edit = $s.AuthEdit -or $eff.Missing.Count
@@ -281,8 +281,7 @@ function New-MbtGuiPlacesCard {
 function Build-MbtGuiSetupPage {
     $g = $script:Gui; $s = $g.S
     $left = New-GuiStack @((New-MbtGuiReadinessCard), (New-MbtGuiPlacesCard))
-    $awake = New-GuiCard -Title 'While a job runs' -Content @((New-GuiOption -Type Check -Title 'Keep this PC awake while it runs' -Hint 'Stops Windows from going to sleep by itself. Closing the lid or choosing Sleep still sleeps.' -Checked $s.Awake -Margin '0' -OnChange { param($x, $e) $s.Awake = [bool]$x.IsChecked }))
-    $right = New-GuiStack @((New-MbtGuiSigninSetupCard), $awake)
+    $right = New-GuiStack @((New-MbtGuiSigninSetupCard))
     $red = [int]$g.SetupRed
     $footer = if ($red) { 'A light is red. Cloud tasks need every light green; Check and repair, and Open, do not.' } else { 'Everything needed is in place. Nothing here is saved: it applies to this run.' }
     $back = $s.SetupReturn -ge 2

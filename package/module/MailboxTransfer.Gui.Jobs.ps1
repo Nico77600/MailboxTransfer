@@ -59,7 +59,9 @@ function Get-MbtGuiEffectiveSignIn {
     $cfg = Get-MbtGuiConfiguredSignIn
     $app = ($S['AuthMode'] -eq 'app')
     $typed = if ($app) { @([string]$S['AppTenant'], [string]$S['AppClient'], [string]$S['AppThumb']) } else { @([string]$S['TenantId'], [string]$S['ClientId'], '') }
-    $file = if ($app) { @([string](Get-MbtGuiProp $cfg 'AppTenantId' ''), [string](Get-MbtGuiProp $cfg 'AppClientId' ''), [string](Get-MbtGuiProp $cfg 'CertificateThumbprint' '')) } else { @([string](Get-MbtGuiProp $cfg 'TenantId' ''), [string](Get-MbtGuiProp $cfg 'ClientId' ''), '') }
+    # the application is in the same tenant as the user in practice: without its own tenant, the tenant of the configuration is used (never the user, the mailbox or the mailbox ids)
+    $appTenant = [string](Get-MbtGuiProp $cfg 'AppTenantId' ''); if (-not $appTenant.Trim()) { $appTenant = [string](Get-MbtGuiProp $cfg 'TenantId' '') }
+    $file = if ($app) { @($appTenant, [string](Get-MbtGuiProp $cfg 'AppClientId' ''), [string](Get-MbtGuiProp $cfg 'CertificateThumbprint' '')) } else { @([string](Get-MbtGuiProp $cfg 'TenantId' ''), [string](Get-MbtGuiProp $cfg 'ClientId' ''), '') }
     $use = for ($i = 0; $i -lt 3; $i++) { if ($typed[$i].Trim()) { $typed[$i].Trim() } else { $file[$i].Trim() } }
     # not case sensitive; a thumbprint is compared by its digits (it is written with spaces or colons in the certificate details)
     $same = { param($a, $b, $thumbprint) if ($thumbprint) { ($a -replace '[^0-9A-Fa-f]', '') -eq ($b -replace '[^0-9A-Fa-f]', '') } else { $a.Trim() -eq $b.Trim() } }

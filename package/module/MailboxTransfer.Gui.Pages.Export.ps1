@@ -15,6 +15,11 @@ function ConvertTo-MbtGuiMessage {
     param([string]$Raw)
     $r = [string]$Raw
     $text = switch -Regex ($r) {
+        'AADSTS50011|AADSTS500113|does not accept the Windows sign-in window' {
+            $u = [regex]::Match($r, 'ms-appx-web://microsoft\.aad\.brokerplugin/[0-9A-Za-z-]+').Value
+            if (-not $u) { $u = 'ms-appx-web://microsoft.aad.brokerplugin/<application id>' }
+            "Microsoft does not accept the sign-in window for this application yet. Ask your administrator to add this redirect URI to the app registration (Authentication, Mobile and desktop applications): $u. Until then, use a code instead."; break
+        }
         'AADSTS50173|AADSTS700082|grant has expired|signin-required' { 'Your sign-in has expired. Sign in again to continue. Nothing is lost.'; break }
         'device.?code.*expired|AADSTS70019|code has expired' { 'The code has expired. Get a new code.'; break }
         'No certificate with the thumbprint|has no private key|certificate .* expired|is not valid before|Cannot open the certificate' { 'The certificate cannot be used. Check the thumbprint, that the certificate is installed on this PC with its private key, and that it has not expired.'; break }
@@ -57,6 +62,13 @@ function Test-MbtGuiAppSignIn {
     return $null
 }
 
+function Get-MbtGuiWindowHandle {
+    <# The handle of the console window: the Windows sign-in window opens over it. 0 when the window has none yet (the engine then uses the console window of the process). #>
+    $w = Get-MbtGuiProp $script:Gui 'Window'
+    if (-not $w) { return [long]0 }
+    try { return [long]([Windows.Interop.WindowInteropHelper]::new($w).Handle) } catch { return [long]0 }
+}
+
 function Start-MbtGuiSignIn {
     param([bool]$UseCode = $false)
     $g = $script:Gui; $s = $g.S
@@ -82,9 +94,16 @@ function Start-MbtGuiSignIn {
             if ($settings.ClientId -notmatch $guid) { $s.SignInError = 'The application (client) id is missing. Open Setup and type the id of the app registration: a GUID.'; $s.SignInTech = ''; Show-MbtGuiPage; return }
         }
     }
+    # the Windows sign-in window needs a component of Microsoft.Graph.Authentication: without it the sign-in uses a code, and says so
+    $s.SignInNote = ''
+    if (-not $appArg -and -not $UseCode) {
+        $probe = Get-MbtGuiProp $g.Engine 'WindowSignIn'
+        $win = $null; if ($probe) { try { $win = & $probe } catch { $win = $null } }
+        if ($win -and -not $win.Available) { $UseCode = $true; $s.SignInNote = "The Windows sign-in window cannot be used on this PC ($($win.Reason)). A code is used instead." }
+    }
     $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null
     $codeFile = Get-MbtGuiDeviceCodeFile
-    if ($UseCode -and (Test-Path -LiteralPath $codeFile)) { Remove-Item -LiteralPath $codeFile -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $codeFile) { Remove-Item -LiteralPath $codeFile -Force -ErrorAction SilentlyContinue }
     Show-MbtGuiPage
     & $g.Engine.SignIn $addr $UseCode $codeFile {
         param($info)
@@ -97,17 +116,18 @@ function Start-MbtGuiSignIn {
         $m = ConvertTo-MbtGuiMessage $msg
         $s.SignInError = $m.Text; $s.SignInTech = $m.Tech
         Show-MbtGuiPage
-    }.GetNewClosure() $false $(if ($settings) { $settings.TenantId } else { '' }) $(if ($settings) { $settings.ClientId } else { '' }) $appArg
+    }.GetNewClosure() $false $(if ($settings) { $settings.TenantId } else { '' }) $(if ($settings) { $settings.ClientId } else { '' }) $appArg (Get-MbtGuiWindowHandle)
 }
 
 function Step-MbtGuiSignInCode {
     <# While a device-code sign-in waits, the engine writes "DEVICE CODE: <code> URL: <url>" to a file: show it in the card. #>
     $g = $script:Gui
-    if (-not $g -or -not $g.S.SigningIn -or -not $g.S.CodeShown -or $g.S.Code) { return }
+    if (-not $g -or -not $g.S.SigningIn -or $g.S.Code) { return }
     $f = Get-MbtGuiDeviceCodeFile
     if (-not (Test-Path -LiteralPath $f)) { return }
     $line = (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($line -match 'DEVICE CODE:\s*(\S+)\s+URL:\s*(\S+)') {
+        $g.S.CodeShown = $true
         $g.S.Code = @{ Code = $Matches[1]; Url = $Matches[2]; Until = (Get-Date).AddMinutes(15) }
         Show-MbtGuiPage
     }
@@ -139,7 +159,7 @@ function Sync-MbtGuiLocationRoots {
 }
 
 function New-MbtGuiSignInCard {
-    <# Sign in (not yet), or Mailbox (signed in). Wording is generic on purpose: who may sign in for another mailbox is confirmed in the lab. #>
+    <# Sign in (not yet), or Mailbox (signed in). Wording is generic on purpose: who may sign in for another mailbox depends on the rights the account has. #>
     param([string]$Use = 'export')
     $g = $script:Gui; $s = $g.S
     if ($s.Signed) {
@@ -161,16 +181,22 @@ function New-MbtGuiSignInCard {
     $content = @()
     $content += New-GuiText $(if ($app) { 'Mailbox the application works on' } else { 'Mailbox to look at' }) 'Label'
     $content += $box
-    $content += New-GuiText $(if ($app) { 'Required: the application has no mailbox of its own to fall back on.' } else { 'Use an account that is allowed to read this mailbox. A window from Microsoft opens.' }) 'Hint'
+    $content += New-GuiText $(if ($app) { 'Required: the application has no mailbox of its own to fall back on.' } else { 'Use an account that is allowed to read this mailbox. A Microsoft sign-in window opens over the console. Type the account that may open the mailbox.' }) 'Hint'
     $change = New-GuiLink 'Change in Setup' { Open-MbtGuiSetup }; $change.FontSize = 12; $change.HorizontalAlignment = 'Left'; $change.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
     $facts = New-GuiFacts @(@('Sign in as', $(if ($app) { 'The application (certificate)' } else { 'Me (delegated)' })), @('Tenant', $(if ($eff.Tenant) { $eff.Tenant } else { 'not set (open Setup)' })))
     $content += $facts
     $content += $change
     if ($eff.Missing.Count) { $content += New-GuiMessage -Kind warn -Icon warn -Text ("**Not set: " + ($eff.Missing -join ', ') + '.** Open Setup and type the missing value for this run, or put it in the configuration file.') }
-    $btnText = if ($s.SigningIn -and -not $s.CodeShown) { if ($app) { 'Connecting...' } else { 'Waiting for the Microsoft window...' } } else { if ($app) { 'Connect' } else { 'Sign in...' } }
+    $btnText = if ($s.SigningIn -and -not $s.CodeShown) { if ($app) { 'Connecting...' } else { 'Waiting for the sign-in window...' } } else { if ($app) { 'Connect' } else { 'Sign in...' } }
     $signin = New-GuiButton -Text $btnText -Accent -Icon key -Disabled:($s.SigningIn) -OnClick { Start-MbtGuiSignIn -UseCode $false }
     $signin.Margin = [Windows.Thickness]::new(0, 12, 8, 0); $signin.HorizontalAlignment = 'Left'
     $content += $signin
+    if (-not $app) {
+        $first = New-GuiText 'First sign-in of an account Windows does not know? If Windows asks to stay signed in to all apps, choose "No, sign in to this app only".' 'Hint'
+        $first.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+        $content += $first
+    }
+    if ($s.ContainsKey('SignInNote') -and $s.SignInNote -and -not $app) { $content += New-GuiMessage -Kind info -Icon info -Text $s.SignInNote }
     if ($s.SignInError) {
         $tech = if ($s.ContainsKey('SignInTech') -and $s.SignInTech) { New-GuiMore -Summary 'Technical message' -Content @((New-GuiText $s.SignInTech 'Small')) } else { $null }
         $content += New-GuiMessage -Kind bad -Icon x -Text $s.SignInError -After @($tech)
@@ -195,7 +221,7 @@ function New-MbtGuiSignInCard {
         $content += $rec
     } elseif (-not $app) {
         $line = [Windows.Controls.WrapPanel]::new(); $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
-        $line.Children.Add((New-GuiText 'The window does not open? ' 'Small')) | Out-Null
+        $line.Children.Add((New-GuiText 'The window does not appear (look behind the console)? ' 'Small')) | Out-Null
         $line.Children[0].Margin = [Windows.Thickness]::new(0, 0, 4, 0)
         $lk = New-GuiLink 'Use a code instead' { Start-MbtGuiSignIn -UseCode $true }; $lk.FontSize = 12
         $line.Children.Add($lk) | Out-Null
@@ -480,7 +506,7 @@ function New-MbtGuiSettingsSection {
     $g = $script:Gui; $s = $g.S
     $rows = [Collections.Generic.List[object]]::new()
     $rows.Add((New-GuiText '**What you change here applies to this run only and is never saved.** The defaults come from the configuration file; they suit almost every job.' 'Hint'))
-    $label = { param($text, $key) $st = $s; $p = [Windows.Controls.StackPanel]::new(); $p.Orientation = 'Horizontal'; $p.Children.Add((New-GuiText $text 'Label')) | Out-Null; if ($s.Changed.ContainsKey($key)) { $pill = New-GuiPill 'modified' 'warn' -Light; $pill.Margin = [Windows.Thickness]::new(8, 6, 8, 0); $p.Children.Add($pill) | Out-Null; $p.Children.Add((New-GuiLink 'Reset' { $st.Changed.Remove($key); $defaults = @{ Conc = 4; Retry = 2; Tries = 6; Reconcile = 5 }; if ($defaults.ContainsKey($key)) { $st[$key] = $defaults[$key] }; $st.PlanState = 'idle'; Show-MbtGuiPage }.GetNewClosure())) | Out-Null }; $p }
+    $label = { param($text, $key) $st = $s; $p = [Windows.Controls.StackPanel]::new(); $p.Orientation = 'Horizontal'; $p.Children.Add((New-GuiText $text 'Label')) | Out-Null; if ($s.Changed.ContainsKey($key)) { $pill = New-GuiPill 'modified' 'warn' -Light; $pill.Margin = [Windows.Thickness]::new(8, 6, 8, 0); $p.Children.Add($pill) | Out-Null; $p.Children.Add((New-GuiLink 'Reset' { $st.Changed.Remove($key); $defaults = @{ Conc = 4; Retry = 2; Tries = 6; Reconcile = 5; Awake = $false }; if ($defaults.ContainsKey($key)) { $st[$key] = $defaults[$key] }; $st.PlanState = 'idle'; Show-MbtGuiPage }.GetNewClosure())) | Out-Null }; $p }
     if ('conc' -in $Include) {
         $rows.Add((& $label 'Requests in parallel' 'Conc'))
         $cb = [Windows.Controls.ComboBox]::new(); $cb.HorizontalAlignment = 'Stretch'
@@ -504,7 +530,11 @@ function New-MbtGuiSettingsSection {
         $tb = New-GuiTextBox -Text ([string]$s.Tries) -Automation 'Tries per item' -OnChange { param($x, $e) $v = 0; if ([int]::TryParse($x.Text, [ref]$v) -and $v -ge 1 -and $v -le 20 -and $v -ne $s.Tries) { $s.Tries = $v; $s.Changed['Tries'] = $true } }.GetNewClosure()
         $rows.Add($tb); $rows.Add((New-GuiText 'How many times an item is tried before it is marked failed. Default 3.' 'Hint'))
     }
-    $modified = @($s.Changed.Keys | Where-Object { $_ -in 'Conc', 'Retry', 'Tries', 'Reconcile' })
+    if ('awake' -in $Include) {
+        $rows.Add((& $label 'While the job runs' 'Awake'))
+        $rows.Add((New-GuiOption -Type Check -Title 'Keep this PC awake while it runs' -Hint 'Windows follows your company''s power settings unless you tick this. If the PC sleeps, the job stops and Continue does what is left.' -Checked ([bool]$s.Awake) -Margin '0' -OnChange { param($x, $e) $on = [bool]$x.IsChecked; if ($on -ne [bool]$s.Awake) { $s.Awake = $on; if ($on) { $s.Changed['Awake'] = $true } else { $s.Changed.Remove('Awake') }; Show-MbtGuiPage } }.GetNewClosure()))
+    }
+    $modified = @($s.Changed.Keys | Where-Object { $_ -in 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake' })
     return (New-GuiMore -Summary $(if ($modified.Count) { 'Expert mode (modified for this run)' } else { 'Expert mode' }) -Content $rows.ToArray() -Open:($modified.Count -gt 0))
 }
 
@@ -603,7 +633,7 @@ function Build-MbtGuiExportPlanPage {
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
     Set-MbtGuiActions -Footer 'Read the checks and the plan. Nothing starts before you press Start.' -Label 'Start the export' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task export -Include @('conc', 'retry', 'tries'))
+    return (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task export -Include @('conc', 'retry', 'tries', 'awake'))
 }
 
 #endregion

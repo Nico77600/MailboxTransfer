@@ -133,14 +133,15 @@ function New-MbtGuiFakeEngine {
     }
     $engine.Readiness = { $work = $script:Gui.S.WorkFolder; [pscustomobject]@{ Lights = @(
                 @{ Name = 'PowerShell 7.5 or later'; Detail = '7.5.4'; Ok = $true },
-                @{ Name = 'Sign-in component (MSAL)'; Detail = 'found in Microsoft.Graph.Authentication 2.25'; Ok = $true },
+                @{ Name = 'Sign-in component (MSAL)'; Detail = 'found in Microsoft.Graph.Authentication 2.41.1; the Windows sign-in window is available'; Ok = $true },
                 @{ Name = 'Work folder'; Detail = "$work - 412 GiB free"; Ok = $true },
                 @{ Name = 'Network connection'; Detail = 'login.microsoftonline.com answers'; Ok = $true },
                 @{ Name = 'Files unblocked'; Detail = 'no file of this tool is marked as downloaded'; Ok = $true }
             ) | ForEach-Object { $_ } } }
+    $engine.WindowSignIn = { [pscustomobject]@{ Available = $true; Reason = ''; Directory = '' } }
     $engine.ConfigPath = { 'D:\MailboxTransfer\config\MailboxTransfer.config.psd1' }
     $engine.SignInSettings = { [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; ClientId = '7c0d1e2f-4a5b-4c6d-8e9f-0a1b2c3d4e5f'; AppTenantId = 'contoso.onmicrosoft.com'; AppClientId = '3f9a6b21-8d44-4c07-b5e2-91a7d0c4e6f8'; CertificateThumbprint = 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678' } }
-    $engine.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App)
+    $engine.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow)
         $engine.State.Signed = $true
         & $OnDone ([pscustomobject]@{ Account = $Mailbox; TenantId = 'contoso.onmicrosoft.com'; Scopes = @('MailboxFolder.Read', 'MailboxItem.Read', 'MailboxItem.ImportExport', 'Mail.Read', 'MailboxFolder.ReadWrite'); Missing = @(); CanReadMail = $true; Access = $(if ($App) { 'Application (certificate, no user)' } else { 'Delegated (you, with your rights)' }) }) }.GetNewClosure()
     $engine.SignOut = { $engine.State.Signed = $false }.GetNewClosure()

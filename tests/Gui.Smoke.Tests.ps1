@@ -32,7 +32,7 @@ Describe 'Console smoke test (headless WPF)' {
     }
     It 'walked the flow of five steps: Setup, the nominative confirmation of an import, the command line, the next steps' {
         $names = @($script:Result.Checks | ForEach-Object Name)
-        foreach ($n in 'setup is the first page: the lights, the configuration file, the work folder, the sign-in and Keep awake', 'from: five steps, only the passed ones are clickable',
+        foreach ($n in 'setup is the first page: the lights, the configuration file, the work folder and the sign-in; no Keep awake', 'plan: Keep this PC awake is in Expert mode, off by default; ticking it adds -KeepAwake to the shown command line', 'from: five steps, only the passed ones are clickable',
             'import: Start stays grey until the box that says what will be written and where is ticked; the button repeats the action',
             'import: the tick is not cleared by a change of case, and is cleared by a real change of the plan',
             'plan: the command line is the one an operator types: one line, the selection file, the PST, no plumbing',

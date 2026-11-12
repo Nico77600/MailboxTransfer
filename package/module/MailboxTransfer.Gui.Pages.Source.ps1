@@ -246,7 +246,7 @@ function Build-MbtGuiImportPlanPage {
     if ($s.ConfirmKey -ne $key) { $s.Confirmed = $false; $s.ConfirmKey = '' }
     $mailbox = if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }
     Set-MbtGuiActions -Footer $(if ($s.Confirmed) { 'Ready. Nothing is written before you press Start.' } else { 'Tick the box to unlock Start.' }) -Label "Start the import into $mailbox" -Icon play -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task import -Include @('conc', 'retry', 'reconcile', 'tries'))))
+    return (New-GuiStack @((New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task import -Include @('conc', 'retry', 'reconcile', 'tries', 'awake'))))
 }
 
 #endregion
@@ -373,7 +373,7 @@ function Build-MbtGuiRepairPlanPage {
     $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts)))
     $safe = New-GuiCard -Title 'Safe by design' -Content @((New-GuiText 'A cancelled or failed repair leaves no half-written file: the new file appears only when it is complete.' 'Body'))
     Set-MbtGuiActions -Footer 'Nothing starts before you press Start.' -Label 'Start the repair' -Icon play -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right (New-GuiStack @($safe)) -LeftWidth 520) -Task repair -Include @())))
+    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right (New-GuiStack @($safe)) -LeftWidth 520) -Task repair -Include @('awake'))))
 }
 
 #endregion
@@ -491,7 +491,7 @@ function Build-MbtGuiCopyPlanPage {
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
     Set-MbtGuiActions -Footer 'Read the plan. Nothing starts before you press Start.' -Label 'Start the copy' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task copy -Include @())))
+    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task copy -Include @('awake'))))
 }
 
 #endregion

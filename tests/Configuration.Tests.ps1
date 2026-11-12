@@ -96,6 +96,72 @@ Describe 'Configuration: what the console shows on the Setup page' {
         $light.Count | Should -Be 1
         $light[0].Ok | Should -BeTrue
     }
+    It 'Keep this PC awake is off by default, so that -KeepAwake is not in the shown command line' {
+        (New-MbtGuiState -WorkFolder $TestDrive).Awake | Should -BeFalse
+    }
+    It 'the real work folder light gives the path and the free space, and creates the folder' {
+        $env:MAILBOXTRANSFER_LOCAL_CONFIG = (Join-Path $TestDrive 'none-local.psd1')
+        $work = Join-Path $TestDrive 'work-one\MailboxTransfer'
+        $engine = New-MbtGuiRealEngine -PackageRoot $script:Package -EntryScript (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1') -WorkFolder $work
+        $light = @((& $engine.Readiness).Lights | Where-Object Name -EQ 'Work folder')
+        $light.Count | Should -Be 1
+        $light[0].Ok | Should -BeTrue
+        $light[0].Detail | Should -BeLike "$work - * free"
+        $light[0].Detail | Should -Not -Match 'unknown'
+        Test-Path -LiteralPath $work -PathType Container | Should -BeTrue
+        $other = Join-Path $TestDrive 'work-two'
+        (@((& $engine.Readiness $other).Lights | Where-Object Name -EQ 'Work folder')[0]).Detail | Should -BeLike "$other - * free" -Because 'the folder chosen on the Setup page is the one that is checked'
+    }
+    It 'the work folder light is red, in plain words, when the folder cannot be created, written, or has no room' {
+        $file = Join-Path $TestDrive 'a-file'
+        Set-Content -LiteralPath $file -Value 'x'
+        $bad = Get-MbtWorkFolderStatus -Path (Join-Path $file 'below')
+        $bad.Ok | Should -BeFalse
+        $bad.Problem | Should -Match '^cannot be created'
+        $bad.Problem | Should -Match 'Choose another folder'
+        $full = Get-MbtWorkFolderStatus -Path (Join-Path $TestDrive 'room') -MinimumFreeBytes ([long]::MaxValue)
+        $full.Ok | Should -BeFalse
+        $full.Problem | Should -Match 'has only .* free: at least .* is needed'
+        $env:MAILBOXTRANSFER_LOCAL_CONFIG = (Join-Path $TestDrive 'none-local.psd1')
+        $engine = New-MbtGuiRealEngine -PackageRoot $script:Package -EntryScript (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1') -WorkFolder (Join-Path $file 'below')
+        $light = @((& $engine.Readiness).Lights | Where-Object Name -EQ 'Work folder')
+        $light[0].Ok | Should -BeFalse
+        $light[0].Detail | Should -Match 'cannot be created'
+    }
+    It 'the sign-in component light says whether the Windows sign-in window is available' {
+        $env:MAILBOXTRANSFER_LOCAL_CONFIG = (Join-Path $TestDrive 'none-local.psd1')
+        $engine = New-MbtGuiRealEngine -PackageRoot $script:Package -EntryScript (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1') -WorkFolder $TestDrive
+        $light = @((& $engine.Readiness).Lights | Where-Object Name -EQ 'Sign-in component (MSAL)')
+        $light[0].Detail | Should -Match 'Windows sign-in window is (available|not available)'
+        $window = & $engine.WindowSignIn
+        $window.PSObject.Properties.Name | Should -Contain 'Available'
+        $window.PSObject.Properties.Name | Should -Contain 'Reason'
+        $script:Gui = @{ S = @{ WorkFolder = $TestDrive } }
+        $fake = New-MbtGuiFakeEngine
+        @((& $fake.Readiness).Lights | Where-Object Name -EQ 'Sign-in component (MSAL)')[0].Detail | Should -Match 'Windows sign-in window is available'
+    }
+    It 'the application tenant is the one of the configuration when Auth.AppTenantId is empty; the user and the mailbox are never borrowed' {
+        $script:Gui = @{ Engine = @{ SignInSettings = { [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; ClientId = '11111111-2222-3333-4444-555555555555'; AppTenantId = ''; AppClientId = '22222222-2222-3333-4444-555555555555'; CertificateThumbprint = 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678'; UserPrincipalName = 'adele.vance@contoso.com'; PrimaryMailboxId = 'MBX:p' } } } }
+        $s = @{ AuthMode = 'app'; AppTenant = ''; AppClient = ''; AppThumb = ''; TenantId = ''; ClientId = '' }
+        $e = Get-MbtGuiEffectiveSignIn -S $s
+        $e.Tenant | Should -Be 'contoso.onmicrosoft.com'
+        $e.Client | Should -Be '22222222-2222-3333-4444-555555555555'
+        $e.TenantChanged | Should -BeFalse
+        $e.Missing | Should -Not -Contain 'Tenant'
+        (Test-MbtGuiAppSignIn -S $s) | Should -BeNullOrEmpty
+        $script:Gui.Engine.SignInSettings = { [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; ClientId = '11111111-2222-3333-4444-555555555555'; AppTenantId = 'example.onmicrosoft.com'; AppClientId = '22222222-2222-3333-4444-555555555555'; CertificateThumbprint = 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678' } }
+        (Get-MbtGuiEffectiveSignIn -S $s).Tenant | Should -Be 'example.onmicrosoft.com' -Because 'the tenant of the application wins when it is given'
+        $script:Gui = $null
+    }
+    It 'a missing redirect URI for the Windows sign-in window is said in plain words with the exact URI to add' {
+        Initialize-MbtAuthEngine
+        $client = '33333333-2222-3333-4444-555555555555'
+        $raw = [MailboxTransfer.WindowsBroker]::MissingRedirectUriMessage('AADSTS50011: The redirect URI ''ms-appx-web://microsoft.aad.brokerplugin/x'' does not match', $client)
+        $m = ConvertTo-MbtGuiMessage $raw
+        $m.Text | Should -Match 'redirect URI'
+        $m.Text | Should -Match ([regex]::Escape("ms-appx-web://microsoft.aad.brokerplugin/$client"))
+        $m.Text | Should -Match 'use a code instead'
+    }
     It 'a configuration file that cannot be read is a red light, not a crash' {
         $file = Join-Path $TestDrive 'setup-bad.psd1'
         Set-Content -LiteralPath $file -Encoding UTF8 -Value "@{ Tenant = @{ Nonsense = 1 } }"

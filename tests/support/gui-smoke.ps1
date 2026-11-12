@@ -123,9 +123,9 @@ foreach ($theme in 'Light', 'Dark') {
     }
     if ($theme -eq 'Dark') { $g.ForceClose = $true; $window.Close(); continue }
 
-    Check 'setup is the first page: the lights, the configuration file, the work folder, the sign-in and Keep awake' {
+    Check 'setup is the first page: the lights, the configuration file, the work folder and the sign-in; no Keep awake' {
         Reset-State; Show-MbtGuiPage; Measure-Window $window
-        (Get-MbtGuiScreen) -eq 'setup' -and (Find-Text $g.C.Page.Content 'This computer') -and (Find-Text $g.C.Page.Content 'Configuration file') -and (Find-Text $g.C.Page.Content 'Work folder') -and (Find-Text $g.C.Page.Content 'Keep this PC awake while it runs') -and (Find-Text $g.C.Page.Content 'Me (delegated, recommended)') -and (Find-Text $g.C.Page.Content 'contoso.onmicrosoft.com') -and $g.C.PrimaryLabel.Text -eq 'Choose a task' }
+        (Get-MbtGuiScreen) -eq 'setup' -and (Find-Text $g.C.Page.Content 'This computer') -and (Find-Text $g.C.Page.Content 'Configuration file') -and (Find-Text $g.C.Page.Content 'Work folder') -and -not (Find-Text $g.C.Page.Content 'Keep this PC awake') -and -not (Find-Text $g.C.Page.Content 'While a job runs') -and (Find-Text $g.C.Page.Content 'Me (delegated, recommended)') -and (Find-Text $g.C.Page.Content 'A Microsoft sign-in window opens over the console') -and (Find-Text $g.C.Page.Content 'contoso.onmicrosoft.com') -and $g.C.PrimaryLabel.Text -eq 'Choose a task' }
     Check 'setup: a value changed for this run is marked "modified", and the file is not touched' {
         $g.S.TenantId = 'example.onmicrosoft.com'; Show-MbtGuiPage; $a = (Find-Text $g.C.Page.Content 'this run only') -and (Find-Text $g.C.Page.Content 'example.onmicrosoft.com')
         $g.S.TenantId = 'CONTOSO.onmicrosoft.com'; Show-MbtGuiPage; $b = -not (Find-Text $g.C.Page.Content 'modified')
@@ -191,6 +191,12 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'To: a good name enables Continue' { $g.S.OutName = 'adele.pst'; $g.S.OutFolder = 'D:\Exports\adele'; Show-MbtGuiPage; $g.C.Primary.IsEnabled }
     Check 'To: keep the working store is on by default' { (New-MbtGuiState -WorkFolder $Work).KeepStore -eq $true }
     Check 'plan: a valid plan unlocks Start' { Move-MbtGuiStep 1; Measure-Window $window; (Get-MbtGuiScreen) -eq 'exPlan' -and $g.S.PlanState -eq 'ok' -and $g.C.Primary.IsEnabled }
+    Check 'plan: Keep this PC awake is in Expert mode, off by default; ticking it adds -KeepAwake to the shown command line' {
+        Show-MbtGuiPage; Measure-Window $window
+        $off = (Find-Text $g.C.Page.Content 'Keep this PC awake while it runs') -and (Find-Text $g.C.Page.Content 'Windows follows your company') -and -not $g.S.Awake -and ((Get-CommandLineText) -notmatch '-KeepAwake')
+        $g.S.Awake = $true; Show-MbtGuiPage; $on = (Get-CommandLineText) -match '-KeepAwake'
+        $g.S.Awake = $false; Show-MbtGuiPage
+        $off -and $on }
     Check 'plan: no typed confirmation for export' { -not (Find-Text $g.C.Page.Content 'Type IMPORT') }
     Check 'plan: a range, not one number' { Find-Text $g.C.Page.Content 'between' }
     Check 'plan: the command line is the one an operator types: one line, the selection file, the PST, no plumbing' {
