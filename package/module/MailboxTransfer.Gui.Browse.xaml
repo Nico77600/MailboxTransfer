@@ -23,9 +23,9 @@
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="300" MinWidth="200"/>
         <ColumnDefinition Width="6"/>
-        <ColumnDefinition Width="*" MinWidth="240"/>
+        <ColumnDefinition Width="3*" MinWidth="300"/>
         <ColumnDefinition Width="6"/>
-        <ColumnDefinition Width="*" MinWidth="220"/>
+        <ColumnDefinition Width="2*" MinWidth="220"/>
       </Grid.ColumnDefinitions>
 
       <Grid>
@@ -80,10 +80,10 @@
                 <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Visibility="{Binding CheckVisibility}" MinWidth="0" Padding="0" Margin="0,0,8,0" VerticalAlignment="Center" AutomationProperties.Name="Select message"/>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                   <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding From}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock Text="{Binding From}" ToolTip="{Binding From}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                     <TextBlock Text="{Binding AttachmentGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" Margin="6,3,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                   </StackPanel>
-                  <TextBlock x:Name="Subj" Text="{Binding Subject}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource MbtBrandText}"/>
+                  <TextBlock x:Name="Subj" Text="{Binding Subject}" ToolTip="{Binding Subject}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource MbtBrandText}"/>
                 </StackPanel>
                 <TextBlock Grid.Column="2" Text="{Binding SizeText}" FontSize="12" TextAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                 <TextBlock Grid.Column="3" Text="{Binding DateText}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
