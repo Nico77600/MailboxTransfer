@@ -2,6 +2,22 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
+## 1.2.0 — unreleased
+
+### Changed
+- **A simpler console, in five steps**: Setup, Task (What, From, To), Verify, Run, Next steps. The new Setup page shows the lights of the computer, the sign-in (**Me** or **The application**, with the values read from the configuration file; a value changed in the window applies to that run only) and the work folder.
+- **Import confirmation**: instead of typing a word, you tick a box that names the target mailbox, the folder and the number of items. Start stays grey until you do, and the tick clears if the plan changes.
+- **The command line is shown** on the Verify and Next steps pages, with a Copy button, and the Next steps page offers the logical next buttons.
+- Tries per item are 3 in the console, as on the command line.
+- The configuration section an operator fills in is now **`Tenant`**; a file that still says `Lab` keeps working.
+
+### Added
+- **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.
+
+### Fixed
+- Works with **PowerShell 7.6** (the console of 1.1.0 closed at the first click).
+- Names, addresses, paths and job names are **not case sensitive**: resuming a job, or importing again, no longer creates duplicates because of a capital letter.
+
 ## 1.1.0 — 2026-11-10
 
 ### Changed

@@ -3,7 +3,7 @@ title: Mailbox Transfer
 subtitle: Reference guide
 version: 1.1.0
 author: Nicolas Fabert
-updated: 2026-11-09
+updated: 2026-11-12
 runtime: PowerShell 7.5+ (engine and window), 7.4 for the command line
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
@@ -27,7 +27,7 @@ database | Store | `lib\sqlite`: SQLite for the export store (see THIRD-PARTY-NO
 | Piece | Role |
 |---|---|
 | Engine | Microsoft Graph client with retry, export, import, the export store, a PST writer, reader, checker and repair, an EML writer and parser. No Outlook, no Exchange Online PowerShell and no third-party PST component. |
-| Console | Task, From, To, Plan, Run, Done. One question per page. It follows a job through its **events file** and stops it with a **stop file** (chapter 9). |
+| Console | Five pages: Setup, Task (What, From, To), Verify, Run, Next steps. One question per page. It follows a job through its **events file** and stops it with a **stop file** (chapter 9). See [The console in five pages](#the-console-in-five-pages). |
 | Entry script | `-Mode Export`, `ExportPst`, `Import`, `ImportPst`, `ExportEml`, `ImportEml`, `Browse`, `Status`, `CheckPst`, `RepairPst`. |
 
 ### Requirements
@@ -37,10 +37,37 @@ database | Store | `lib\sqlite`: SQLite for the export store (see THIRD-PARTY-NO
 | Windows | Windows 10 or 11, x64 or arm64 (the SQLite library exists for both) |
 | PowerShell | 7.5 for the console (its Fluent look needs .NET 9), 7.4 for the command line |
 | Module | `Microsoft.Graph.Authentication` (its MSAL.NET library signs you in; nothing else of the Graph module is used) |
-| Disk | The store and the PST files together are about twice the size of the data. A repair needs room for one more PST. The Plan page says it before you start. |
+| Disk | The store and the PST files together are about twice the size of the data. A repair needs room for one more PST. The Verify page says it before you start. |
 | Network | HTTPS to `graph.microsoft.com` and `outlook.office365.com` (global cloud only). Not needed for the tasks on files. |
 | Not needed | Outlook, Exchange Online PowerShell, SCANPST, any third-party PST tool |
 
+### The console in five pages
+
+The console is a window that builds the command line for you. It never does anything the entry script cannot do: every long job is one or more commands of `Invoke-MailboxTransfer.ps1`, started as a child process. The user guide shows each page with its pictures ([chapter 1](MailboxTransfer-UserGuide.md#what-you-will-see-on-the-screen)); this is what each page does.
+
+| Page | What it holds | What it does in the engine |
+|---|---|---|
+| **Setup** | The lights of the computer (PowerShell 7.5 or later, the sign-in component, the work folder with its free space, the network, the unblocked files). The configuration file in use (**Reload**, **Open**). The work folder. **Sign in as**: **Me (delegated)** or **The application (certificate)**, with the values read from the configuration: `Tenant` (`TenantId`, `ClientId`) for **Me**, `Auth` (`AppTenantId`, `AppClientId`, `CertificateThumbprint`) for **The application**. **Change for this run** replaces a value for the current window only. **Keep this PC awake while it runs**. | Reads the configuration file (chapter 12) and nothing else. Nothing on this page is ever written to a file. |
+| **Task** | **What**: four cards (Browse and export, Import, Check and repair a PST, Open an export or a PST) and the list of jobs that can be continued. **From** and **To** depend on the task (table below). | Sign-in, browsing (`-Mode Browse`), the read-only check of a PST, the folder tree of a PST or a store. Reads only. |
+| **Verify** | **Checks** (one line per check, green, amber or red), **What will be done**, **What is in it** (export) or **Before anything is written** (import), **The same from the command line**, **Expert mode**. | The plan: the read-only run (`-WhatIf`) of the same request. The command line is the command the **Start** button runs, with the values that equal the default of the entry script left out (for instance `-Concurrency 4`, `-MaxAttempts 3`, `-PstMaxSizeGB 50`). **Copy** puts it on the clipboard. |
+| **Run** | The summary and the bar, the **steps** (all known before the start), the folders with their counts, the details of the step or folder clicked, **Stop and keep progress**. | Reads `events.jsonl` and `status.json` of the job and stops it with the stop file (chapter 9). |
+| **Next steps** | The result by exit code (chapter 10), **What to do next** (buttons: **Import into a mailbox**, **How to open the PST in Outlook**, **Continue**, **Try again**), **The same from the command line** (the commands that were run), **Reports and log**. | Nothing: it reads the job folder. |
+
+The pages of a task:
+
+| Task | Task · From | Task · To | Verify |
+|---|---|---|---|
+| Browse and export | sign in, **Where to look**, the browser with the ticks | format (PST files, export store only, EML files), folder, file name, disk space | the export plan |
+| Import | the source (PST, store, EML) and what the check found; ticks of the folders to import | sign in, the mailbox, the archive and its room, a new folder or the same names | the import plan and the **confirmation box** |
+| Check and repair a PST | the file and the result of the check | the new file | the repair plan |
+| Open an export or a PST | the browser, read only. It has no To page: **Export my ticks to a PST...** and **Import** continue as the tasks of the same names | | |
+
+Rules of the window:
+
+- **The stepper.** Only the pages already passed can be clicked, and nothing can be clicked while a job runs.
+- **The import confirmation.** The **Start** button of an import is grey until a box is ticked. The box states what will be written, where and how much (*I checked: add 9,860 items to adele.vance@contoso.com · Archive · new folder Imported archive-2019 2026-11-12*). The tick is bound to the plan: it clears by itself when the mailbox, the source, the target folder or any setting that changes the plan changes (a change of case only in a typed address does not count, see [Names are not case sensitive](#names-are-not-case-sensitive)). Nothing has to be typed.
+- **Expert mode** (a fold on the Verify page): requests in parallel (1, 2 or 4; default 4), the wait before a failed request is tried again (`-RetryWaitSeconds`), **tries per item** (`-MaxAttempts`, default 3, 1 to 20) and the wait before an uncertain item is looked for (`-ReconcileDelaySeconds`, in minutes in the window). Applies to this run only. Do not confuse the tries per item with `Graph.MaxAttempts` of the configuration (6): that one is the number of times a single HTTP request is repeated after a 429, 503 or 504.
+- **This run only.** What is changed in the window (the work folder, the values of the sign-in, Expert mode) is passed to the command as parameters. No configuration file is written. The browse selections are kept in `<work folder>\selections\`, because the command line names those files.
 <!-- icon: lightbulb -->
 ## 2. Concepts
 
@@ -79,8 +106,17 @@ While Microsoft moves a folder, listing it fails: the folder is **deferred**, ne
 
 - A **job** is one run of the entry script. It has an id, a folder and a state. The same command run again does only what is left.
 - A **plan** is the read-only run of a mode (`-WhatIf`): locations, folders, item counts, sizes, the number of PST files, the estimated time.
-- A **selection** is what a person ticked in the browser: a JSON file (`-SaveSelection`, `-SelectionFile`), checked again against the service when the plan is built (a folder by id, else by path; an item by id, else by size and date).
+- A **selection** is what a person ticked in the browser: a JSON file (`-SaveSelection`, `-SelectionFile`), checked again against the service when the plan is built (a folder by id, else by path; an item by id, else by size and date). The selection of one mailbox is one JSON object (`Location`, `Entries`). When the console ticks several locations (the primary mailbox, the archive, an auxiliary archive) it writes **one file with one selection per mailbox**:
 
+  ```json
+  { "Version": 1, "Selections": [ { "Location": { }, "Entries": [ ] }, { "Location": { }, "Entries": [ ] } ] }
+  ```
+
+  `-Mode Export -SelectionFile` reads either form. With the multi-mailbox form **one command** exports every mailbox of the file into the same store, and with `-OutputPst` the PST files hold what was selected in all of them (`-Mode ExportPst -SelectionFile` converts only what the file selects). The two forms are written by `Save-MbtBrowseSelection` and `Save-MbtBrowseSelectionSet`.
+
+### Names are not case sensitive
+
+Every value an operator types or picks is compared **without regard to case**: mailbox addresses and display names, folder names and paths (`Inbox/Projects` and `inbox/projects` are the same folder), file names and paths, job names (`-JobName Restore` and `-JobName restore` resume the same job: no second job and no duplicate items) and the names of the target folders of an import. This is the rule of Windows and of Exchange, which are not case sensitive either. The **machine ids** stay exact: the ids of folders, items and mailboxes (`AAMk...`, `MBX:...`), fingerprints, the JSON names inside a selection file. An id is never typed by hand in the console.
 ### Uncertain items (Unknown)
 
 An import sends one item with `importItem`. When no answer comes back (timeout, a 5xx, a dropped connection after the body was sent, a crash) the item **may exist**. Its row is **Unknown**. After `-ReconcileDelaySeconds` (300) the engine lists the target folder, takes the items created after the attempt began that no Done row accounts for, and compares them with the message (class, subject, send and delivery times, message id). One match: **Done**. None: sent again (`-MaxAttempts`, `-ReconcileRounds`). Several: left Unknown and reported. They are never replayed by themselves. `-NoAutoReconcile` turns the lookup off.
@@ -122,6 +158,7 @@ All examples run from the `package` folder. `-WhatIf` prints the plan in every m
 
 # export
 .\Invoke-MailboxTransfer.ps1 -Mode Export -SelectionFile D:\sel.json -StorePath D:\store
+.\Invoke-MailboxTransfer.ps1 -Mode Export -SelectionFile D:\sel-all-locations.json -StorePath D:\store -OutputPst D:\pst\adele.pst -RetryWaitSeconds 5   # one command for the primary mailbox, the archive and the auxiliary archives ticked
 .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store -OutputPst D:\pst\adele.pst -PstMaxSizeGB 10
 .\Invoke-MailboxTransfer.ps1 -Mode Export -IncludeRecoverableItems -StorePath D:\store -OutputPst D:\pst\adele.pst   # also the deleted items, under "Recoverable Items"
 .\Invoke-MailboxTransfer.ps1 -Mode Export -IncludeRecoverableItems -RecoverableItemsFolders Deletions,'Calendar Logging' -WhatIf
@@ -157,11 +194,11 @@ All examples run from the `package` folder. `-WhatIf` prints the plan in every m
 | `-TempPath` | ImportPst | Where the journal and the repair copies live. |
 | `-Concurrency` | Export, Import | Workers, 1 to 4 (default 4). The engine lowers it while Microsoft throttles. |
 | `-BatchItems`, `-BatchMiB` | Export | Items per request (1 to 20) and megabytes per batch (default 20 and 200). |
-| `-MaxAttempts` | Export, Import | Tries per item (default 3). |
+| `-MaxAttempts` | Export, Import | Tries per item (default 3; the console has the same default). Not the HTTP retry of the configuration (`Graph.MaxAttempts`, chapter 12). |
 | `-NotReadyTrip` | Export | After this many folders in a row that are not readable yet (default 3), the next ones are asked once and deferred. 0 = always three asks. |
 | `-Folder` | Export, Import, Browse | Only this folder and below (path as in the store, or `Inbox/Reports`). |
 | `-SelectionFile`, `-SaveSelection`, `-IncludeSubfolders`, `-ItemId` | Browse, Export | The selection, chapter 2. The file the console writes for several locations (primary mailbox, archive, auxiliary archive) holds one selection per mailbox: one `-Mode Export -SelectionFile` command exports them all, and `-OutputPst` writes the PST files of what was selected in all of them. |
-| `-RetryWaitSeconds` | Export, Import | The wait before a failed request is tried again, for this run only (default: `Graph.BaseBackoffSeconds`, 2; it doubles each time up to `Graph.MaxBackoffSeconds`). | |
+| `-RetryWaitSeconds` | Export, Import | The wait before a failed request is tried again, for this run only (default: `Graph.BaseBackoffSeconds`, 2; it doubles each time up to `Graph.MaxBackoffSeconds`). The `Retry-After` of the service is always obeyed first. | |
 | `-Top`, `-Sort`, `-NoRecipients`, `-RecoverableItems`, `-BodyChars`, `-ShowMoves` | Browse | Rows shown (default 20, 0 = all), sort order, skip To and Cc, add Recoverable Items and its folders to the tree (they can be selected and exported), body characters (600), mark folders moved to an auxiliary archive. |
 | `-IncludeRecoverableItems`, `-RecoverableItemsFolders` | Export (Browse for the list) | Also export Recoverable Items under the top folder `Recoverable Items` (Primary, Archive, AuxArchive); the folders to take, by name: default `Deletions`, `Purges`, `Versions`, `DiscoveryHolds`; `Calendar Logging` and `SubstrateHolds` only when named. Not with `-SelectionFile` (select the folders in the browse view) nor with a `-Folder` outside Recoverable Items. See "Recoverable Items" in chapter 2. |
 | `-OutputPst`, `-PstMaxSizeGB`, `-PstMaxSizeMiB`, `-SeparateAuxArchives`, `-SkipCheck`, `-Force` | Export, ExportPst | The PST file or folder; part size (50 GB default, at least 1 GB; MiB wins and allows smaller); one top folder per auxiliary archive; do not check each part; start the conversion again from zero. |
@@ -188,7 +225,7 @@ Windows 10 or 11, PowerShell 7.5 (7.4 command line), the module `Microsoft.Graph
 
 ### 4.2 In Microsoft Entra ID, once
 
-An **app registration**, a public client: redirect URI `http://localhost`, **Allow public client flows** on (needed for the device code, otherwise error AADSTS7000218), the delegated permissions below, **admin consent**. Your tenant id and the application id go in `config\MailboxTransfer.config.local.psd1` (chapter 12). `tools\Grant-LabConsent.ps1` is a lab helper that does the registration changes and the consent for one user; read it before use.
+An **app registration**, a public client: redirect URI `http://localhost`, **Allow public client flows** on (needed for the device code, otherwise error AADSTS7000218), the delegated permissions below, **admin consent**. Your tenant id and the application id go in the `Tenant` section of `config\MailboxTransfer.config.local.psd1` (chapter 12); the console shows them on its Setup page. `tools\Grant-LabConsent.ps1` is a lab helper that does the registration changes and the consent for one user; read it before use.
 
 ### 4.3 Minimum delegated permissions per task (a person signs in)
 
@@ -239,7 +276,7 @@ Writing into a shared mailbox, or running with no person at the keyboard (schedu
 - The certificate is found in `CurrentUser\My`, then `LocalMachine\My` (it needs its private key), or read from a `.pfx` (loaded in memory only). Its public part (`.cer`) is uploaded to the app registration (Certificates & secrets). The token (scope `https://graph.microsoft.com/.default`) is kept in memory; nothing is written to disk.
 - `-TenantId` and `-ClientId` are never taken from the `Tenant` defaults of a delegated sign-in: give them, or set `Auth.AppTenantId` / `Auth.AppClientId` (and `Auth.CertificateThumbprint` or `Auth.CertificatePath` with `-AppOnly`). `-UserPrincipalName` is required and never defaulted; the mailbox ids of the configuration are not used for it.
 - A mailbox in the scope is found from its address alone; `-MailboxId` with an address or an `MBX:...` id works as in the delegated mode. `-DeviceCode` and `-NoPrompt` have no meaning here.
-- The console offers **The application (certificate)** in the Sign-in card: tenant, application id, thumbprint and the mailbox, for the run only (nothing is saved). It does not show the end date of the certificate: look at it with `Get-ChildItem Cert:\CurrentUser\My | Format-Table Subject, NotAfter, Thumbprint`, and renew the certificate before it ends (a sign-in with an expired certificate fails).
+- The console offers **The application (certificate)** in the Sign-in box of its Setup page. The tenant, the application id and the thumbprint are read from the `Auth` section of the configuration (`AppTenantId`, `AppClientId`, `CertificateThumbprint`), so nobody types them at each run; **Change for this run** replaces them for the current window only (nothing is saved). The address of the mailbox to work on is typed on the From page. It does not show the end date of the certificate: look at it with `Get-ChildItem Cert:\CurrentUser\My | Format-Table Subject, NotAfter, Thumbprint`, and renew the certificate before it ends (a sign-in with an expired certificate fails).
 - `Get-MbtAppPermission -Mode <mode>` prints the table below for a mode. `tools\New-MbtAppOnlyLab.ps1` is an optional script for a lab: it creates a dedicated application and a self-signed certificate and prints the steps with the ids filled in (`-WhatIf` first). The product never runs it.
 
 | Task | Application permission (Microsoft Graph) | Why |
@@ -502,7 +539,7 @@ A long job is run by the entry script in a child process. The console never read
 - `-KeepAwake`: Windows does not sleep by idle while the script runs. A closed lid, a chosen Sleep and a restart still stop the PC.
 - `-NoPrompt`: silent sign-in only; without a valid token, exit 2, error `signin-required`.
 - Event kinds: `plan`, `step`, `object`, `item`, `wait`, `rate`, `warn`, `decision`, `error`, `result`, `slept`, `info`.
-- The console keeps each job in `<work folder>\jobs\<date>-<task>-<id>\`: `request.json`, `selection-*.json`, `events.jsonl`, `status.json`, `stdout.txt`, `report.csv`, `report.json`. The default work folder is `%LOCALAPPDATA%\MailboxTransfer`. A run changed in **Run settings** writes an *effective* configuration there; the configuration file of the package is never modified.
+- The console keeps each job in `<work folder>\jobs\<date>-<task>-<id>\`: `request.json`, `events.jsonl`, `status.json`, `stdout.txt`, `report.csv`, `report.json`; the selections it writes for the command line are in `<work folder>\selections\`. The default work folder is `%LOCALAPPDATA%\MailboxTransfer`. A run changed in **Expert mode** passes its values to the command as parameters; no configuration file is written, and the configuration file of the package is never modified.
 
 <!-- icon: check -->
 ## 10. Exit codes
@@ -555,7 +592,7 @@ Memory does not depend on the size of an item, in both directions: the peak work
 | Section.Key | Default | Meaning |
 |---|---|---|
 | `Graph.BaseUrl` | `https://graph.microsoft.com/v1.0` | |
-| `Graph.MaxAttempts`, `BaseBackoffSeconds`, `MaxBackoffSeconds` | 6, 2, 60 | retry of 429, 503, 504 |
+| `Graph.MaxAttempts`, `BaseBackoffSeconds`, `MaxBackoffSeconds` | 6, 2, 60 | retry of 429, 503, 504 within one HTTP request (not the tries per item, `-MaxAttempts`, default 3); `-RetryWaitSeconds` overrides `BaseBackoffSeconds` for one run |
 | `Graph.RequestTimeoutMinutes` | 15 | time allowed for the headers of one answer |
 | `Graph.ExportBatchSize` | 20 | 1 to 20 |
 | `Graph.ItemPageSize` | 0 | `$top` of item listings; 0 = the service chooses |
@@ -563,11 +600,11 @@ Memory does not depend on the size of an item, in both directions: the peak work
 | `Auth.RedirectUri` | `http://localhost` | |
 | `Auth.CacheFile` | `%LOCALAPPDATA%\MailboxTransfer\token.cache` | token cache, encrypted with DPAPI for the current user |
 | `Output.Root` | `.\out` | |
-| `Tenant.TenantId`, `ClientId`, `UserPrincipalName` | empty | the defaults of the command line and the Setup page of the console; also parameters. A file of an earlier version that says `Lab` instead of `Tenant` is read the same way |
+| `Tenant.TenantId`, `ClientId`, `UserPrincipalName` | empty | the section an operator fills in: the defaults of the command line and the values shown on the Setup page of the console; also parameters. A file of an earlier version that says `Lab` instead of `Tenant` is read the same way (a key written in one of the two sections is seen in both, `Tenant` first) |
 | `Tenant.PrimaryMailboxId`, `ArchiveMailboxId` | empty | `MBX:<guid>@<tenant>`; empty: read through Graph when allowed |
 | `Lab.UserObjectId` | empty | only for `tools\Grant-LabConsent.ps1` |
 | `Lab.SourceFolder`, `TargetFolder` | empty | defaults of the lab script |
-| `Auth.AppTenantId`, `AppClientId` | empty | the tenant and the application of the certificate sign-in (chapter 4.6); `-TenantId` / `-ClientId` win |
+| `Auth.AppTenantId`, `AppClientId` | empty | the tenant and the application of the certificate sign-in (chapter 4.6); the console reads them on its Setup page; `-TenantId` / `-ClientId` win |
 | `Auth.CertificateThumbprint`, `CertificatePath` | empty | the certificate used by `-AppOnly`; `-CertificateThumbprint` / `-CertificatePath` win |
 
 An unknown section or key is refused with its name.
