@@ -425,6 +425,50 @@ Describe 'Folders of a PST or of .eml files, numbers of the plan, items refused 
     }
 }
 
+Describe 'Singular and plural in the words of the console' {
+    It 'a count with its noun: 0 and 2 are plural, 1 is singular, the thousands are grouped, an irregular plural is given' {
+        Format-MbtGuiQuantity 0 'location' | Should -Be '0 locations'
+        Format-MbtGuiQuantity 1 'location' | Should -Be '1 location'
+        Format-MbtGuiQuantity 2 'location' | Should -Be '2 locations'
+        Format-MbtGuiQuantity 1234 'item' | Should -Be '1,234 items'
+        Format-MbtGuiQuantity 1 'entry' 'entries' | Should -Be '1 entry'
+        Format-MbtGuiQuantity 2 'entry' 'entries' | Should -Be '2 entries'
+        Format-MbtGuiCount 1234 | Should -Be '1,234'
+    }
+    It 'the word alone, for a noun or a verb' {
+        Get-MbtGuiPlural 1 'item' | Should -Be 'item'
+        Get-MbtGuiPlural 0 'item' | Should -Be 'items'
+        Get-MbtGuiPlural 1 'is' 'are' | Should -Be 'is'
+        Get-MbtGuiPlural 3 'is' 'are' | Should -Be 'are'
+    }
+    It 'the totals of a plan and the size of a selection agree with the count' {
+        Format-MbtGuiPlanTotals ([pscustomobject]@{ Items = 1; Folders = 1; Bytes = [long](2GB); UnknownSize = 0 }) | Should -Be '1 item in 1 folder, 2 GiB'
+        Format-MbtGuiPlanTotals ([pscustomobject]@{ Items = 2; Folders = 2; Bytes = [long](2GB); UnknownSize = 1 }) | Should -Be '2 items in 2 folders, 2 GiB + 1 folder of unknown size'
+        Format-MbtGuiSelectionSize ([pscustomobject]@{ Bytes = [long](1GB); UnknownSize = 1 }) | Should -Be '1 GiB + 1 folder of unknown size'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 1; SubtreeUnread = $false }) -WithNoun | Should -Be '1 item'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 2; SubtreeUnread = $true }) -WithNoun | Should -Be 'at least 2 items'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 1500; SubtreeUnread = $false }) -WithNoun | Should -Be '1,500 items'
+    }
+    It 'the title of the refused items: the item, all of them, or the first of many' {
+        Format-MbtGuiRefusedSummary 1 1 | Should -Be 'The refused item'
+        Format-MbtGuiRefusedSummary 3 3 | Should -Be 'The 3 refused items'
+        Format-MbtGuiRefusedSummary 25 1234 | Should -Be 'The first 25 of 1,234 refused items'
+        Format-MbtGuiRefusedSummary 1 5 | Should -Be 'The first of 5 refused items'
+    }
+    It 'the title of the messages a repair could not recover whole' {
+        Format-MbtGuiIncompleteSummary 1 | Should -Be 'The message that is not complete'
+        Format-MbtGuiIncompleteSummary 3 | Should -Be 'The 3 messages that are not complete'
+    }
+    It 'the sentences with a verb agree with the count' {
+        Format-MbtGuiDecisionTitle 1 | Should -Be '1 item needs your decision'
+        Format-MbtGuiDecisionTitle 2 | Should -Be '2 items need your decision'
+        Format-MbtGuiStillToDo 1 | Should -Be '1 item is still to do.'
+        Format-MbtGuiStillToDo 2000 | Should -Be '2,000 items are still to do.'
+        Format-MbtGuiProgressOf 0 1 | Should -Be '0 of 1 item'
+        Format-MbtGuiProgressOf 5 1208 | Should -Be '5 of 1,208 items'
+    }
+}
+
 Describe 'Report' {
     It 'writes CSV and JSON of a finished run, and next to the new file for a repair' {
         $r = New-MbtGuiRun -Task repair -Title 'Repair x'

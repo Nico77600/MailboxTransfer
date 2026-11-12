@@ -326,7 +326,7 @@ function New-MbtGuiLocationsCard {
     $pick.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
     $items += New-GuiMore -Summary 'The archive is missing from this list' -Content @((New-GuiText 'Microsoft does not tell us every archive. Ask your administrator to run **Get-MailboxLocation** for this user and save the result, then load it here.' 'Hint'), $pick)
     $items += New-MbtGuiSharedMailboxSection -Use export
-    return (New-GuiCard -Title 'Where to look' -Info "$(@($s.Locations).Count) locations found" -Content $items)
+    return (New-GuiCard -Title 'Where to look' -Info "$(Format-MbtGuiQuantity @($s.Locations).Count 'location') found" -Content $items)
 }
 
 #endregion
@@ -482,9 +482,9 @@ function New-MbtGuiPlanTable {
     $rows = @(foreach ($e in $Selection.Entries) {
         $n = $e.Node; $root = Get-MbtGuiRootNode $n
         $note = switch ($e.Kind) {
-            'tree' { $below = @($n.Descendants() | Where-Object { $_ -ne $n -and $_.Count -gt 0 }).Count; $(if ($below) { "and $below folder$(if ($below -gt 1) { 's' }) below it" } else { '' }) }
+            'tree' { $below = @($n.Descendants() | Where-Object { $_ -ne $n -and $_.Count -gt 0 }).Count; $(if ($below) { "and $(Format-MbtGuiQuantity $below 'folder') below it" } else { '' }) }
             'own' { 'this folder only' }
-            default { "$($n.Picks.Count) message$(if ($n.Picks.Count -gt 1) { 's' }) ticked" }
+            default { "$(Format-MbtGuiQuantity $n.Picks.Count 'message') ticked" }
         }
         if ($root.HeadersOnly) { $note = ($note + $(if ($note) { "`n" } else { '' }) + 'may be "not ready"; tried again later') }
         $bytes = 0L; $unknown = $false
@@ -630,7 +630,7 @@ function Build-MbtGuiExportPlanPage {
     $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated: Microsoft does not give the size of these folders. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
     $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
     $facts = New-GuiFacts ($shared + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
-        @('Size', "$(Format-MbtGuiSelectionItems $sel) items $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $etaText 'Body'))))
+        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun) $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $etaText 'Body'))))
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
     $destRow = New-MbtGuiCheckRow -State $(if (Test-MbtGuiExportDestination $s) { 'bad' } else { 'ok' }) -Text 'Nothing is overwritten' -Detail $(if ($pst) { "$($s.OutName) does not exist yet" } else { 'the destination is free' })
     $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), (New-MbtGuiDiskCheckRow), $destRow)

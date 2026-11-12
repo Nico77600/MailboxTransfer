@@ -88,7 +88,7 @@ function Place-MbtGuiBrowser {
 
 function Format-MbtGuiSelectionFooter {
     param($Selection, [bool]$Signed)
-    if ($Selection.Items -gt 0) { return ('**{0} items** ticked in {1} folder{2}, {3}' -f (Format-MbtGuiSelectionItems $Selection), $Selection.Folders, $(if ($Selection.Folders -gt 1) { 's' } else { '' }), (Format-MbtGuiSelectionSize $Selection)) }
+    if ($Selection.Items -gt 0) { return ('**{0}** ticked in {1}, {2}' -f (Format-MbtGuiSelectionItems $Selection -WithNoun), (Format-MbtGuiQuantity $Selection.Folders 'folder'), (Format-MbtGuiSelectionSize $Selection)) }
     if ($Signed) { return 'Tick what to keep, then continue.' }
     return 'Sign in first.'
 }

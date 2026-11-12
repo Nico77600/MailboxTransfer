@@ -69,7 +69,7 @@ function New-MbtGuiPlanStateMessage {
     switch ($s.PlanState) {
         'checking' { return (New-MbtGuiCheckRow -State wait -Text 'Checking the plan with the service' -Detail 'nothing is changed') }
         'ok' {
-            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiCount $s.PlanTotals.FoldersToCreate) folders will be created" } else { '' }) } else { '' }
+            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
         }
         'error' { return (New-MbtGuiCheckRow -State bad -Text 'The plan cannot be used' -Detail (($s.PlanMsg -replace '^\*\*[^*]+\*\*\s*', '') -replace '\*\*', '')) }
@@ -265,9 +265,9 @@ function Get-MbtGuiStepTone {
 function Get-MbtGuiStepSub {
     param($Step)
     if ($Step.State -eq 'waiting') { return $Step.Msg }
-    if ($Step.Total -gt 0 -and $Step.State -eq 'running') { return ('{0} / {1} items' -f (Format-MbtGuiCount $Step.Done), (Format-MbtGuiCount $Step.Total)) }
+    if ($Step.Total -gt 0 -and $Step.State -eq 'running') { return ('{0} / {1}' -f (Format-MbtGuiCount $Step.Done), (Format-MbtGuiQuantity $Step.Total 'item')) }
     if ($Step.Msg) { return $Step.Msg }
-    if ($Step.Total -gt 0) { return ('{0} items' -f (Format-MbtGuiCount $Step.Total)) }
+    if ($Step.Total -gt 0) { return (Format-MbtGuiQuantity $Step.Total 'item') }
     return ''
 }
 
@@ -293,17 +293,17 @@ function New-MbtGuiRunHead {
     $title = New-GuiText $run.Title 'Big' -NoWrap; $title.TextTrimming = 'CharacterEllipsis'; $dock.Children.Add($title) | Out-Null
     $kp = [Windows.Controls.WrapPanel]::new(); $kp.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
     $kpi = { param($text) $t = New-GuiText $text 'Muted' -NoWrap; $t.FontSize = 13; $t.Margin = [Windows.Thickness]::new(0, 0, 22, 2); $kp.Children.Add($t) | Out-Null }
-    & $kpi ("**$(Format-MbtGuiCount $run.Done)** of $(Format-MbtGuiCount $run.Total) $($run.Unit)")
+    & $kpi ("**$(Format-MbtGuiCount $run.Done)** of $(Format-MbtGuiQuantity $run.Total $run.Unit)")
     if ($run.BytesTotal -gt 0) { & $kpi ("**$(Format-MbtGuiBytes $run.Bytes)** of $(Format-MbtGuiBytes $run.BytesTotal)") }
     $elapsed = if ($run.Started) { Format-MbtGuiDuration (([datetime]::UtcNow - $run.Started).TotalSeconds) } else { '0 s' }
     if ($run.LastEvent -and $run.Started -and $run.State -in 'stopped') { $elapsed = Format-MbtGuiDuration (($run.LastEvent - $run.Started).TotalSeconds) }
     & $kpi ("Elapsed **$elapsed**")
-    if ($run.Waits.Count -gt 0) { & $kpi ("Microsoft slowed us down **$($run.Waits.Count) times** ($(Format-MbtGuiDuration $run.Waits.Seconds -WithSeconds) waited)") }
+    if ($run.Waits.Count -gt 0) { & $kpi ("Microsoft slowed us down **$(Format-MbtGuiQuantity $run.Waits.Count 'time')** ($(Format-MbtGuiDuration $run.Waits.Seconds -WithSeconds) waited)") }
     $items = [Collections.Generic.List[object]]::new()
     foreach ($x in @($dock, $bar, $kp)) { $items.Add($x) }
     $bar.Margin = [Windows.Thickness]::new(0, 10, 0, 0)
     if ($run.Waits.Active -and $run.Waits.Active.Reason -eq 'throttle') {
-        $items.Add((New-GuiMessage -Kind info -Icon info -Text "Microsoft asks us to slow down. Waiting $([math]::Round($run.Waits.Active.Seconds)) seconds. This is normal."))
+        $items.Add((New-GuiMessage -Kind info -Icon info -Text "Microsoft asks us to slow down. Waiting $(Format-MbtGuiQuantity ([math]::Round($run.Waits.Active.Seconds)) 'second'). This is normal."))
     }
     switch ($st) {
         'sleep' {
@@ -311,7 +311,7 @@ function New-MbtGuiRunHead {
             $items.Add((New-GuiMessage -Kind warn -Icon moon -Text "**This PC slept from $from to $to.** The job paused and has now started again. The time left is being measured again; it shows after about 10 minutes."))
         }
         'stopped' {
-            $items.Add((New-GuiMessage -Kind info -Icon pause -Text "**Stopped by you.** $(Format-MbtGuiCount $run.Done) of $(Format-MbtGuiCount $run.Total) $($run.Unit) are done. Press **Continue** to do only what is left."))
+            $items.Add((New-GuiMessage -Kind info -Icon pause -Text "**Stopped by you.** $(Format-MbtGuiProgressOf $run.Done $run.Total $run.Unit) $(Get-MbtGuiPlural $run.Total 'is' 'are') done. Press **Continue** to do only what is left."))
         }
         default {
             $eta = Get-MbtGuiEta -Run $run -Task $s.Task
@@ -329,7 +329,7 @@ function New-MbtGuiDecisionPanel {
     $run = $script:Gui.Run
     if (-not $run.Decisions.Count) { return $null }
     $d = $run.Decisions[0]
-    $title = New-GuiStack @((New-GuiIcon warn 14 'MbtCaution'), (New-GuiText "$($run.Decisions.Count) item$(if ($run.Decisions.Count -gt 1) { 's' }) need$(if ($run.Decisions.Count -eq 1) { 's' }) your decision" 'Title')) -Orientation Horizontal
+    $title = New-GuiStack @((New-GuiIcon warn 14 'MbtCaution'), (New-GuiText (Format-MbtGuiDecisionTitle $run.Decisions.Count) 'Title')) -Orientation Horizontal
     $title.Children[0].Margin = [Windows.Thickness]::new(0, 0, 8, 0)
     $btns = [Windows.Controls.WrapPanel]::new(); $btns.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
     $btns.Children.Add((New-GuiButton -Text 'It arrived: mark done' -Small -OnClick { Show-MbtGuiDecisionDialog $d 'arrived' }.GetNewClosure())) | Out-Null
@@ -478,7 +478,7 @@ function New-MbtGuiObjectDetailsColumn {
     } elseif ($o.Tone -eq 'bad' -or $o.State -eq 'refused') {
         $items.Add((New-GuiText $(if ($o.Msg) { $o.Msg } else { 'Microsoft refused it. Nothing was created.' }) 'Hint'))
     } elseif ($rel.Count) {
-        $items.Add((New-GuiText "$($rel.Count) item$(if ($rel.Count -gt 1) { 's were' } else { ' was' }) sent but Microsoft did not answer. We are looking in the folder to see if they arrived." 'Hint'))
+        $items.Add((New-GuiText "$(Format-MbtGuiQuantity $rel.Count 'item') $(Get-MbtGuiPlural $rel.Count 'was' 'were') sent but Microsoft did not answer. We are looking in the folder to see if $(Get-MbtGuiPlural $rel.Count 'it' 'they') arrived." 'Hint'))
         $rows = @(foreach ($r in $rel) { , @($r.Key, (New-GuiPill $(if ($r.State -eq 'decision') { 'Two matches' } else { 'Checking' }) 'warn')) })
         $items.Add((New-GuiTable -Headers @('Item', 'State') -Rows @($rows) -Widths @('*', 'Auto')))
     } else {
@@ -603,14 +603,14 @@ function Build-MbtGuiDonePage {
     $verb = switch ($k) { 'import' { 'imported' } 'repair' { 'repaired' } 'copy' { 'copied' } default { 'exported' } }
     $head = switch ($outcome) {
         'complete' { @{ Pill = 'ok'; Text = "Done. Everything was $verb."; Icon = 'check'; Label = 'Complete' } }
-        'refused' { $n = Get-MbtGuiCount $run 'refused' (Get-MbtGuiCount $run 'failed' 0); @{ Pill = 'warn'; Text = "Finished. $(Format-MbtGuiCount $n) item$(if ($n -ne 1) { 's' }) could not be $verb."; Icon = 'warn'; Label = 'Finished, with refused items' } }
+        'refused' { $n = Get-MbtGuiCount $run 'refused' (Get-MbtGuiCount $run 'failed' 0); @{ Pill = 'warn'; Text = "Finished. $(Format-MbtGuiQuantity $n 'item') could not be $verb."; Icon = 'warn'; Label = 'Finished, with refused items' } }
         'decision' { @{ Pill = 'warn'; Text = 'Almost done. One item needs your decision.'; Icon = 'warn'; Label = 'Needs a decision' } }
         'error' { @{ Pill = 'bad'; Text = 'Stopped by an error.'; Icon = 'x'; Label = 'Error' } }
         default { @{ Pill = 'warn'; Text = 'Not finished. Nothing is lost.'; Icon = 'warn'; Label = $(if ($k -eq 'repair') { 'Stopped' } else { 'Resumable' }) } }
     }
     if ($k -eq 'repair' -and $outcome -eq 'complete') {
         $kept = Get-MbtGuiCount $run 'recovered' 0; $part = Get-MbtGuiCount $run 'partial' 0; $lost = Get-MbtGuiCount $run 'lost' 0
-        $head.Text = "Repair finished. $(Format-MbtGuiCount ($kept + $part)) of $(Format-MbtGuiCount ($kept + $part + $lost)) messages kept."; $head.Label = 'Finished'
+        $head.Text = "Repair finished. $(Format-MbtGuiCount ($kept + $part)) of $(Format-MbtGuiQuantity ($kept + $part + $lost) 'message') kept."; $head.Label = 'Finished'
     }
     if ($k -eq 'repair' -and $outcome -eq 'partial') { $head.Text = 'Stopped. No file was written.' }
     $body = switch ($k) { 'repair' { New-MbtGuiRepairDone $outcome } 'import' { New-MbtGuiImportDone $outcome } 'copy' { New-MbtGuiCopyDone $outcome } default { New-MbtGuiExportDone $outcome } }
@@ -723,21 +723,21 @@ function New-MbtGuiExportDone {
     switch ($Outcome) {
         'complete' {
             $size = if ($run.BytesTotal -gt 0) { Format-MbtGuiBytes $run.BytesTotal } else { Format-MbtGuiBytes (Get-MbtGuiCount $run 'bytes' 0) }
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items exported', 'ok'), @($(if ($pst -and $parts) { "$size in $parts PST files" } else { $size }), $(if ($pst) { 'written' } else { 'in the store' }), 'ok'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @($(if ($pst -and $parts) { "$size in $(Format-MbtGuiQuantity $parts 'PST file')" } else { $size }), $(if ($pst) { 'written' } else { 'in the store' }), 'ok'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
             $facts = New-GuiFacts @(@('Saved to', $s.OutFolder), @('Files', $(if ($pst) { "$($s.OutName) and its parts + manifest" } else { 'the export store' })), @('Checked', $(if ($pst -and -not $s.CheckEach) { 'not checked (you turned it off)' } else { 'every file checked: clean' })))
             return @($t, $facts)
         }
         'partial' {
             $notReady = @($run.Objects | Where-Object { $_.State -in 'notready', 'not-ready' })
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items exported', 'ok'), @((Format-MbtGuiCount $pending), 'waiting', 'warn'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
-            $msg = if ($notReady.Count) { "**$($notReady[0].Key)** is not ready at Microsoft yet. It was not exported as empty, and it stays on the list." } else { "**$(Format-MbtGuiCount $pending) items are still to do.**" }
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @((Format-MbtGuiCount $pending), 'waiting', 'warn'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
+            $msg = if ($notReady.Count) { "**$($notReady[0].Key)** is not ready at Microsoft yet. It was not exported as empty, and it stays on the list." } else { "**$(Format-MbtGuiStillToDo $pending)**" }
             $extra = @()
             if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
             return @($t, (New-GuiMessage -Kind warn -Icon warn -Text $msg)) + @($extra)
         }
-        'decision' { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items exported', 'ok'), @('1', 'needs a decision', 'warn'), @((Format-MbtGuiCount $failed), 'failed', 'ok'))), (New-GuiMessage -Kind warn -Icon warn -Text 'One item could not be read twice. See the list and choose.')) }
+        'decision' { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @('1', 'needs a decision', 'warn'), @((Format-MbtGuiCount $failed), 'failed', 'ok'))), (New-GuiMessage -Kind warn -Icon warn -Text 'One item could not be read twice. See the list and choose.')) }
         default {
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items exported', 'ok'), @('0', 'waiting', ''), @('1', 'error', 'bad'))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @('0', 'waiting', ''), @('1', 'error', 'bad'))
             return @($t) + @(New-MbtGuiErrorBlock $run 'The export stopped.')
         }
     }
@@ -749,24 +749,24 @@ function New-MbtGuiImportDone {
     $done = Get-MbtGuiCount $run 'done' $run.Done; $pending = Get-MbtGuiCount $run 'pending' 0; $failed = Get-MbtGuiCount $run 'failed' 0; $unknown = Get-MbtGuiCount $run 'unknown' 0; $folders = Get-MbtGuiCount $run 'foldersCreated' 0
     switch ($Outcome) {
         'complete' {
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items in the mailbox', 'ok'), @((Format-MbtGuiCount $folders), 'folders created', 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'), @((Format-MbtGuiCount $unknown), 'uncertain', 'ok'))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $folders), ((Get-MbtGuiPlural $folders 'folder') + ' created'), 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'), @((Format-MbtGuiCount $unknown), 'uncertain', 'ok'))
             $facts = New-GuiFacts @(@('Mailbox', "$($s.Mailbox) $([char]0x00B7) $($s.TgtLoc)$(if ($s.TgtMode -eq 'new') { " $([char]0x00B7) folder **$($s.TgtName)**" })"), @('Final check', 'every item of the job is done'))
             return @($t, $facts)
         }
         'refused' {
             $refused = Get-MbtGuiCount $run 'refused' $failed
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items in the mailbox', 'ok'), @((Format-MbtGuiCount $folders), 'folders created', 'ok'), @((Format-MbtGuiCount $refused), 'refused for good', 'bad'), @((Format-MbtGuiCount $unknown), 'uncertain', 'ok'))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $folders), ((Get-MbtGuiPlural $folders 'folder') + ' created'), 'ok'), @((Format-MbtGuiCount $refused), 'refused for good', 'bad'), @((Format-MbtGuiCount $unknown), 'uncertain', 'ok'))
             return @($t) + @(New-MbtGuiRefusedBlock -Verb 'imported')
         }
         'partial' {
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items in the mailbox', 'ok'), @((Format-MbtGuiCount $pending), 'still to do', 'warn'), @((Format-MbtGuiCount $failed), 'refused', $(if ($failed) { 'bad' } else { 'ok' })), @((Format-MbtGuiCount $unknown), 'uncertain', $(if ($unknown) { 'warn' } else { 'ok' })))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $pending), 'still to do', 'warn'), @((Format-MbtGuiCount $failed), 'refused', $(if ($failed) { 'bad' } else { 'ok' })), @((Format-MbtGuiCount $unknown), 'uncertain', $(if ($unknown) { 'warn' } else { 'ok' })))
             $hours = ''
             if ($pending -gt 0 -and $run.Total -gt 0) { $left = $run.BytesTotal - $run.Bytes; if ($left -gt 0) { $e = Get-MbtGuiPlanEta -Task import -Bytes $left; $span = ($e.Text -split " \(")[0] -replace "^about ", ""; $hours = " About $span of work remain at Microsoft's speed." } }
             $extra = @(); if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
-            return @($t, (New-GuiMessage -Kind warn -Icon warn -Text "**$(Format-MbtGuiCount $pending) items are still to do.** The items already done are skipped.$hours")) + @($extra)
+            return @($t, (New-GuiMessage -Kind warn -Icon warn -Text "**$(Format-MbtGuiStillToDo $pending)** $(if ($done -eq 1) { 'The item already done is skipped.' } else { 'The items already done are skipped.' })$hours")) + @($extra)
         }
         'decision' {
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items in the mailbox', 'ok'), @('0', 'still to do', 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'), @((Format-MbtGuiCount ([math]::Max(1, $unknown))), 'needs your decision', 'warn'))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @('0', 'still to do', 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'), @((Format-MbtGuiCount ([math]::Max(1, $unknown))), 'needs your decision', 'warn'))
             $list = @($run.Decisions | ForEach-Object {
                     $d = $_
                     $btns = [Windows.Controls.WrapPanel]::new(); $btns.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
@@ -779,7 +779,7 @@ function New-MbtGuiImportDone {
             return @($t) + $list + @($bulk)
         }
         default {
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'items in the mailbox', 'ok'), @((Format-MbtGuiCount $pending), 'still to do', ''), @((Format-MbtGuiCount $failed), 'refused', $(if ($failed) { 'bad' } else { '' })), @((Format-MbtGuiCount $unknown), 'uncertain', ''))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $pending), 'still to do', ''), @((Format-MbtGuiCount $failed), 'refused', $(if ($failed) { 'bad' } else { '' })), @((Format-MbtGuiCount $unknown), 'uncertain', ''))
             return @($t) + @(New-MbtGuiErrorBlock $run 'The import stopped.')
         }
     }
@@ -791,12 +791,12 @@ function New-MbtGuiRefusedBlock {
     $g = $script:Gui; $run = $g.Run
     $parts = [Collections.Generic.List[object]]::new()
     $n = Get-MbtGuiCount $run 'refused' 0
-    $parts.Add((New-GuiMessage -Kind warn -Icon warn -Text ("**$(Format-MbtGuiCount $n) item$(if ($n -ne 1) { 's' }) could not be $Verb, and trying again would not help.** Each one was refused by Microsoft or could not be read from the file; the job tried as many times as allowed. " +
-                    "Everything else is done: the job is finished, so **Continue** has nothing left to do. The list below says why, item by item.")))
+    $parts.Add((New-GuiMessage -Kind warn -Icon warn -Text ("**$(Format-MbtGuiQuantity $n 'item') could not be $Verb, and trying again would not help.** $(if ($n -eq 1) { 'It was' } else { 'Each one was' }) refused by Microsoft or could not be read from the file; the job tried as many times as allowed. " +
+                    "Everything else is done: the job is finished, so **Continue** has nothing left to do. The list below says why$(if ($n -eq 1) { '.' } else { ', item by item.' })")))
     $items = @($run.Items | Where-Object { $_.State -eq 'refused' })
     if ($items.Count) {
         $rows = @(foreach ($i in ($items | Select-Object -First 25)) { , @((New-GuiStack @((New-GuiText $(if ($i.Key) { $i.Key } else { '(no subject)' }) 'Body'), (New-GuiText $i.Detail 'Small'))), (ConvertTo-MbtGuiRefusalReason $i.Msg)) })
-        $parts.Add((New-GuiMore -Summary "The first $($rows.Count) of $(Format-MbtGuiCount $n) refused items" -Open -Content @((New-GuiTable -Headers @('Item', 'Why it was refused') -Rows @($rows) -Widths @('*', '*')))))
+        $parts.Add((New-GuiMore -Summary (Format-MbtGuiRefusedSummary $rows.Count $n) -Open -Content @((New-GuiTable -Headers @('Item', 'Why it was refused') -Rows @($rows) -Widths @('*', '*')))))
     }
     $csv = [string](Get-MbtGuiCount $run 'report' '')
     if ($csv) {
@@ -814,14 +814,14 @@ function New-MbtGuiCopyDone {
     $done = Get-MbtGuiCount $run 'itemsWritten' $run.Done; $failed = Get-MbtGuiCount $run 'failed' 0; $parts = Get-MbtGuiCount $run 'parts' 0; $bytes = Get-MbtGuiCount $run 'bytes' 0
     switch ($Outcome) {
         { $_ -in 'complete', 'refused' } {
-            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'messages copied', 'ok'), @($(if ($parts) { "$(Format-MbtGuiBytes $bytes) in $parts PST file$(if ($parts -ne 1) { 's' })" } else { Format-MbtGuiBytes $bytes }), 'written', 'ok'), @((Format-MbtGuiCount $failed), 'not copied', $(if ($failed) { 'bad' } else { 'ok' })))
+            $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'message') + ' copied'), 'ok'), @($(if ($parts) { "$(Format-MbtGuiBytes $bytes) in $(Format-MbtGuiQuantity $parts 'PST file')" } else { Format-MbtGuiBytes $bytes }), 'written', 'ok'), @((Format-MbtGuiCount $failed), 'not copied', $(if ($failed) { 'bad' } else { 'ok' })))
             $facts = New-GuiFacts @(@('Source', "$($s.OpPath) $([char]0x00B7) **not changed**"), @('Saved to', "$($s.OutFolder) ($($s.OutName) and its parts)"), @('Checked', $(if ($s.CheckEach) { 'every file checked: clean' } else { 'not checked (you turned it off)' })))
             $out = @($t, $facts)
             if ($Outcome -eq 'refused') { $out += @(New-MbtGuiRefusedBlock -Verb 'copied') }
             return $out
         }
         'partial' { return @((New-GuiMessage -Kind warn -Icon warn -Text 'A stopped copy leaves no file, and your original was never touched.')) }
-        default { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), 'messages copied', 'ok'), @('1', 'error', 'bad'))) + @(New-MbtGuiErrorBlock $run 'The copy stopped. No file was kept.')) }
+        default { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'message') + ' copied'), 'ok'), @('1', 'error', 'bad'))) + @(New-MbtGuiErrorBlock $run 'The copy stopped. No file was kept.')) }
     }
 }
 
@@ -848,7 +848,7 @@ function New-MbtGuiRepairDone {
     $tiles = New-MbtGuiTiles @(@((Format-MbtGuiCount $rec), 'recovered as they were', 'ok'), @((Format-MbtGuiCount $part), 'partly recovered', 'warn'), @((Format-MbtGuiCount $lost), 'lost', $(if ($lost) { 'bad' } else { 'ok' })), @($pct, 'kept (recovered + partial)', ''))
     $bef = Get-MbtGuiCount $run 'before' $null; $aft = Get-MbtGuiCount $run 'after' $null
     $be = [int](Get-MbtGuiProp $bef 'errors' 0); $bw = [int](Get-MbtGuiProp $bef 'warnings' 0); $ae = [int](Get-MbtGuiProp $aft 'errors' 0); $aw = [int](Get-MbtGuiProp $aft 'warnings' 0)
-    $mkpills = { param($e, $w) $p = [Windows.Controls.StackPanel]::new(); $p.Orientation = 'Horizontal'; $a = New-GuiPill "$e errors" $(if ($e) { 'bad' } else { 'ok' }); $a.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $b = New-GuiPill "$w warnings" $(if ($w) { 'warn' } else { 'ok' }); $p.Children.Add($a) | Out-Null; $p.Children.Add($b) | Out-Null; $p }
+    $mkpills = { param($e, $w) $p = [Windows.Controls.StackPanel]::new(); $p.Orientation = 'Horizontal'; $a = New-GuiPill (Format-MbtGuiQuantity $e 'error') $(if ($e) { 'bad' } else { 'ok' }); $a.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $b = New-GuiPill (Format-MbtGuiQuantity $w 'warning') $(if ($w) { 'warn' } else { 'ok' }); $p.Children.Add($a) | Out-Null; $p.Children.Add($b) | Out-Null; $p }
     $before = New-GuiStack @((New-GuiText 'BEFORE (original, untouched)' 'Small'), (& $mkpills $be $bw)); $after = New-GuiStack @((New-GuiText 'AFTER (new file)' 'Small'), (& $mkpills $ae $aw))
     $ba = New-GuiGrid -Children @($before, $after); $ba.Margin = [Windows.Thickness]::new(0, 12, 0, 0)
     $level = [string](Get-MbtGuiProp $c 'levelUsed' $s.RpLevel)
@@ -858,7 +858,7 @@ function New-MbtGuiRepairDone {
     $incomplete = @($run.Items | Where-Object { $_.State -in 'partial', 'lost' })
     if ($incomplete.Count) {
         $rows = @(foreach ($w in $incomplete) { $name = New-GuiStack @((New-GuiText $(if ($w.Key) { $w.Key } else { '(no subject)' }) 'Body'), (New-GuiText $w.Detail 'Small')); , @($name, (New-GuiPill $(if ($w.State -eq 'lost') { 'Lost' } else { 'Partial' }) $(if ($w.State -eq 'lost') { 'bad' } else { 'warn' })), $w.Msg) })
-        $parts += New-GuiMore -Summary "The $($incomplete.Count) messages that are not complete" -Content @((New-GuiTable -Headers @('Message', 'Result', 'What was lost') -Rows @($rows) -Widths @('*', '90', '*')))
+        $parts += New-GuiMore -Summary (Format-MbtGuiIncompleteSummary $incomplete.Count) -Content @((New-GuiTable -Headers @('Message', 'Result', 'What was lost') -Rows @($rows) -Widths @('*', '90', '*')))
     }
     $did = @($run.Steps | Where-Object { $_.State -eq 'done' } | ForEach-Object { $x = New-GuiText ([char]0x2022 + '  ' + $_.Title + $(if ($_.Msg) { ': ' + $_.Msg } else { '' })) 'Body'; $x.FontSize = 13; $x })
     if ($did.Count) { $parts += New-GuiMore -Summary 'What the repair did' -Content (@($did) + @(New-GuiText 'Counters, sizes and indexes are recomputed; messages no folder listed are put back in their folders.' 'Hint')) }

@@ -161,19 +161,33 @@ function Format-MbtGuiBytes {
 
 function Format-MbtGuiCount { param([double]$N) return ([long]$N).ToString('N0', [cultureinfo]::InvariantCulture) }
 
+function Get-MbtGuiPlural {
+    <# The word that goes with a count: the singular for exactly one, the plural for any other number. The plural is the singular and an s unless it is given. Also for a verb: Get-MbtGuiPlural $n 'is' 'are'. #>
+    param([double]$Count, [Parameter(Mandatory)][string]$Singular, [string]$Plural)
+    if ([long]$Count -eq 1) { return $Singular }
+    if ($Plural) { return $Plural }
+    return ($Singular + 's')
+}
+
+function Format-MbtGuiQuantity {
+    <# A count and its noun: "1 location", "0 locations", "1,284 items", "2 entries" (-Plural 'entries'). #>
+    param([double]$Count, [Parameter(Mandatory)][string]$Singular, [string]$Plural)
+    return ('{0} {1}' -f (Format-MbtGuiCount $Count), (Get-MbtGuiPlural $Count $Singular $Plural))
+}
+
 function Format-MbtGuiSelectionSize {
     <# The size of a selection in words: a folder whose size Microsoft does not give (an auxiliary archive, a PST folder) is never counted as 0 B. #>
     param([Parameter(Mandatory)]$Selection)
     $known = [double]$Selection.Bytes; $unknown = [int]$Selection.UnknownSize
     if ($unknown -le 0) { return (Format-MbtGuiBytes $known) }
     if ($known -le 0) { return 'size unknown' }
-    return ('{0} + {1} folder{2} of unknown size' -f (Format-MbtGuiBytes $known), $unknown, $(if ($unknown -gt 1) { 's' } else { '' }))
+    return ('{0} + {1} of unknown size' -f (Format-MbtGuiBytes $known), (Format-MbtGuiQuantity $unknown 'folder'))
 }
 
 function Format-MbtGuiSelectionItems {
-    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). #>
-    param([Parameter(Mandatory)]$Selection)
-    $n = Format-MbtGuiCount $Selection.Items
+    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). -WithNoun: "1 item", "at least 1,500 items". #>
+    param([Parameter(Mandatory)]$Selection, [switch]$WithNoun)
+    $n = if ($WithNoun) { Format-MbtGuiQuantity $Selection.Items 'item' } else { Format-MbtGuiCount $Selection.Items }
     if ($Selection.SubtreeUnread) { return "at least $n" }
     return $n
 }

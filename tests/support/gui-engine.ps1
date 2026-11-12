@@ -528,6 +528,32 @@ foreach ($case in @(
         Assert-That ($r.Got.Roots.Count -eq $case.Mailboxes.Count -and $r.Got.Folders -eq $folders -and $r.Got.Items -eq (3 * $folders)) "roots $($r.Got.Roots.Count), folders $($r.Got.Folders), items $($r.Got.Items)"
     }
 }
+Check 'store: a store of 5,000 folders, some under a parent that is not there, opens in seconds with the right tree' {
+    $dir = Join-Path $Work ('store-big-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $store = [MailboxTransfer.ExportStore]::Create($dir, 'test', 'tests')
+    try {
+        $store.UpsertMailbox([MailboxTransfer.StoreMailbox]@{ Id = 'mb1'; Kind = 'Primary'; Upn = 'mb1@contoso.test'; DisplayName = 'mb1' }) | Out-Null
+        # folder 0 is a top folder; folder i is below folder (i - 1) / 4 (six levels), except every 500th, whose parent is not in the store
+        $rows = foreach ($i in 0..4999) {
+            $parent = if ($i -eq 0) { $null } elseif ($i % 500 -eq 0) { "gone-$i" } else { 'f' + [int][math]::Floor(($i - 1) / 4) }
+            [MailboxTransfer.StoreFolder]@{ MailboxId = 'mb1'; FolderId = "f$i"; ParentFolderId = $parent; DisplayName = "Folder $i"; SourceItemCount = 2; SourceSize = 2000 }
+        }
+        $store.UpsertFolders(@($rows)) | Out-Null
+    } finally { $store.Dispose() }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $r = Open-Test 'store' $dir
+    $watch.Stop()
+    Assert-That (-not $r.Err -and $r.Calls -eq 1) "OnDone $($r.Calls), OnError: $($r.Err)"
+    Assert-That ($watch.Elapsed.TotalSeconds -lt 15) "the store took $([math]::Round($watch.Elapsed.TotalSeconds, 1)) s to open"
+    $root = $r.Got.Roots[0]
+    $nodes = @($root.Descendants() | Where-Object { $_ -ne $root })
+    $byId = @{}; foreach ($n in $nodes) { $byId[$n.Id] = $n }
+    Assert-That ($r.Got.Roots.Count -eq 1 -and $r.Got.Folders -eq 5000 -and $r.Got.Items -eq 10000) "roots $($r.Got.Roots.Count), folders $($r.Got.Folders), items $($r.Got.Items)"
+    Assert-That ($root.Children.Count -eq 10) "top folders: $($root.Children.Count) (folder 0 and the 9 whose parent is not there)"
+    Assert-That ($nodes.Count -eq 5000 -and $byId.Count -eq 5000) "nodes in the tree: $($nodes.Count)"
+    Assert-That ($byId['f500'].Parent -eq $root -and $byId['f0'].Parent -eq $root) 'a folder whose parent is not there is a top folder'
+    Assert-That ($byId['f4999'].Parent.Id -eq 'f1249' -and $byId['f1249'].Parent.Id -eq 'f312' -and $byId['f312'].Parent.Id -eq 'f77') "f4999 is below $($byId['f4999'].Parent.Id)"
+}
 foreach ($case in @(@{ Name = 'one file at the top'; Files = @('a.eml') }, @{ Name = 'one file in one subfolder'; Files = @('Inbox/a.eml') }, @{ Name = 'two files in two subfolders'; Files = @('Inbox/a.eml', 'Sent/b.eml') })) {
     Check "eml: opens a folder of .eml files, $($case.Name)" {
         $dir = Join-Path $Work ('eml-' + [guid]::NewGuid().ToString('N').Substring(0, 8))

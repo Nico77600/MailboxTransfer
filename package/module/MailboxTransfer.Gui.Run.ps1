@@ -26,7 +26,7 @@ function Get-MbtGuiProp {
 }
 
 function New-MbtGuiRun {
-    param([string]$Task = 'export', [string]$Title = '', [string]$Unit = 'items')
+    param([string]$Task = 'export', [string]$Title = '', [string]$Unit = 'item')
     [ordered]@{
         Task = $Task; Title = $Title; Unit = $Unit; State = 'running'; Planned = $false
         Steps = [Collections.Generic.List[hashtable]]::new()
@@ -131,7 +131,7 @@ function Add-MbtGuiEvent {
             $o.Done = [long](Get-MbtGuiProp $Event 'done' $o.Done); $o.Total = [long](Get-MbtGuiProp $Event 'total' $o.Total)
             $o.Bytes = [long](Get-MbtGuiProp $Event 'bytes' $o.Bytes)
             $o.Msg = [string](Get-MbtGuiProp $Event 'msg' $o.Msg); $o.Detail = [string](Get-MbtGuiProp $Event 'detail' $o.Detail)
-            if ($kind -eq 'object' -and $state -in 'done', 'ok' -and $o.Total -gt 0) { Add-MbtGuiLog $Run 'ok' "Folder $key done: $(Format-MbtGuiCount $o.Total) items." $at }
+            if ($kind -eq 'object' -and $state -in 'done', 'ok' -and $o.Total -gt 0) { Add-MbtGuiLog $Run 'ok' "Folder $key done: $(Format-MbtGuiQuantity $o.Total 'item')." $at }
             if ($kind -eq 'object' -and $tone -eq 'warn' -and $state -in 'notready', 'not-ready') { Add-MbtGuiLog $Run 'warn' "$key is not ready at Microsoft. Will try again later." $at }
         }
         'wait' {
@@ -230,8 +230,43 @@ function Get-MbtGuiPlanTotals {
 function Format-MbtGuiPlanTotals {
     <# "The service counted 1,208 items in 12 folders, 6.2 GiB." with the honest words when a size is not given. #>
     param([Parameter(Mandatory)]$Totals)
-    $size = if ($Totals.UnknownSize -le 0) { Format-MbtGuiBytes $Totals.Bytes } elseif ($Totals.Bytes -le 0) { 'size not known' } else { '{0} + {1} folder{2} of unknown size' -f (Format-MbtGuiBytes $Totals.Bytes), $Totals.UnknownSize, $(if ($Totals.UnknownSize -gt 1) { 's' } else { '' }) }
-    return ('{0} item{1} in {2} folder{3}, {4}' -f (Format-MbtGuiCount $Totals.Items), $(if ($Totals.Items -ne 1) { 's' } else { '' }), $Totals.Folders, $(if ($Totals.Folders -ne 1) { 's' } else { '' }), $size)
+    $size = if ($Totals.UnknownSize -le 0) { Format-MbtGuiBytes $Totals.Bytes } elseif ($Totals.Bytes -le 0) { 'size not known' } else { '{0} + {1} of unknown size' -f (Format-MbtGuiBytes $Totals.Bytes), (Format-MbtGuiQuantity $Totals.UnknownSize 'folder') }
+    return ('{0} in {1}, {2}' -f (Format-MbtGuiQuantity $Totals.Items 'item'), (Format-MbtGuiQuantity $Totals.Folders 'folder'), $size)
+}
+
+function Format-MbtGuiRefusedSummary {
+    <# The title of the list of refused items: "The refused item", "The 3 refused items", "The first 25 of 1,234 refused items". Shown is the number of rows of the list. #>
+    param([int]$Shown, [long]$Total)
+    $all = [math]::Max($Total, [long]$Shown)
+    if ($all -eq 1) { return 'The refused item' }
+    if ($Shown -ge $all) { return ('The {0} refused items' -f (Format-MbtGuiCount $all)) }
+    if ($Shown -eq 1) { return ('The first of {0} refused items' -f (Format-MbtGuiCount $all)) }
+    return ('The first {0} of {1} refused items' -f (Format-MbtGuiCount $Shown), (Format-MbtGuiCount $all))
+}
+
+function Format-MbtGuiIncompleteSummary {
+    <# The title of the list of messages a repair could not recover whole: "The message that is not complete", "The 3 messages that are not complete". #>
+    param([int]$Count)
+    if ($Count -eq 1) { return 'The message that is not complete' }
+    return ('The {0} messages that are not complete' -f (Format-MbtGuiCount $Count))
+}
+
+function Format-MbtGuiDecisionTitle {
+    <# "1 item needs your decision", "2 items need your decision". #>
+    param([int]$Count)
+    return ('{0} {1} your decision' -f (Format-MbtGuiQuantity $Count 'item'), (Get-MbtGuiPlural $Count 'needs' 'need'))
+}
+
+function Format-MbtGuiStillToDo {
+    <# "1 item is still to do.", "2,000 items are still to do." #>
+    param([long]$Count)
+    return ('{0} {1} still to do.' -f (Format-MbtGuiQuantity $Count 'item'), (Get-MbtGuiPlural $Count 'is' 'are'))
+}
+
+function Format-MbtGuiProgressOf {
+    <# "5 of 1 item", "5 of 1,208 items": the noun agrees with the total. #>
+    param([long]$Done, [long]$Total, [string]$Unit = 'item')
+    return ('{0} of {1}' -f (Format-MbtGuiCount $Done), (Format-MbtGuiQuantity $Total $Unit))
 }
 
 function Read-MbtGuiEventTail {

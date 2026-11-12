@@ -101,7 +101,7 @@ function Open-MbtGuiFolder {
         return
     }
     $suffix = if ($Node.Count -gt 12) { ' ' + [char]0x00B7 + ' newest shown first' } else { '' }
-    $c.ListTitle.Text = ('{0} {1} {2} items{3}' -f $Node.Name, [char]0x00B7, (Format-MbtGuiCount $Node.Count), $suffix)
+    $c.ListTitle.Text = ('{0} {1} {2}{3}' -f $Node.Name, [char]0x00B7, (Format-MbtGuiQuantity $Node.Count 'item'), $suffix)
     $c.ListHeader.Visibility = 'Visible'
     $c.PickAll.Visibility = $(if ($b.NoPicks) { 'Collapsed' } else { 'Visible' })
     $c.ListEmpty.Visibility = 'Collapsed'
@@ -259,7 +259,7 @@ function Update-MbtGuiTray {
     $p.Children.Clear()
     $sel = Get-MbtGuiSelection -Roots @($Browser.Roots)
     if ($sel.Items -gt 0 -or $sel.Folders -gt 0) {
-        $txt = '**{0} items** in {1} folder{2} {3} {4}' -f (Format-MbtGuiCount $sel.Items), $sel.Folders, $(if ($sel.Folders -gt 1) { 's' } else { '' }), [char]0x00B7, (Format-MbtGuiSelectionSize $sel)
+        $txt = '**{0}** in {1} {2} {3}' -f (Format-MbtGuiQuantity $sel.Items 'item'), (Format-MbtGuiQuantity $sel.Folders 'folder'), [char]0x00B7, (Format-MbtGuiSelectionSize $sel)
         if ($sel.SubtreeUnread) { $txt += ' (folders below are counted as you open them)' }
         $t = New-GuiText $txt 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
         $p.Children.Add($t) | Out-Null

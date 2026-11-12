@@ -96,7 +96,7 @@ function New-MbtGuiRealEngine {
                 'complete' { 'finished ' + $j.Updated.ToLocalTime().ToString('yyyy-MM-dd') }
                 'needs-decision' { 'Almost done: an item needs your decision.' }
                 'error' { 'Stopped by an error. Nothing is lost.' }
-                default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiCount $counts.done) items done" } else { '' }) }
+                default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiQuantity $counts.done 'item') done" } else { '' }) }
             }
             if ($j.Alive) { $sub = 'running elsewhere' }
             [pscustomobject]@{ Task = $j.Task; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; State = $state; Button = $(if ($j.EffectiveState -eq 'complete' -or $j.Alive) { 'Open' } else { 'Continue' }); Folder = $j.Folder }
@@ -345,13 +345,13 @@ function Open-MbtGuiPstSource {
         $r = @($res)[0]
         $root = [MailboxTransferGui.FolderNode]::new('pst-root', [IO.Path]::GetFileName($Path), 0, -1)
         $root.IsRoot = $true; $root.Kind = 'pst'; $root.Glyph = Get-MbtGlyph pst
-        $root.Sub = "$($parts.Count) part$(if ($parts.Count -ne 1) { 's' }) - $(Format-MbtGuiBytes $bytes) - read only"
+        $root.Sub = "$(Format-MbtGuiQuantity $parts.Count 'part') - $(Format-MbtGuiBytes $bytes) - read only"
         $root.Tag = @{ Path = $Path; Kind = 'pst' }
         $mk = $null
         $mk = { param($d) $n = [MailboxTransferGui.FolderNode]::new([string]$d.Id, [string]$d.Name, [long]$d.Count, -1); $n.Tag = @{ Nid = [uint32]$d.Id; PstPath = $Path; FolderPath = [string]$d.Path }; $kids = @($d.Kids | ForEach-Object { & $mk $_ }); if ($kids.Count) { $n.SetChildren([MailboxTransferGui.FolderNode[]]$kids) }; $n }
         $kids = @($r.Tree.Kids | ForEach-Object { & $mk $_ })
         if ($kids.Count) { $root.SetChildren([MailboxTransferGui.FolderNode[]]$kids) }
-        $verdict = '**{0} part{1} found** - {2} - the check of the file runs on the next page when you repair it. Reading it here only reads.' -f $parts.Count, $(if ($parts.Count -ne 1) { 's' } else { '' }), (Format-MbtGuiBytes $bytes)
+        $verdict = '**{0} found** - {1} - the check of the file runs on the next page when you repair it. Reading it here only reads.' -f (Format-MbtGuiQuantity $parts.Count 'part'), (Format-MbtGuiBytes $bytes)
         & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = $verdict; Items = $r.Items; Bytes = $bytes; Folders = $r.Folders; Parts = $parts.Count; Roots = @($root) })
     }.GetNewClosure()
 }
@@ -378,18 +378,18 @@ function Open-MbtGuiStoreSource {
             $root = [MailboxTransferGui.FolderNode]::new("store-$($m.Id)", $(if ($m.Kind -eq 'Archive') { 'Archive' } elseif ($m.Kind -eq 'Primary') { 'Primary mailbox' } else { 'Auxiliary archive' }), 0, -1)
             $root.IsRoot = $true; $root.Kind = 'store'; $root.Glyph = Get-MbtGlyph archive; $root.Sub = 'export store - read only'
             $root.Tag = @{ Path = $Path; Kind = 'store' }
-            $byParent = @{}
-            foreach ($f in $m.Folders) { $k = [string]$f.Parent; if (-not $byParent.ContainsKey($k)) { $byParent[$k] = [Collections.Generic.List[object]]::new() }; $byParent[$k].Add($f) }
+            $byParent = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+            $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($f in $m.Folders) { $null = $ids.Add([string]$f.Id); $k = [string]$f.Parent; if (-not $byParent.ContainsKey($k)) { $byParent[$k] = [Collections.Generic.List[object]]::new() }; $byParent[$k].Add($f) }
             $mk = $null
             $mk = { param($f) $n = [MailboxTransferGui.FolderNode]::new([string]$f.Id, [string]$f.Name, [long]$f.Count, [long]$f.Size); $n.Tag = @{ Key = [long]$f.Key; StorePath = $Path }; $kids = @(); if ($byParent.ContainsKey([string]$f.Id)) { $kids = @($byParent[[string]$f.Id] | ForEach-Object { & $mk $_ }) }; if ($kids.Count) { $n.SetChildren([MailboxTransferGui.FolderNode[]]$kids) }; $n }
-            $tops = @($m.Folders | Where-Object { -not $_.Parent -or -not ($m.Folders | Where-Object { $_.Id -eq $f.Parent }) } | ForEach-Object { & $mk $_ })
-            $tops = @($m.Folders | Where-Object { $p = $_.Parent; -not $p -or -not (@($m.Folders | Where-Object { $_.Id -eq $p }).Count) } | ForEach-Object { & $mk $_ })
+            $tops = @($m.Folders | Where-Object { -not $_.Parent -or -not $ids.Contains([string]$_.Parent) } | ForEach-Object { & $mk $_ })
             if ($tops.Count) { $root.SetChildren([MailboxTransferGui.FolderNode[]]$tops) }
             $root
         }
         $items = 0L; $bytes = 0L; $folders = 0
         foreach ($m in $r.Mailboxes) { foreach ($f in $m.Folders) { $items += $f.Count; if ($f.Size -gt 0) { $bytes += $f.Size }; $folders++ } }
-        & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = "**Store opened:** $(Format-MbtGuiCount $items) items in $folders folders. The items are checked against their fingerprints while they are imported."; Items = $items; Bytes = $bytes; Folders = $folders; Parts = 0; Roots = @($roots) })
+        & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = "**Store opened:** $(Format-MbtGuiQuantity $items 'item') in $(Format-MbtGuiQuantity $folders 'folder'). $(if ($items -eq 1) { 'The item is checked against its fingerprint while it is imported.' } else { 'The items are checked against their fingerprints while they are imported.' })"; Items = $items; Bytes = $bytes; Folders = $folders; Parts = 0; Roots = @($roots) })
     }.GetNewClosure()
 }
 
@@ -419,7 +419,7 @@ function Open-MbtGuiEmlSource {
         if (-not $r.Files) { & $OnError 'There is no .eml file in this folder.'; return }
         $root = [MailboxTransferGui.FolderNode]::new('eml-root', [string]$r.Name, 0, -1)
         $root.IsRoot = $true; $root.Kind = 'eml'; $root.Glyph = Get-MbtGlyph folder
-        $root.Sub = "$(Format-MbtGuiCount $r.Files) messages - $(Format-MbtGuiBytes $r.Bytes) - read only"
+        $root.Sub = "$(Format-MbtGuiQuantity $r.Files 'message') - $(Format-MbtGuiBytes $r.Bytes) - read only"
         $root.Tag = @{ Path = $Path; Kind = 'eml' }
         # one node per folder that holds .eml files, below its parent folder
         $nodes = @{ '' = $root }
@@ -440,7 +440,7 @@ function Open-MbtGuiEmlSource {
             return $n
         }
         foreach ($d in ($r.Dirs | Sort-Object { $_.Path })) { if ($d.Path) { $null = & $get $d.Path } }
-        $verdict = '**{0} message{1} found** - {2} - read only. The messages are read when they are imported; each folder below becomes a folder of the mailbox.' -f (Format-MbtGuiCount $r.Files), $(if ($r.Files -ne 1) { 's' } else { '' }), (Format-MbtGuiBytes $r.Bytes)
+        $verdict = '**{0} found** - {1} - read only. {2}; each folder below becomes a folder of the mailbox.' -f (Format-MbtGuiQuantity $r.Files 'message'), (Format-MbtGuiBytes $r.Bytes), $(if ($r.Files -eq 1) { 'The message is read when it is imported' } else { 'The messages are read when they are imported' })
         & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = $verdict; Items = [long]$r.Files; Bytes = [long]$r.Bytes; Folders = $nodes.Count; Parts = 0; Roots = @($root) })
     }.GetNewClosure()
 }
