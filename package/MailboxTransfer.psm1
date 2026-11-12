@@ -2133,7 +2133,7 @@ function Show-MbtFxReport {
             Value = $_.Display
         }
     })
-    $shown = if ($AllProperties) { $rows } else { $rows | Select-Object -First $MaxProperties }
+    $shown = @(if ($AllProperties) { $rows } else { $rows | Select-Object -First $MaxProperties })
     $shown | Format-Table -AutoSize -Wrap | Out-String -Width 220 | ForEach-Object { $_.TrimEnd() } | Write-Host
     if ($rows.Count -gt $shown.Count) { Write-MbtDetail "... $($rows.Count - $shown.Count) more elements (use -AllProperties)" }
     $named = @($r.Elements | Where-Object { $_.IsNamed })
@@ -3003,7 +3003,7 @@ function Resolve-MbtPstDestination {
         return [IO.Path]::GetFullPath($full)
     }
     [MailboxTransfer.FileNaming]::Require($full, $false, 'PST destination folder')
-    $user = if ($Store) { @($Store.GetMailboxes() | ForEach-Object Upn | Where-Object { $_ })[0] } else { $null }
+    $user = if ($Store) { $Store.GetMailboxes() | ForEach-Object Upn | Where-Object { $_ } | Select-Object -First 1 } else { $null }
     $stem = if ($Store) { [MailboxTransfer.PstExporter]::DefaultStem($Store, $(if ($Options) { $Options } else { [MailboxTransfer.PstExportOptions]::new() })) } else { 'mailbox' }
     $plain = if ($user) { ($user -split '@')[0] -replace '[^\w\.\-]', '_' } else { 'mailbox' }
     if ([MailboxTransfer.FileNaming]::IsReservedDeviceName($plain)) {

@@ -14,6 +14,8 @@
 Set-StrictMode -Version Latest
 
 $script:FakePstState = 'damaged'
+# How many of the jobs of the Continue list the fake engine gives (all of them when it is $null): the scenarios with one job, or none.
+$script:FakeJobCount = $null
 
 function New-MbtGuiFakeRandom {
     <# A small deterministic generator, so the screenshots are the same every time. #>
@@ -160,21 +162,27 @@ function New-MbtGuiFakeEngine {
     $engine.OpenSource = { param($Kind, $Path, $OnDone, $OnError)
         if ($Kind -eq 'pst') { & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = '**4 parts found** (archive-2019.pst ... -004) - 47.3 GiB - checked: **clean**. The check only reads.'; Items = 9860; Bytes = [long](47.3GB); Folders = 7; Parts = 4; Roots = (Get-MbtGuiFakePstTree) }) }
         else { & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = '**Store verified:** 1,208 of 1,208 items match their fingerprint.'; Items = 1208; Bytes = [long](6.2GB); Folders = 12; Parts = 0; Roots = (Get-MbtGuiFakePstTree) }) } }
+    # FakePstState: damaged (five findings), one (a single finding), clean (none)
     $engine.CheckPst = { param($Path, $OnDone, $OnError)
-        $bad = $script:FakePstState -ne 'clean'
-        & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](4.2GB); Elapsed = '1 min 5 s'; Errors = $(if ($bad) { 6 } else { 0 }); Warnings = $(if ($bad) { 5 } else { 0 }); ExitCode = $(if ($bad) { 1 } else { 0 }); Recommended = 'Rebuild'
-                Findings = $(if ($bad) { @(
-                        @{ Severity = 'Error'; Text = '3 messages exist, but the folder does not list them'; Code = 'MSG-NOT-LISTED'; Count = 3; Level = 'Rebuild' }
-                        @{ Severity = 'Error'; Text = 'A folder points to a parent that is gone'; Code = 'FOLDER-PARENT-MISMATCH'; Count = 1; Level = 'Rebuild' }
-                        @{ Severity = 'Error'; Text = 'A folder line points to a message that no longer exists'; Code = 'DANGLING-ROW'; Count = 2; Level = 'Recompute' }
-                        @{ Severity = 'Warning'; Text = 'Folder counters are out of date'; Code = 'CONTENTS-CELL'; Count = 4; Level = 'Recompute' }
-                        @{ Severity = 'Warning'; Text = 'A message size differs from the sum of its parts'; Code = 'MSG-SIZE-COMPUTED'; Count = 1; Level = 'Recompute' }) } else { @() }) }) }
+        $state = $script:FakePstState
+        $bad = $state -ne 'clean'
+        $findings = @(
+            @{ Severity = 'Error'; Text = '3 messages exist, but the folder does not list them'; Code = 'MSG-NOT-LISTED'; Count = 3; Level = 'Rebuild' }
+            @{ Severity = 'Error'; Text = 'A folder points to a parent that is gone'; Code = 'FOLDER-PARENT-MISMATCH'; Count = 1; Level = 'Rebuild' }
+            @{ Severity = 'Error'; Text = 'A folder line points to a message that no longer exists'; Code = 'DANGLING-ROW'; Count = 2; Level = 'Recompute' }
+            @{ Severity = 'Warning'; Text = 'Folder counters are out of date'; Code = 'CONTENTS-CELL'; Count = 4; Level = 'Recompute' }
+            @{ Severity = 'Warning'; Text = 'A message size differs from the sum of its parts'; Code = 'MSG-SIZE-COMPUTED'; Count = 1; Level = 'Recompute' })
+        if ($state -eq 'one') { $findings = @($findings[0]) } elseif (-not $bad) { $findings = @() }
+        & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](4.2GB); Elapsed = '1 min 5 s'; Errors = $(if ($state -eq 'one') { 1 } elseif ($bad) { 6 } else { 0 }); Warnings = $(if ($bad -and $state -ne 'one') { 5 } else { 0 }); ExitCode = $(if ($bad) { 1 } else { 0 }); Recommended = 'Rebuild'; Findings = $findings }) }
     $engine.SaveSelection = { param($Root, $Entries, $Path, $OnDone, $OnError) & $OnDone $Path }
     $engine.SaveSelections = { param($Groups, $Path, $OnDone, $OnError) & $OnDone $Path }
-    $engine.Jobs = { param($Work) @(
+    $engine.Jobs = { param($Work)
+        $jobs = @(
             [pscustomobject]@{ Task = 'import'; Title = 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' Adele Vance (Archive)'; Sub = '5,120 of 9,860 items done ' + [char]0x00B7 + ' stopped yesterday 22:41 ' + [char]0x00B7 + ' 3 items to check'; State = 'run'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'RunImportStopped' } }
             [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' Primary + Archive ' + [char]0x2192 + ' D:\Exports\adele'; Sub = 'Not finished: 2 folders are not ready at Microsoft yet. Nothing is lost.'; State = 'warn'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'DoneExportPartial' } }
-            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } }) }
+            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } })
+        if ($null -ne $script:FakeJobCount) { $jobs = @($jobs | Select-Object -First $script:FakeJobCount) }
+        $jobs }
     $engine.FreeSpace ={ param($Path) 412GB }
     # what the check of the plan would count: the ticks, as the service counts them (an auxiliary archive and a PST give no size)
     $engine.Plan = { param($Request, $OnDone, $OnError)

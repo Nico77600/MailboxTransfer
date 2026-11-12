@@ -6,7 +6,7 @@
     A control whose handler raises an exception is reported with the scenario and the control. This is what the first click of a page does in a real window; a
     handler that uses a variable of the function that built the page (which is gone when the control raises its event) fails here as it does there.
     -Part and -Parts share the scenarios between several runs of this script (one process each); -Only names the scenarios to walk (and extras, the states they do not reach).
-    Prints one JSON object: { Errors: [..], Invoked: { <type>: n }, Scenarios: n, Controls: n, Dialogs: n }. Nothing contacts the cloud: the engine is the fake one, the
+    Prints one JSON object: { Errors: [..], Invoked: { <type>: n }, Scenarios: n, Controls: n, Dialogs: n, Walked: [names of the scenarios walked], Edge: [names of the scenarios with exactly one of something, or none] }. Nothing contacts the cloud: the engine is the fake one, the
     jobs are not started, no file is opened. Run by tests\Gui.ClickThrough.Tests.ps1 in its own single-threaded pwsh (WPF needs STA).
     The names in this file start with ct and the script keeps its variables in the script scope: the block of a handler sees the scope it is raised from, as in the console.
 #>
@@ -20,6 +20,7 @@ $script:GuiRoot = $Package
 $script:ctErrors = [Collections.Generic.List[string]]::new()
 $script:ctInvoked = @{}
 $script:ctScenarios = 0; $script:ctControls = 0; $script:ctDialogs = 0
+$script:ctWalked = [Collections.Generic.List[string]]::new()
 $script:ctChromeSeen = @{}
 
 # nothing is opened, picked or started outside the window
@@ -140,6 +141,7 @@ function Restore-CtScenario([string]$ctName, [scriptblock]$ctExtra) {
 
 function Invoke-CtScenario([string]$ctName, [scriptblock]$ctExtra) {
     $script:ctScenarios++
+    $script:ctWalked.Add($ctName)
     $ctG = $script:Gui
     Restore-CtScenario $ctName $ctExtra
     $ctScreen = Get-MbtGuiScreen
@@ -189,7 +191,7 @@ function Invoke-CtScenario([string]$ctName, [scriptblock]$ctExtra) {
 
 function Invoke-CtClickThrough {
     $ctIndex = 0
-    foreach ($ctName in (Get-MbtGuiScenarioName)) {
+    foreach ($ctName in (@(Get-MbtGuiScenarioName) + @(Get-MbtGuiEdgeScenarioName))) {
         if ((-not $Only -or $ctName -in $Only) -and ($ctIndex % $Parts) -eq $Part) { Invoke-CtScenario $ctName $null }
         $ctIndex++
     }
@@ -227,4 +229,4 @@ $script:ctDriver.Add_Tick({
     })
 $script:ctWindow.Add_ContentRendered({ $script:ctDriver.Start() })
 [void]$script:ctWindow.ShowDialog()
-[pscustomobject]@{ Errors = @($script:ctErrors); Invoked = $script:ctInvoked; Scenarios = $script:ctScenarios; Controls = $script:ctControls; Dialogs = $script:ctDialogs } | ConvertTo-Json -Depth 4 -Compress
+[pscustomobject]@{ Errors = @($script:ctErrors); Invoked = $script:ctInvoked; Scenarios = $script:ctScenarios; Controls = $script:ctControls; Dialogs = $script:ctDialogs; Walked = @($script:ctWalked); Edge = @(Get-MbtGuiEdgeScenarioName) } | ConvertTo-Json -Depth 4 -Compress

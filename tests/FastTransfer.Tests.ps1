@@ -485,6 +485,19 @@ Describe 'robustness of the exact decoder' {
     }
 }
 
+Describe 'the report of a stream (Show-MbtFxReport)' {
+    It 'is written for a stream of <Count> element(s), with and without -AllProperties' -ForEach @(@{ Count = 0 }, @{ Count = 1 }, @{ Count = 3 }) {
+        $b = New-Builder
+        foreach ($i in 1..3) { if ($i -le $Count) { $null = $b.Int32(0x0E07 + $i, $i) } }
+        $path = Join-Path $TestDrive "report-$Count.fxs"
+        [IO.File]::WriteAllBytes($path, $b.ToArray())
+        $decoded = Read-MbtFxStream -Path $path
+        @($decoded.Read.Elements).Count | Should -Be $Count
+        { Show-MbtFxReport -Decoded $decoded *>&1 | Out-Null } | Should -Not -Throw
+        { Show-MbtFxReport -Decoded $decoded -AllProperties *>&1 | Out-Null } | Should -Not -Throw
+        { Show-MbtFxReport -Decoded $decoded -MaxProperties 1 *>&1 | Out-Null } | Should -Not -Throw
+    }
+}
 Describe 'corpus of real streams (out\fxics-corpus, git-ignored)' {
     It 'decodes every stream without warning and encodes it back byte for byte' -Skip:(-not $script:HasCorpus) {
         $failures = foreach ($f in Get-ChildItem -LiteralPath $script:Corpus -Filter '*.fxs' -File) {

@@ -825,6 +825,11 @@ Describe 'export to PST: file names (Windows device names, Outlook crashes on au
         }
     }
 
+    It 'names the file of a store whose mailboxes have no user principal name: <Name>' -ForEach @(@{ Name = 'none'; Upn = $null }, @{ Name = 'empty'; Upn = '' }) {
+        $store = New-NamedStore "noupn-$Name" $Upn @('Primary')
+        try { Get-Default $store | Should -BeLike '*.pst' } finally { $store.Dispose() }
+    }
+
     It 'recognises the Windows device names, with any extension and case, and only them' {
         foreach ($n in 'aux', 'AUX.pst', 'Aux.v2.pst', 'con', 'PRN.txt', 'nul.tar.gz', 'COM1', 'com9.pst', 'LPT0', 'lpt9.pst', "COM$([char]0xB9).pst", "LPT$([char]0xB2)", "COM$([char]0xB3)", 'CONIN$', 'CONOUT$.pst', 'aux ', 'aux.', 'aux .pst') {
             [MailboxTransfer.FileNaming]::IsReservedDeviceName($n) | Should -BeTrue -Because $n

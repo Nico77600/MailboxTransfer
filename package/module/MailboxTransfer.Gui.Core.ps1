@@ -631,7 +631,9 @@ function Start-MbtGuiWork {
     param([Parameter(Mandatory)]$Worker, [Parameter(Mandatory)][scriptblock]$Script, [object[]]$Arguments = @(), [scriptblock]$OnDone, [scriptblock]$OnError)
     $job = [pscustomobject]@{ Script = $Script; Arguments = $Arguments; OnDone = $OnDone; OnError = $OnError; Shell = $null; Handle = $null }
     if ($Worker.Inline) {
-        try { $result = @(& $Script @Arguments) } catch { if ($OnError) { & $OnError $_.Exception.Message }; return }
+        # as in the runspace of the worker: the text of the block is parsed again (it keeps none of the variables of the function that wrote it) and runs under StrictMode Latest
+        $block = [scriptblock]::Create($Script.ToString())
+        try { $result = @(& { Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'; & $block @Arguments }) } catch { if ($OnError) { & $OnError $_.Exception.Message }; return }
         if ($OnDone) { & $OnDone $result }
         return
     }

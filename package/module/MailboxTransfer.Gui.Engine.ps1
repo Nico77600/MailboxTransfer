@@ -321,8 +321,9 @@ function Open-MbtGuiPstSource {
     param([string]$Path, [scriptblock]$OnDone, [scriptblock]$OnError)
     $g = $script:Gui
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { & $OnError 'The file was not found.'; return }
-    $parts = Find-MbtGuiPstParts $Path
-    $bytes = ($parts | Measure-Object -Property Length -Sum).Sum
+    $parts = @(Find-MbtGuiPstParts $Path)
+    $bytes = 0L
+    foreach ($part in $parts) { $bytes += $part.Length }
     $worker = $g.Engine.Worker
     Start-MbtGuiWork -Worker $worker -Arguments @($Path) -OnError $OnError -Script {
         param($path)
@@ -409,7 +410,9 @@ function Open-MbtGuiEmlSource {
             if (-not $dirs.ContainsKey($rel)) { $dirs[$rel] = @{ Count = 0L; Bytes = 0L } }
             $dirs[$rel].Count++; $dirs[$rel].Bytes += $f.Length
         }
-        [pscustomobject]@{ Files = $files.Count; Bytes = [long](($files | Measure-Object -Property Length -Sum).Sum); Dirs = @($dirs.GetEnumerator() | ForEach-Object { @{ Path = [string]$_.Key; Count = [long]$_.Value.Count; Bytes = [long]$_.Value.Bytes } }); Name = (Split-Path $root -Leaf) }
+        $bytes = 0L
+        foreach ($file in $files) { $bytes += $file.Length }
+        [pscustomobject]@{ Files = $files.Count; Bytes = $bytes; Dirs = @($dirs.GetEnumerator() | ForEach-Object { @{ Path = [string]$_.Key; Count = [long]$_.Value.Count; Bytes = [long]$_.Value.Bytes } }); Name = (Split-Path $root -Leaf) }
     } -OnDone {
         param($res)
         $r = @($res)[0]
@@ -451,7 +454,7 @@ function Read-MbtGuiSourceItems {
         Start-MbtGuiWork -Worker $g.Engine.Worker -Arguments @($Node.Tag.StorePath, [long]$Node.Tag.Key, $page) -OnError $OnError -Script {
             param($path, $key, $page)
             $store = Open-MbtExportStore -Path $path -ReadOnly
-            try { $p = $store.GetItems($key, $page, 50, [MailboxTransfer.StoreItemSort]::Received, $true); @{ Items = @($p.Items | ForEach-Object { @{ Key = $_.Key; Subject = $_.Subject; Size = $_.Size; Received = $_.ReceivedUtc } }); Total = $p.Total; PageCount = $p.PageCount } } finally { $store.Dispose() }
+            try { $p = $store.GetItems($key, $page, 50, [MailboxTransfer.StoreItemSort]::ReceivedDate, $true); @{ Items = @($p.Items | ForEach-Object { @{ Key = $_.Key; Subject = $_.Subject; Size = $_.Size; Received = $_.ReceivedUtc } }); Total = $p.Total; PageCount = $p.PageCount } } finally { $store.Dispose() }
         } -OnDone {
             param($res)
             $r = @($res)[0]
@@ -557,7 +560,12 @@ function Start-MbtGuiPstCheckJob {
             $findings = foreach ($i in $run.Items) { @{ Severity = $(if ($i.State -eq 'error') { 'Error' } else { 'Warning' }); Text = $i.Msg; Code = $i.Key; Count = [int]$i.Total; Level = (Get-MbtGuiFindingLevel $i.Key) } }
             $levels = @($findings | ForEach-Object { $_.Level })
             $rec = if ('Salvage' -in $levels) { 'Salvage' } elseif ('Rebuild' -in $levels) { 'Rebuild' } else { 'Recompute' }
-            & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](Get-MbtGuiProp $c 'fileBytes' 0); Elapsed = (Format-MbtGuiDuration (([datetime]::UtcNow - $started).TotalSeconds)); Errors = [int](Get-MbtGuiProp $c 'errors' 0); Warnings = [int](Get-MbtGuiProp $c 'warnings' 0); ExitCode = [int]$res.Exit; Recommended = $rec; Findings = @($findings) })
+            try {
+                & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](Get-MbtGuiProp $c 'fileBytes' 0); Elapsed = (Format-MbtGuiDuration (([datetime]::UtcNow - $started).TotalSeconds)); Errors = [int](Get-MbtGuiProp $c 'errors' 0); Warnings = [int](Get-MbtGuiProp $c 'warnings' 0); ExitCode = [int]$res.Exit; Recommended = $rec; Findings = @($findings) })
+            } catch {
+                Write-MbtGuiFault 'the result of the check of a PST' $_
+                & $OnError $_.Exception.Message
+            }
             return $true
         }.GetNewClosure())
 }

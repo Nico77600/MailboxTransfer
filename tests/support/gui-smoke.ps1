@@ -107,7 +107,7 @@ foreach ($theme in 'Light', 'Dark') {
     Check "$theme window builds" { $script:window = New-MbtGuiWindow -Engine $engine -Theme $theme -WorkFolder $Work -EntryScript $entry -Version '0.3.0'; Measure-Window $script:window; $true }
     $window = $script:window
     $g = $script:Gui
-    foreach ($name in (Get-MbtGuiScenarioName)) {
+    foreach ($name in (@(Get-MbtGuiScenarioName) + @(Get-MbtGuiEdgeScenarioName))) {
         Check "$theme scenario $name" { Reset-State; Set-MbtGuiScenario -Name $name; Measure-Window $window; $null -ne $g.C.Page.Content }
     }
     if ($theme -eq 'Dark') { Check 'dark theme brush' { $window.Resources['MbtBrandText'].Color.ToString() -eq '#FFFD8EA1' } } else { Check 'light theme brush' { $window.Resources['MbtBrandText'].Color.ToString() -eq '#FFB11F4B' } }

@@ -380,8 +380,16 @@ function Step-MbtGuiTick {
         if ($g.CloseWhenStopped -and $g.Job -and $g.Job.Exited) { $g.ForceClose = $true; $g.Window.Close() }
         Step-MbtGuiSignInCode
         Step-MbtGuiPlanJob
-        for ($i = $g.Pollers.Count - 1; $i -ge 0; $i--) { if (& $g.Pollers[$i]) { $g.Pollers.RemoveAt($i) } }
-    } catch { Write-Verbose "tick: $_" ; $g.LastTickError = $_.Exception.Message }
+        # a poller that raises is written down and dropped: kept, it would raise again at every tick
+        for ($i = $g.Pollers.Count - 1; $i -ge 0; $i--) {
+            $finished = $true
+            try { $finished = [bool](& $g.Pollers[$i]) } catch { Write-MbtGuiFault 'a step of the console that waits for a job' $_; $g.LastTickError = $_.Exception.Message }
+            if ($finished) { $g.Pollers.RemoveAt($i) }
+        }
+    } catch {
+        if ($g.LastTickError -ne $_.Exception.Message) { Write-MbtGuiFault 'the tick of the console' $_ }
+        Write-Verbose "tick: $_"; $g.LastTickError = $_.Exception.Message
+    }
 }
 
 #endregion

@@ -21,6 +21,12 @@ function Get-MbtGuiScenarioName {
         'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged')
 }
 
+function Get-MbtGuiEdgeScenarioName {
+    <# The states with exactly one of something (one folder, one message, one finding, one step...) or with none: the lists of the pages are built from loops that run once or not at all. Walked by the tests, not drawn for the documentation. #>
+    @('StartOneJob', 'StartNoJob', 'ExportFromOneLocation', 'ExportFromNoLocation', 'ExportFromOneMessage', 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ImportToOneLocation', 'ImportPlanOneFolder',
+        'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused')
+}
+
 function New-MbtGuiEvt {
     param([string]$Kind, [datetime]$At, [hashtable]$Fields = @{})
     $o = [ordered]@{ v = 1; t = $At.ToString('o'); e = $Kind }
@@ -94,6 +100,31 @@ function New-MbtGuiScenarioRun {
     return $run
 }
 
+function New-MbtGuiScenarioOneRun {
+    <#
+        A run with exactly one step, one folder and one warning: every list of the Run page holds one row. -Outcome: running, or how it ended (complete, refused, decision). -Item: one item of that
+        state (refused, partial, lost) is listed as well.
+    #>
+    param([Parameter(Mandatory)][string]$Task, [ValidateSet('running', 'complete', 'refused', 'decision')][string]$Outcome = 'running', [string]$Item)
+    $run = New-MbtGuiRun -Task $Task -Title "One step $([char]0x00B7) $Task"
+    $t0 = [datetime]::UtcNow.AddMinutes(-20)
+    $ev = { param($k, $min, $f) $null = Add-MbtGuiEvent -Run $run -Event (New-MbtGuiEvt $k $t0.AddMinutes($min) $f) }
+    $id = switch ($Task) { 'import' { 'send' } 'repair' { 'write' } 'copy' { 'pst' } default { 'download' } }
+    & $ev 'plan' 0 @{ steps = @(@{ id = $id; title = 'The only step' }) }
+    & $ev 'step' 1 @{ id = $id; state = 'running'; done = 3; total = 10; bytes = [long](3MB); bytesTotal = [long](10MB) }
+    & $ev 'object' 2 @{ step = $id; key = 'Inbox'; state = 'running'; done = 3; total = 10 }
+    & $ev 'warn' 3 @{ code = 'throttled'; step = $id; key = 'Inbox'; msg = 'Microsoft asked to slow down.' }
+    if ($Item) { & $ev 'item' 4 @{ step = $id; key = 'Signed contract (final)'; state = $Item; msg = $(if ($Item -eq 'refused') { 'refused by the service: ErrorItemTooLarge' } else { 'one attachment dropped' }); detail = 'Inbox' } }
+    if ($Outcome -eq 'decision') { & $ev 'decision' 5 @{ key = '7114'; title = 'Signed contract (final)'; msg = 'Two items in the folder could be this one. We do not guess.'; candidates = @('A') } }
+    if ($Outcome -ne 'running') {
+        $exit = switch ($Outcome) { 'complete' { 0 } 'decision' { 3 } default { 1 } }
+        $counts = switch ($Task) { 'import' { @{ done = 9; failed = 0; refused = 1; unknown = 1; pending = 0; foldersCreated = 1 } } 'repair' { @{ recovered = 9; partial = 1; lost = 0 } } 'copy' { @{ itemsWritten = 9; failed = 0; refused = 1; parts = 1; bytes = [long](1MB) } } default { @{ done = 1; failed = 0; bytes = [long](10MB); parts = 1 } } }
+        & $ev 'result' 10 @{ exit = $exit; complete = ($exit -eq 0 -or $Outcome -eq 'refused'); counts = $counts; next = 'done'; reason = $(if ($Outcome -eq 'refused') { 'refused-items' } else { '' }) }
+        foreach ($step in $run.Steps) { $step.State = 'done' }
+    }
+    return $run
+}
+
 function New-MbtGuiScenarioDone {
     <# A run model at its end: Task, Outcome complete / partial / decision / error. #>
     param([string]$Task, [string]$Outcome)
@@ -149,18 +180,31 @@ function Show-MbtGuiRunScenario {
 }
 
 function Initialize-MbtGuiScenarioExport {
-    <# Signed in, the three locations, some folders and messages ticked. #>
-    param([switch]$Ticks)
+    <#
+        Signed in, the three locations, some folders and messages ticked. -Kinds: only the locations of these kinds ('None': no location). -OneFolder: one folder ticked alone, nothing else.
+        -OneMessage: the one message of a folder, ticked alone.
+    #>
+    param([switch]$Ticks, [string[]]$Kinds, [switch]$OneFolder, [switch]$OneMessage)
     $g = $script:Gui; $s = $g.S
     $s.Task = 'export'; $s.Sel = 'export'; $s.Mailbox = 'adele.vance@contoso.com'; $s.Signed = $true; $s.Account = $s.Mailbox
     $s.Token = [pscustomobject]@{ Access = 'Delegated (you, with your rights)'; CanReadMail = $true; Missing = @() }
-    & $g.Engine.Locations $s.Mailbox '' { param($l) $s.Locations = @($l); foreach ($x in $l) { $s.LocationChecked[$x.Kind] = $true } } { }
+    & $g.Engine.Locations $s.Mailbox '' { param($l) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds }); foreach ($x in $s.Locations) { $s.LocationChecked[$x.Kind] = $true } } { }
     $browser = Get-MbtGuiBrowser 'export'
     & $g.Engine.Roots $s.Locations { param($r) Set-MbtGuiBrowserRoots -Browser $browser -Roots @($r) } { }
     $inbox = $null
     foreach ($r in $browser.Roots) { foreach ($n in $r.Descendants()) { if ($n.Id -eq 'inbox') { $inbox = $n } } }
-    $inbox.IsExpanded = $true; $inbox.IsSelected = $true
-    Open-MbtGuiFolder $inbox
+    if ($inbox) {
+        $inbox.IsExpanded = $true; $inbox.IsSelected = $true
+        Open-MbtGuiFolder $inbox
+    }
+    if ($OneFolder) {
+        foreach ($r in $browser.Roots) { foreach ($n in $r.Descendants()) { if ($n.Id -eq 'p-c') { $n.Check = $true } } }
+    }
+    if ($OneMessage) {
+        # a folder that holds one message: the list has one row, and it is the one that is ticked
+        foreach ($r in $browser.Roots) { foreach ($n in $r.Descendants()) { if ($n.Id -eq 'drafts') { $n.Count = 1; $n.IsSelected = $true; Open-MbtGuiFolder $n } } }
+        $browser.Rows[0].IsChecked = $true
+    }
     if ($Ticks) {
         foreach ($r in $browser.Roots) { foreach ($n in $r.Descendants()) { if ($n.Id -in 'p-c', 'fin-b', 'x-18') { $n.Check = $true } } }
         $rows = @($browser.Rows | Select-Object -First 5)
@@ -176,6 +220,7 @@ function Set-MbtGuiScenario {
     param([Parameter(Mandatory)][string]$Name)
     $g = $script:Gui; $s = $g.S
     $s.WorkFolder = 'D:\MailboxTransfer'
+    $script:FakeJobCount = $null
     switch ($Name) {
         'Start' { $s.Step = 1; Show-MbtGuiPage }
         'StartImport' { $s.Step = 1; $s.Sel = 'import'; Show-MbtGuiPage }
@@ -230,7 +275,24 @@ function Set-MbtGuiScenario {
         'ExportPlanExpert' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage; Expand-MbtGuiScenarioFold 'Expert mode'; $script:Gui.C.PageScroll.ScrollToEnd() }
         'ImportPlanTicked' { Set-MbtGuiScenario 'ImportPlan'; $s.Confirmed = $true; $s.ConfirmKey = (Get-MbtGuiPlanKey); Show-MbtGuiPage }
         'ImportPlanChanged' { Set-MbtGuiScenario 'ImportPlanTicked'; $s.Mailbox = 'Adele.Vance@Contoso.com'; Show-MbtGuiPage; $s.TgtName = 'Imported archive-2019 2026-11-13'; Show-MbtGuiPage }
-        default { throw "Unknown scenario '$Name'. Known: $((Get-MbtGuiScenarioName) -join ', ')." }
+        'StartOneJob' { $script:FakeJobCount = 1; $s.Step = 1; Show-MbtGuiPage }
+        'StartNoJob' { $script:FakeJobCount = 0; $s.Step = 1; Show-MbtGuiPage }
+        'ExportFromOneLocation' { Initialize-MbtGuiScenarioExport -Kinds Primary -OneFolder; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromNoLocation' { Initialize-MbtGuiScenarioExport -Kinds None; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromOneMessage' { Initialize-MbtGuiScenarioExport -OneMessage; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportPlanOneFolder' { Initialize-MbtGuiScenarioExport -OneFolder; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
+        'ExportPlanOneMessage' { Initialize-MbtGuiScenarioExport -OneMessage; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
+        'ImportToOneLocation' { Set-MbtGuiScenario 'ImportFrom'; Initialize-MbtGuiScenarioSignIn -Kinds Primary; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imTo'); $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiPage }
+        'ImportPlanOneFolder' { Set-MbtGuiScenario 'ImportTo'; Set-MbtGuiScenarioTicks 'import' 'o-p1'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imPlan'); Show-MbtGuiPage }
+        'RepairFromOneFinding' { $script:FakePstState = 'one'; $s.Task = 'repair'; $s.Sel = 'repair'; $s.Step = (Get-MbtGuiScenarioStep 'repair' 'rpFrom'); $s.RpPath = 'D:\PST\contoso-archive-2019.pst'; Start-MbtGuiPstCheck; $script:FakePstState = 'damaged' }
+        'CopyPlanOneFolder' { Set-MbtGuiScenario 'Open'; Set-MbtGuiScenarioTicks 'open' 'o-p1'; $s.Task = 'copy'; $s.Sel = 'copy'; $s.Step = (Get-MbtGuiScenarioStep 'copy' 'cpPlan'); Initialize-MbtGuiCopy; $s.OutFolder = 'D:\PST'; $s.OutName = 'archive-2019-copy.pst'; Show-MbtGuiPage }
+        'RunOneStep' { Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioOneRun -Task export) }
+        'DoneExportOneStep' { Initialize-MbtGuiScenarioExport -OneFolder; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioOneRun -Task export -Outcome complete) }
+        'DoneImportOneRefused' { $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; $s.TgtLoc = 'Archive'; $s.TgtMode = 'new'; $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioOneRun -Task import -Outcome refused -Item refused) }
+        'DoneImportOneDecision' { $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; $s.TgtLoc = 'Archive'; $s.TgtMode = 'new'; $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioOneRun -Task import -Outcome decision) }
+        'DoneRepairOneIncomplete' { $s.RpPath = 'D:\PST\contoso-archive-2019.pst'; $s.RpDest = 'D:\PST\contoso-archive-2019.repaired.pst'; Show-MbtGuiRunScenario 'repair' (New-MbtGuiScenarioOneRun -Task repair -Outcome complete -Item partial) }
+        'DoneCopyOneRefused' { $s.OpPath = 'D:\PST\archive-2019.pst'; $s.OutFolder = 'D:\PST'; $s.OutName = 'archive-2019-copy.pst'; Show-MbtGuiRunScenario 'copy' (New-MbtGuiScenarioOneRun -Task copy -Outcome refused -Item refused) }
+        default { throw "Unknown scenario '$Name'. Known: $((Get-MbtGuiScenarioName) -join ', '), $((Get-MbtGuiEdgeScenarioName) -join ', ')." }
     }
     if ($Name -in 'ImportFrom') { Open-MbtGuiFirstFolder 'import' }
     if ($Name -in 'ImportTo', 'ImportPlan') { }
@@ -281,9 +343,11 @@ function Open-MbtGuiFirstFolder {
 }
 
 function Initialize-MbtGuiScenarioSignIn {
+    <# Signed in, the locations (-Kinds: only these kinds), the quota of the archive. #>
+    param([string[]]$Kinds)
     $g = $script:Gui; $s = $g.S
     $s.Mailbox = 'adele.vance@contoso.com'; $s.Signed = $true; $s.Account = $s.Mailbox
     $s.Token = [pscustomobject]@{ Access = 'Delegated (you, with your rights)'; CanReadMail = $true; Missing = @() }
-    & $g.Engine.Locations $s.Mailbox '' { param($l) $s.Locations = @($l | ForEach-Object { if ($_.Kind -eq 'Archive') { $_ | Add-Member Quota ([long](110GB)) -PassThru | Add-Member Used ([long](35.3GB)) -PassThru } else { $_ } }) } { }
+    & $g.Engine.Locations $s.Mailbox '' { param($l) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds } | ForEach-Object { if ($_.Kind -eq 'Archive') { $_ | Add-Member Quota ([long](110GB)) -PassThru | Add-Member Used ([long](35.3GB)) -PassThru } else { $_ } }) } { }
 }
 

@@ -462,3 +462,53 @@ Describe 'Results of the engine handed to the pages' {
         { Write-MbtGuiFault 'OnDone' $record } | Should -Not -Throw
     }
 }
+
+Describe 'Rows built in a loop' {
+    BeforeAll {
+        # The rows of a table are written "foreach (...) { , @(cell, cell, cell) }". A loop that runs once gives its one row as the three cells, not as a list of one row, unless the
+        # assignment wraps it: $rows = @(foreach ...). This finds every assignment of the result of a loop (or of ForEach-Object, or of a script block) that emits a row with the comma
+        # and does not wrap it.
+        function Find-UnwrappedRow {
+            param([string]$Path, [string]$Code)
+            $tokens = $null; $errors = $null
+            $ast = if ($Code) { [Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tokens, [ref]$errors) } else { [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors) }
+            $loops = @('ForEachStatementAst', 'ForStatementAst', 'WhileStatementAst', 'DoWhileStatementAst', 'DoUntilStatementAst')
+            foreach ($assign in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Operator -eq 'Equals' }, $true)) {
+                $rhs = $assign.Right
+                foreach ($comma in $rhs.FindAll({ param($n) $n -is [Management.Automation.Language.ArrayLiteralAst] -and $n.Elements.Count -eq 1 -and $n.Extent.Text.StartsWith(',') }, $true)) {
+                    # emitted: the comma is the expression of a statement (alone, or in parentheses)
+                    $at = $comma.Parent
+                    if ($at -is [Management.Automation.Language.ParenExpressionAst]) { $at = $at.Parent }
+                    if ($at -isnot [Management.Automation.Language.CommandExpressionAst]) { continue }
+                    # and the statement is in a loop, a ForEach-Object block or a script block that the right side runs, with no @( ) around it
+                    $inside = $false; $wrapped = $false; $up = $comma.Parent
+                    while ($up -and -not [object]::ReferenceEquals($up, $rhs.Parent)) {
+                        if ($up.GetType().Name -in $loops -or $up -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $inside = $true }
+                        if ($up -is [Management.Automation.Language.ArrayExpressionAst]) { $wrapped = $true }
+                        $up = $up.Parent
+                    }
+                    if ($inside -and -not $wrapped) { "$(if ($Path) { Split-Path $Path -Leaf }):$($assign.Extent.StartLineNumber): $($assign.Left.Extent.Text)"; break }
+                }
+            }
+        }
+    }
+    It 'finds the assignments whose single row would be read as its cells, and leaves the wrapped ones' {
+        $code = @'
+$a = foreach ($x in 1) { , @($x, 2) }
+$b = @(foreach ($x in 1) { , @($x, 2) })
+$c = $list | ForEach-Object { , @($_, 2) }
+$d = for ($i = 0; $i -lt 1; $i++) { , @($i, 2) }
+$e = foreach ($x in 1) { if ($x) { , @(1, 2) } }
+$f = & { foreach ($x in 1) { (, @(1, 2)) } }
+$g = , @(1, 2)
+$h = foreach ($x in 1) { @(1, 2) }
+$i = @($list | ForEach-Object { , @($_, 2) })
+'@
+        $found = @(Find-UnwrappedRow -Code $code)
+        @($found | ForEach-Object { ($_ -split ': ')[1] }) | Should -Be @('$a', '$c', '$d', '$e', '$f')
+    }
+    It 'no table of the console is built from a loop that gives a bare row: every list of rows is $rows = @(...)' {
+        $found = foreach ($file in Get-ChildItem -LiteralPath (Join-Path $script:Package 'module') -Filter '*.ps1') { Find-UnwrappedRow -Path $file.FullName }
+        @($found) | Should -BeNullOrEmpty -Because 'a loop that runs once would hand New-GuiTable its one row as three cells'
+    }
+}

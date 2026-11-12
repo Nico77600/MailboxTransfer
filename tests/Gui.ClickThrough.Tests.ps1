@@ -40,6 +40,13 @@ Describe 'Console click-through (headless WPF, fake engine)' {
         $dialogs = ($script:Runs | ForEach-Object { $_.Result.Dialogs } | Measure-Object -Sum).Sum
         $dialogs | Should -BeGreaterThan 10 -Because 'the answers of the dialogs are used too'
     }
+    It 'walked the states with exactly one of something, or none (one folder ticked alone, one message, one location, one finding, one step, one refused item, one incomplete message, one job)' {
+        $edge = @($script:Runs | ForEach-Object { @($_.Result.Edge) } | Where-Object { $_ } | Sort-Object -Unique)
+        $walked = @($script:Runs | ForEach-Object { @($_.Result.Walked) } | Where-Object { $_ })
+        $edge.Count | Should -BeGreaterThan 12
+        foreach ($name in $edge) { $walked | Should -Contain $name }
+        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob') { $edge | Should -Contain $name }
+    }
     It 'no handler raised an exception, and the tick of the console raised nothing' {
         $errors = @($script:Runs | ForEach-Object { @($_.Result.Errors) } | Where-Object { $_ })
         $errors | Should -BeNullOrEmpty
