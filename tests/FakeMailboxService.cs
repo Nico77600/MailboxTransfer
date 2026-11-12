@@ -99,8 +99,8 @@ namespace MailboxTransfer.Tests
     public sealed class FakeMailboxService : HttpMessageHandler
     {
         readonly object _lock = new object();
-        readonly Dictionary<string, List<FakeFolder>> _folders = new Dictionary<string, List<FakeFolder>>();
-        readonly Dictionary<string, List<FakeItem>> _items = new Dictionary<string, List<FakeItem>>();
+        readonly Dictionary<string, List<FakeFolder>> _folders = new Dictionary<string, List<FakeFolder>>(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<string, List<FakeItem>> _items = new Dictionary<string, List<FakeItem>>(StringComparer.OrdinalIgnoreCase);
         int _seq, _inFlight;
         int _throttleLeft;
         double _throttleRetryAfter;
@@ -259,7 +259,7 @@ namespace MailboxTransfer.Tests
 
         string MailboxOf(string url)
         {
-            int i = url.IndexOf("MBX:", StringComparison.Ordinal);
+            int i = url.IndexOf("MBX:", StringComparison.OrdinalIgnoreCase);
             if (i < 0) return null;
             int j = i;
             while (j < url.Length && url[j] != '/' && url[j] != '\'' && url[j] != '?') j++;

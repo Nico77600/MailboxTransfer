@@ -312,4 +312,23 @@ Describe 'Entry script against the fake service: the folders of every mode' {
         (Get-Content (Join-Path $dir 'status.json') -Raw | ConvertFrom-Json).state | Should -Be 'stopped'
         $svc.ItemsOf($script:Dst).Count | Should -Be 0
     }
+    It 'the command line values are accepted in lower case: -Mode exporteml -Folder inbox/PROJECTS, -Mode exportpst, -Mode importpst -RepairLevel REBUILD -IncludeFolder' {
+        $svc = New-Service
+        $eml = Join-Path $script:Tmp 'case-eml'
+        $r = Invoke-InProcess $svc @{ Mode = 'exporteml'; StorePath = $script:Store; EmlPath = $eml; Folder = 'inbox/PROJECTS' }
+        $r.Exit | Should -Be 0
+        @(Get-ChildItem -LiteralPath $eml -Filter *.eml -Recurse).Count | Should -Be 4
+        (Get-ChildItem -LiteralPath $eml -Filter *.eml -Recurse).Directory.Name | Select-Object -Unique | Should -Be 'Projects'
+        $pst = Join-Path $script:Tmp 'case-out\mail.pst'
+        (Invoke-InProcess $svc @{ Mode = 'exportpst'; StorePath = $script:Store; OutputPst = $pst; Mailbox = 'primary' }).Exit | Should -Be 0
+        Test-Path -LiteralPath $pst | Should -BeTrue
+        $imp = Invoke-InProcess $svc @{ Mode = 'importpst'; PstPath = $pst; PrimaryMailboxId = $script:Dst.ToUpperInvariant(); TargetRoot = 'CaseImp'; TempPath = (Join-Path $script:Tmp 'case-work'); Concurrency = 2
+            RepairLevel = 'REBUILD'; Repair = $true; IncludeFolder = 'PRIMARY/INBOX/projects' }
+        $imp.Exit | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 4 -Because 'only the folder that was chosen, in whatever case it was typed'
+        $again = Invoke-InProcess $svc @{ Mode = 'ImportPst'; PstPath = $pst; PrimaryMailboxId = $script:Dst; TargetRoot = 'caseimp'; TempPath = (Join-Path $script:Tmp 'case-work'); Concurrency = 2
+            IncludeFolder = 'primary/inbox/projects' }
+        $again.Exit | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 4 -Because 'the same job in another case sends nothing again'
+    }
 }

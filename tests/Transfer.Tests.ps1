@@ -1878,3 +1878,142 @@ Describe 'Auto-expanding archive: Invoke-MailboxTransfer.ps1' {
         $status | Should -Match "AuxArchive\s+$([regex]::Escape($script:Aux))"
     }
 }
+
+Describe 'Names and ids are not case sensitive: store export and import, entry script' {
+    BeforeAll {
+        $script:CaseTenant = $script:Tenant
+        $script:CaseSrc = "MBX:aaaaaaaa-1111-bbbb-cccc-dddddddddddd@$($script:CaseTenant)"
+        $script:CaseDst = "MBX:eeeeeeee-2222-ffff-aaaa-bbbbbbbbbbbb@$($script:CaseTenant)"
+        function New-CaseService {
+            $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+            $null = $svc.AddMailbox($script:CaseSrc)
+            $null = $svc.AddFolder($script:CaseSrc, 'F-INBOX', 'Inbox')
+            $null = $svc.AddFolder($script:CaseSrc, 'F-PROJ', 'Projects', 'F-INBOX')
+            foreach ($i in 1..3) { $null = $svc.AddItem($script:CaseSrc, 'F-INBOX', "I$i", (New-Message "Inbox $i"), "ck-I$i") }
+            foreach ($i in 1..2) { $null = $svc.AddItem($script:CaseSrc, 'F-PROJ', "P$i", (New-Message "Project $i"), "ck-P$i") }
+            $null = $svc.AddMailbox($script:CaseDst)
+            $null = $svc.AddFolder($script:CaseDst, 'D-INBOX', 'Inbox')
+            return $svc
+        }
+        function Invoke-Entry {
+            param([Parameter(Mandatory)]$Service, [hashtable]$Parameters = @{})
+            $global:MbtEntryClient = New-FakeClient -Service $Service
+            $global:LASTEXITCODE = $null
+            $text = & (Join-Path $script:Root 'Invoke-MailboxTransfer.ps1') @Parameters *>&1 | Out-String
+            $global:MbtEntryExit = $LASTEXITCODE
+            return $text
+        }
+    }
+    BeforeEach {
+        Mock Connect-MbtGraph {
+            $session = Set-MbtSession -Graph $global:MbtEntryClient
+            $session.Token = [pscustomobject]@{
+                Account = 'adele.vance@contoso.com'; Name = 'Adele Vance'; TenantId = '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; AppId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
+                Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            }
+            return $session
+        }
+    }
+    AfterAll { Remove-Variable -Name MbtEntryClient, MbtEntryExit -Scope Global -ErrorAction SilentlyContinue }
+
+    It 'an import job name in another case resumes the same job: same job id, nothing sent again' {
+        $svc = New-SourceService
+        Add-Targets $svc
+        $store = New-ExportedStore $svc 'case-job'
+        try {
+            $first = Invoke-ImportJob -Service $svc -Store $store -Name 'Migr1'
+            $first.Result.Done | Should -Be 10
+            $again = Invoke-ImportJob -Service $svc -Store $store -Name 'migr1'
+            $again.Job.Error | Should -BeNullOrEmpty
+            $again.Result.JobId | Should -Be $first.Result.JobId
+            $again.Result.Done | Should -Be 0
+            $again.Result.JobTotal | Should -Be 10
+            $svc.RequestsOf('/importItem?') | Should -Be 10
+            @($store.GetImportJobs()).Count | Should -Be 1
+            $store.FindImportJob('MIGR1').JobId | Should -Be $first.Result.JobId
+            $store.FindImportJob('other') | Should -BeNullOrEmpty
+        } finally { $store.Dispose() }
+    }
+    It 'a target mailbox id in another case is the same mailbox: the job resumes, nothing says it targets another mailbox' {
+        $svc = New-CaseService
+        $store = New-TestStoreAt 'case-target'
+        try {
+            $null = Invoke-ExportJob -Service $svc -Store $store -Mailbox $script:CaseSrc
+            $first = Invoke-ImportJob -Service $svc -Store $store -Name 'cj' -Options { param($o) $o.SourceMailboxId = $script:CaseSrc; $o.TargetMailboxId = $script:CaseDst }
+            $first.Result.Done | Should -Be 5
+            $again = Invoke-ImportJob -Service $svc -Store $store -Name 'cj' -Options { param($o) $o.SourceMailboxId = $script:CaseSrc.ToUpperInvariant(); $o.TargetMailboxId = $script:CaseDst.ToUpperInvariant() }
+            $again.Job.Error | Should -BeNullOrEmpty
+            $again.Result.JobId | Should -Be $first.Result.JobId
+            $again.Result.Done | Should -Be 0
+            $svc.RequestsOf('/importItem?') | Should -Be 5
+        } finally { $store.Dispose() }
+    }
+    It 'an export with the mailbox id in another case finds what an earlier run stored: one mailbox row, nothing exported again' {
+        $svc = New-CaseService
+        $store = New-TestStoreAt 'case-export'
+        try {
+            $first = Invoke-ExportJob -Service $svc -Store $store -Mailbox $script:CaseSrc
+            $first.Result.Exported | Should -Be 5
+            $again = Invoke-ExportJob -Service $svc -Store $store -Mailbox $script:CaseSrc.ToUpperInvariant()
+            $again.Job.Error | Should -BeNullOrEmpty
+            $again.Result.Exported | Should -Be 0
+            @($store.GetMailboxes()).Count | Should -Be 1
+            $mixed = 'mbx:' + $script:CaseSrc.Substring(4).ToUpperInvariant()
+            $store.FindFolderKey($mixed, 'F-INBOX') | Should -Not -BeNullOrEmpty
+            @($store.GetItemStats($mixed) | Where-Object State -EQ 'Exported')[0].Count | Should -Be 5
+        } finally { $store.Dispose() }
+    }
+    It 'the route of a folder is found whatever the case of the mailbox, and only the folder id is exact' {
+        $store = New-TestStoreAt 'case-route'
+        try {
+            $job = $store.CreateImportJob('r', $script:CaseDst)
+            $store.SaveImportRoute($job, $script:CaseDst, 'D-INBOX', $script:CaseSrc, 'X-Inbox')
+            $store.SaveImportRoute($job, $script:CaseDst.ToUpperInvariant(), 'D-INBOX', $script:CaseSrc, 'X-Inbox2')
+            $routes = $store.GetImportRoutes($job)
+            $routes.Count | Should -Be 1
+            $routes[($script:CaseDst.ToUpperInvariant() + '|D-INBOX')].Value | Should -Be 'X-Inbox2'
+            $store.SaveImportRoute($job, $script:CaseDst, 'd-inbox', $script:CaseSrc, 'Other')
+            $store.GetImportRoutes($job).Count | Should -Be 2 -Because 'a folder id is a machine identifier'
+        } finally { $store.Dispose() }
+    }
+    It 'the command line values are accepted in any case: -Mode export -Mailbox archive with the mailbox id in upper case, again with another spelling' {
+        $svc = New-CaseService
+        $store = Join-Path $script:Tmp 'case-entry'
+        $text = Invoke-Entry $svc @{ Mode = 'export'; Mailbox = 'archive'; ArchiveMailboxId = $script:CaseSrc.ToUpperInvariant(); StorePath = $store; TempPath = (Join-Path $script:Tmp 'case-tmp1') }
+        $text | Should -Match 'export finished: 5 items exported'
+        $again = Invoke-Entry $svc @{ Mode = 'EXPORT'; Mailbox = 'ARCHIVE'; ArchiveMailboxId = ('mbx:' + $script:CaseSrc.Substring(4)); StorePath = $store; TempPath = (Join-Path $script:Tmp 'case-tmp1'); SkipInventory = $true }
+        $again | Should -Match 'export finished: 0 items exported'
+        $s = Open-MbtExportStore -Path $store -ReadOnly
+        try {
+            @($s.GetMailboxes()).Count | Should -Be 1
+            $s.GetMailboxes()[0].Kind | Should -Be 'Archive'
+            $s.GetMailboxes()[0].Id | Should -BeExactly $script:CaseSrc -Because 'the id is stored in its canonical lower-case form'
+        } finally { $s.Dispose() }
+    }
+    It 'a mapping file and the folder of an import find the folders whatever the case of what the operator typed' {
+        $svc = New-CaseService
+        $store = Join-Path $script:Tmp 'case-entry3'
+        $null = Invoke-Entry $svc @{ Mode = 'Export'; Mailbox = 'Archive'; ArchiveMailboxId = $script:CaseSrc; StorePath = $store; TempPath = (Join-Path $script:Tmp 'case-tmp3') }
+        $map = Join-Path $script:Tmp 'case-map.psd1'
+        Set-Content -LiteralPath $map -Value "@{ 'INBOX/projects' = 'ARCHIVE/work' }"
+        $plan = Invoke-Entry $svc @{ Mode = 'Import'; StorePath = $store; Mailbox = 'Archive'; ArchiveMailboxId = $script:CaseDst; TargetRoot = 'R'; MappingFile = $map; WhatIf = $true }
+        $plan | Should -Match 'would create folder: R/ARCHIVE/work'
+        $plan | Should -Not -Match 'would create folder: R/Inbox/Projects'
+        $one = Invoke-Entry $svc @{ Mode = 'Import'; StorePath = $store; Mailbox = 'Archive'; ArchiveMailboxId = $script:CaseDst; TargetRoot = 'R'; Folder = 'inbox/PROJECTS'; WhatIf = $true }
+        $one | Should -Match 'plan: 2 items'
+        $one | Should -Match 'would create folder: R/Inbox/Projects'
+    }
+    It 'the folder to export, the import job and the mailbox kind of an import run in another case through the entry script' {
+        $svc = New-CaseService
+        $store = Join-Path $script:Tmp 'case-entry2'
+        $null = Invoke-Entry $svc @{ Mode = 'Export'; Mailbox = 'archive'; ArchiveMailboxId = $script:CaseSrc; StorePath = $store; TempPath = (Join-Path $script:Tmp 'case-tmp2'); Folder = 'inbox/PROJECTS' }
+        $s = Open-MbtExportStore -Path $store -ReadOnly
+        try { ($s.GetItemStats($script:CaseSrc) | Where-Object State -EQ 'Exported').Count | Should -Be 2 } finally { $s.Dispose() }
+        $null = Invoke-Entry $svc @{ Mode = 'Export'; Mailbox = 'archive'; ArchiveMailboxId = $script:CaseSrc; StorePath = $store; TempPath = (Join-Path $script:Tmp 'case-tmp2') }
+        $a = Invoke-Entry $svc @{ Mode = 'import'; StorePath = $store; Mailbox = 'archive'; ArchiveMailboxId = $script:CaseDst; TargetRoot = 'R'; JobName = 'Migr1'; Concurrency = 1; SourceMailbox = 'archive' }
+        $a | Should -Match 'import finished: 5 items imported'
+        $b = Invoke-Entry $svc @{ Mode = 'import'; StorePath = $store; Mailbox = 'archive'; ArchiveMailboxId = $script:CaseDst.ToUpperInvariant(); TargetRoot = 'r'; JobName = 'migr1'; Concurrency = 1; SourceMailbox = 'ARCHIVE' }
+        $b | Should -Match 'import finished: 0 items imported'
+        $svc.ItemsOf($script:CaseDst).Count | Should -Be 5
+    }
+}

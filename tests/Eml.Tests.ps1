@@ -552,6 +552,24 @@ Describe 'Export from a live mailbox (Mail API $value)' {
         $loc = [MailboxTransfer.MailboxBrowser]::Location('AuxArchive', "MBX:bbbbbbbb-0000-0000-0000-00000000000b@$($script:Tenant)", 'test')
         { [MailboxTransfer.LiveEmlSource]::new($browser, $loc) } | Should -Throw '*auxiliary archive*'
     }
+    It 'resumes whatever the case of the mailbox id the earlier run recorded: nothing is read again' {
+        $w = New-World
+        $dir = Join-Path $script:Tmp 'live-case'
+        (Invoke-Export (New-Source $w) $dir).Exported | Should -Be 5
+        $manifest = Join-Path $dir 'manifest.jsonl'
+        $lines = [IO.File]::ReadAllLines($manifest)
+        $lines.Count | Should -BeGreaterThan 0
+        [IO.File]::WriteAllLines($manifest, [string[]]@($lines | ForEach-Object { $_.Replace($script:Src, $script:Src.Replace('MBX:', 'mbx:')) }))
+        ([IO.File]::ReadAllText($manifest)) | Should -Match 'mbx:11111111'
+        $w.Fake.Log.Clear()
+        $again = Invoke-Export (New-Source $w) $dir
+        $again.Exported | Should -Be 0
+        $again.Resumed | Should -Be 5
+        @($w.Fake.Log | Where-Object { $_ -like '*$value' }).Count | Should -Be 0
+        # a message id is a machine identifier: the same id in another case is another message
+        [IO.File]::WriteAllLines($manifest, [string[]]@([IO.File]::ReadAllLines($manifest) | ForEach-Object { $_.Replace('"Id":"M1"', '"Id":"m1"') }))
+        (Invoke-Export (New-Source $w) $dir).Exported | Should -Be 1
+    }
     It 'limits the export to a folder and its subfolders' {
         $w = New-World
         $dir = Join-Path $script:Tmp 'live5'
@@ -587,6 +605,28 @@ Describe 'Export from a PST (any location)' {
         $cmp = [MailboxTransfer.EmlCompare]::Compare((B $script:Rich), [IO.File]::ReadAllBytes($rich.FullName))
         $cmp.ContentEqual | Should -BeTrue -Because ($cmp.Differences | Out-String)
         ($cmp.Items | ? { $_.Kind -eq 'Header' -and $_.Name -eq 'Subject' }).Result | Should -Be 'Same'
+    }
+}
+
+Describe 'Export from a PST: the file name of the source is not case sensitive' {
+    It 'a second run that names the file in another case resumes: nothing is exported again' {
+        $pst = Join-Path $script:Tmp 'case.pst'
+        $w = [MailboxTransfer.PstSplitWriter]::new($pst, 'Test archive', [long]1GB)
+        $null = $w.AddMessage('Inbox', 'IPF.Note', [MailboxTransfer.MimeToMapi]::Build((Parse "From: a@x.fr`nTo: b@x.fr`nSubject: One`nDate: Mon, 18 Mar 2024 10:00:00 +0000`n`nBody`n")))
+        $null = $w.AddMessage('Inbox', 'IPF.Note', [MailboxTransfer.MimeToMapi]::Build((Parse "From: a@x.fr`nTo: b@x.fr`nSubject: Two`nDate: Tue, 19 Mar 2024 10:00:00 +0000`n`nBody`n")))
+        $w.Close()
+        $dir = Join-Path $script:Tmp 'pst-case'
+        $reader = [MailboxTransfer.PstReader]::Open($pst)
+        try {
+            (Invoke-Export ([MailboxTransfer.PstEmlSource]::new($reader, 'Archive.pst')) $dir).Exported | Should -Be 2
+            $again = Invoke-Export ([MailboxTransfer.PstEmlSource]::new($reader, 'archive.pst')) $dir
+            $again.Exported | Should -Be 0
+            $again.Resumed | Should -Be 2
+            $upper = Invoke-Export ([MailboxTransfer.PstEmlSource]::new($reader, 'ARCHIVE.PST')) $dir
+            $upper.Exported | Should -Be 0
+            # another file is another source
+            (Invoke-Export ([MailboxTransfer.PstEmlSource]::new($reader, 'other.pst')) $dir).Exported | Should -Be 2
+        } finally { $reader.Dispose() }
     }
 }
 
