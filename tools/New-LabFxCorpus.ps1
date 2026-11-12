@@ -454,7 +454,7 @@ if ($AccessToken) {
     $script:Auth.DeviceCode = $useDeviceCode
     $script:Auth.DeviceCodeFile = $DeviceCodeFile
     if (Test-Path -LiteralPath $DeviceCodeFile) { Remove-Item -LiteralPath $DeviceCodeFile -Force -ErrorAction SilentlyContinue }
-    Write-Fxc INFO ("signing in as {0} ({1})" -f $UserPrincipalName, $(if ($useDeviceCode) { "device code: read the line 'DEVICE CODE:' (also in $DeviceCodeFile)" } else { 'browser or cache' }))
+    Write-Fxc INFO ("signing in as {0} ({1})" -f $UserPrincipalName, $(if ($useDeviceCode) { "device code: read the line 'DEVICE CODE:' (also in $DeviceCodeFile)" } else { 'Windows sign-in window or cache' }))
     [void]$script:Auth.SignIn()
     Write-Fxc OK "signed in as $($script:Auth.Account)"
 }

@@ -126,6 +126,49 @@ Initialize-MbtAuthEngine
     It 'the window the sign-in opens over is found without throwing (console window, else foreground window)' {
         { [MailboxTransfer.WindowsBroker]::ConsoleOrForegroundWindow() } | Should -Not -Throw
     }
+    It 'under a terminal that hosts the console in a hidden pseudo window (Windows Terminal), the sign-in opens over the window that owns it, not over the pseudo window' {
+        $pseudo = [IntPtr]100; $terminal = [IntPtr]200; $foreground = [IntPtr]300; $desktop = [IntPtr]400
+        $usable = [Func[IntPtr, bool]] { param($h) $h -ne [IntPtr]100 }
+        [MailboxTransfer.WindowsBroker]::ChooseParentWindow($pseudo, $terminal, $foreground, $desktop, $usable) | Should -Be $terminal
+    }
+    It 'in a classic console window (the console is its own owner) the sign-in opens over that window' {
+        $console = [IntPtr]100; $foreground = [IntPtr]300; $desktop = [IntPtr]400
+        [MailboxTransfer.WindowsBroker]::ChooseParentWindow($console, $console, $foreground, $desktop, [Func[IntPtr, bool]] { param($h) $true }) | Should -Be $console
+    }
+    It 'when no console window can be seen (hidden, minimized, no console) the foreground window is used, then the desktop' {
+        $console = [IntPtr]100; $terminal = [IntPtr]200; $foreground = [IntPtr]300; $desktop = [IntPtr]400
+        [MailboxTransfer.WindowsBroker]::ChooseParentWindow($console, $terminal, $foreground, $desktop, [Func[IntPtr, bool]] { param($h) $h -eq [IntPtr]300 }) | Should -Be $foreground
+        [MailboxTransfer.WindowsBroker]::ChooseParentWindow($console, $terminal, $foreground, $desktop, [Func[IntPtr, bool]] { param($h) $false }) | Should -Be $desktop
+        [MailboxTransfer.WindowsBroker]::ChooseParentWindow([IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero, $desktop, [Func[IntPtr, bool]] { param($h) $true }) | Should -Be $desktop
+    }
+    It 'a window that is not there is not usable, and is described without throwing' {
+        [MailboxTransfer.WindowsBroker]::IsUsableWindow([IntPtr]::Zero) | Should -BeFalse
+        [MailboxTransfer.WindowsBroker]::IsUsableWindow([IntPtr]0x7FFFFFF0) | Should -BeFalse
+        [MailboxTransfer.WindowsBroker]::Describe([IntPtr]::Zero) | Should -Be 'no window'
+        [MailboxTransfer.WindowsBroker]::Describe([IntPtr]0x7FFFFFF0) | Should -Match '^window 0x'
+    }
+    It 'the waits are bounded: a silent attempt of the broker 30 seconds, the window 5 minutes' {
+        [MailboxTransfer.GraphAuth]::SilentTimeout | Should -Be ([TimeSpan]::FromSeconds(30))
+        [MailboxTransfer.GraphAuth]::WindowTimeout | Should -Be ([TimeSpan]::FromMinutes(5))
+    }
+    It 'a silent call writes nothing to the sign-in log, and the log is only a callback of the caller' {
+        $lines = [Collections.Generic.List[string]]::new()
+        $a = [MailboxTransfer.GraphAuth]::new($script:Client, 'organizations', $script:Scopes, $null, 'http://localhost', $false, $null, $null, 'no broker here')
+        $a.Log = [Action[string]] { param($l) $lines.Add($l) }
+        { $a.GetToken('adele.vance@contoso.com', $false) } | Should -Throw '*Not signed in*'
+        $lines.Count | Should -Be 0
+    }
+    It 'Connect-MbtGraph takes a cancellation token and the sign-in log goes to Write-MbtLog' {
+        (Get-Command Connect-MbtGraph).Parameters['CancellationToken'].ParameterType | Should -Be ([Threading.CancellationToken])
+        $log = Join-Path $TestDrive 'logs'
+        $null = Start-MbtLog -Directory $log
+        $cfg = Import-MbtConfiguration
+        $a = & (Get-Module MailboxTransfer) { param($c, $client, $scopes, $cache) New-MbtAuth -TenantId 'organizations' -ClientId $client -Scopes $scopes -CacheFile $cache -Configuration $c -DeviceCode } $cfg $script:Client $script:Scopes (Join-Path $TestDrive 'log.cache')
+        $a.Log | Should -Not -BeNullOrEmpty
+        $a.Log.Invoke('sign-in: a line')
+        Get-Content -LiteralPath (Get-MbtLogPath) -Raw | Should -Match 'sign-in: a line'
+        Stop-MbtLog
+    }
     It 'the entry script and Connect-MbtGraph keep -DeviceCode and take the window handle' {
         $entry = (Get-Command (Join-Path $script:Root 'Invoke-MailboxTransfer.ps1')).Parameters
         $entry['DeviceCode'].ParameterType | Should -Be ([switch])

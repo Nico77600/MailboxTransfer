@@ -666,7 +666,7 @@ function Connect-AppOnlyForTransfer {
 function Connect-ForTransfer {
     if ($useCertificate) { return (Connect-AppOnlyForTransfer) }
     Assert-MbtSignInSettings -TenantId $TenantId -ClientId $ClientId
-    Write-MbtItem INFO ('signing in as {0} ({1}); a line "DEVICE CODE: ..." follows only when no valid token is cached' -f $UserPrincipalName, $(if ($DeviceCode) { 'device code' } else { 'browser' }))
+    Write-MbtItem INFO ('signing in as {0} ({1}); nothing is asked when a valid sign-in is cached' -f $UserPrincipalName, $(if ($DeviceCode) { 'device code: a line "DEVICE CODE: ..." follows' } else { 'Windows sign-in window' }))
     try {
         $session = Connect-MbtGraph -TenantId $TenantId -ClientId $ClientId -UserPrincipalName $UserPrincipalName -DeviceCode:$DeviceCode -DeviceCodeFile (Join-Path $outRoot 'device-code.txt') -NoPrompt:$NoPrompt -Configuration $config
     } catch {

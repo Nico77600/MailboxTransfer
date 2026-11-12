@@ -162,6 +162,15 @@ Describe 'Configuration: what the console shows on the Setup page' {
         $m.Text | Should -Match ([regex]::Escape("ms-appx-web://microsoft.aad.brokerplugin/$client"))
         $m.Text | Should -Match 'use a code instead'
     }
+    It 'a sign-in window that was closed, or that did not finish in time, is said in plain words with the way on' {
+        $closed = ConvertTo-MbtGuiMessage 'The sign-in window was closed before the sign-in was finished. Sign in again, or sign in with a code.'
+        $closed.Text | Should -Match 'closed before'
+        $closed.Text | Should -Match 'use a code instead'
+        $late = ConvertTo-MbtGuiMessage 'The sign-in window did not finish within 5 minutes. Sign in again, or sign in with a code.'
+        $late.Text | Should -Match 'did not finish in time'
+        $late.Text | Should -Match 'use a code instead'
+        $late.Tech | Should -Match '5 minutes'
+    }
     It 'a configuration file that cannot be read is a red light, not a crash' {
         $file = Join-Path $TestDrive 'setup-bad.psd1'
         Set-Content -LiteralPath $file -Encoding UTF8 -Value "@{ Tenant = @{ Nonsense = 1 } }"

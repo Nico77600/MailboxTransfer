@@ -120,9 +120,12 @@ function New-MbtGuiRealEngine {
     # -App: @{ Tenant; ClientId; Thumbprint } signs in as the application with its certificate (no window, no user: $Mailbox is then the mailbox it works on)
     # -ParentWindow: the handle of the console window, which the Windows sign-in window opens over
     $e.WindowSignIn = { Get-MbtWindowsSignIn }
-    $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow)
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App, [long]$ParentWindow) -OnDone $OnDone -OnError $OnError -Script {
-            param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app, $parent)
+    # -LogFolder: where the log of the sign-in is written (each stage of it); -Cancel: a CancellationTokenSource that ends the wait for the window or the code
+    $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow, $LogFolder, $Cancel)
+        $token = if ($Cancel) { $Cancel.Token } else { [Threading.CancellationToken]::None }
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App, [long]$ParentWindow, [string]$LogFolder, $token) -OnDone $OnDone -OnError $OnError -Script {
+            param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app, $parent, $logFolder, $cancelToken)
+            if ($logFolder) { try { $null = Start-MbtLog -Directory $logFolder } catch { Write-Verbose "no log: $_" } }
             $cfg = Import-MbtConfiguration
             if ($app) {
                 $session = Connect-MbtGraph -TenantId $app.Tenant -ClientId $app.ClientId -UserPrincipalName $upn -CertificateThumbprint $app.Thumbprint -Configuration $cfg
@@ -136,7 +139,13 @@ function New-MbtGuiRealEngine {
             if (-not $tenantId) { $tenantId = [string]$cfg.Tenant.TenantId }
             if (-not $clientId) { $clientId = [string]$cfg.Tenant.ClientId }
             Assert-MbtSignInSettings -TenantId $tenantId -ClientId $clientId
-            $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -ParentWindow $parent -NoPrompt:$silent -Configuration $cfg
+            Write-MbtLog -Level INFO -Message ('console: sign-in asked for {0}, over the console window 0x{1:X}' -f $upn, $parent)
+            try {
+                $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -ParentWindow $parent -CancellationToken $cancelToken -NoPrompt:$silent -Configuration $cfg
+            } catch {
+                Write-MbtLog -Level FAIL -Message ('sign-in failed: {0}: {1}' -f $_.Exception.GetType().Name, $_.Exception.Message)
+                throw
+            }
             $t = $session.Token
             $scopes = @($t.Scopes)
             $canMail = ('Mail.Read' -in $scopes) -or ('Mail.ReadWrite' -in $scopes)

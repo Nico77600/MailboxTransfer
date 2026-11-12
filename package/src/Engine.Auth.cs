@@ -198,20 +198,68 @@ namespace MailboxTransfer
         [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
         [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, StringBuilder text, int count);
+        [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+        [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+        const uint GA_ROOTOWNER = 3;
+        const int DWMWA_CLOAKED = 14;
 
-        /// <summary>The window the sign-in opens over, from a command line: the console window when it is visible (a terminal that hosts the console has a hidden one), else the foreground window.</summary>
+        /// <summary>True when a person can see the window: shown, not cloaked by the desktop (a window owned by a hidden window is), not minimized, and of a real size.</summary>
+        public static bool IsUsableWindow(IntPtr hWnd)
+        {
+            try
+            {
+                if (hWnd == IntPtr.Zero || !IsWindowVisible(hWnd) || IsIconic(hWnd)) return false;
+                int cloaked = 0;
+                try { DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out cloaked, sizeof(int)); } catch (Exception) { cloaked = 0; }
+                if (cloaked != 0) return false;
+                NativeRect r;
+                return GetWindowRect(hWnd, out r) && r.Right - r.Left > 0 && r.Bottom - r.Top > 0;
+            }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>
+        /// The window the sign-in opens over, from a command line, the first that a person can see: the window that owns the console (a terminal such as Windows Terminal hosts the
+        /// console in a hidden pseudo window of zero size, owned by its own window; a classic console has no owner and is its own), then the console window, then the foreground
+        /// window, then the desktop. A sign-in window owned by a window that cannot be seen is cloaked and never shows.
+        /// </summary>
         public static IntPtr ConsoleOrForegroundWindow()
         {
             try
             {
-                IntPtr w = GetConsoleWindow();
-                if (w != IntPtr.Zero && IsWindowVisible(w)) return w;
-                w = GetForegroundWindow();
-                if (w != IntPtr.Zero) return w;
-                return GetDesktopWindow();
+                IntPtr console = GetConsoleWindow();
+                IntPtr root = console == IntPtr.Zero ? IntPtr.Zero : GetAncestor(console, GA_ROOTOWNER);
+                return ChooseParentWindow(console, root, GetForegroundWindow(), GetDesktopWindow(), IsUsableWindow);
             }
             catch (Exception) { return IntPtr.Zero; }
+        }
+
+        /// <summary>The choice itself (see ConsoleOrForegroundWindow), with the handles and the test of a visible window given, so that it can be checked without a window.</summary>
+        public static IntPtr ChooseParentWindow(IntPtr console, IntPtr consoleRootOwner, IntPtr foreground, IntPtr desktop, Func<IntPtr, bool> usable)
+        {
+            foreach (IntPtr candidate in new[] { consoleRootOwner, console, foreground })
+                if (candidate != IntPtr.Zero && usable(candidate)) return candidate;
+            return desktop;
+        }
+
+        /// <summary>A window in plain words for the log: handle, class, shown or not, cloaked or not, size.</summary>
+        public static string Describe(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero) return "no window";
+            try
+            {
+                var text = new StringBuilder(128);
+                GetClassName(hWnd, text, text.Capacity);
+                NativeRect r; GetWindowRect(hWnd, out r);
+                int cloaked = 0; try { DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out cloaked, sizeof(int)); } catch (Exception) { }
+                return string.Format("window 0x{0:X} (class {1}, {2}, {3}x{4})", hWnd.ToInt64(), text, IsWindowVisible(hWnd) ? (cloaked != 0 ? "cloaked" : "shown") : "hidden", r.Right - r.Left, r.Bottom - r.Top);
+            }
+            catch (Exception) { return "window 0x" + hWnd.ToInt64().ToString("X"); }
         }
 
         /// <summary>The actionable message when Entra says the redirect URI is not registered on the application; null for any other error.</summary>
@@ -247,6 +295,13 @@ namespace MailboxTransfer
         public string DeviceCodeFile { get; set; }
         /// <summary>The window the Windows sign-in opens over (the console of the tool, set by the caller); zero: the console window, else the foreground window.</summary>
         public IntPtr ParentWindow { get; set; }
+        /// <summary>Receives one plain-words line for each stage of an interactive sign-in (the caller writes it to its log); it is called on the thread of GetToken only.</summary>
+        public Action<string> Log { get; set; }
+        void Trace(string line) { try { var log = Log; if (log != null) log("sign-in: " + line); } catch (Exception) { } }
+        /// <summary>The longest a silent attempt of the Windows broker may take.</summary>
+        public static readonly TimeSpan SilentTimeout = TimeSpan.FromSeconds(30);
+        /// <summary>The longest the Windows sign-in window is waited for.</summary>
+        public static readonly TimeSpan WindowTimeout = TimeSpan.FromMinutes(5);
         /// <summary>True when the Windows sign-in window can be used.</summary>
         public bool BrokerEnabled { get { return _brokerApp != null; } }
         /// <summary>Why the Windows sign-in window cannot be used (a code is used instead); null when it can, or when no window was asked for.</summary>
@@ -338,36 +393,59 @@ namespace MailboxTransfer
                     try { result = _app.AcquireTokenSilent(_scopes, account).WithForceRefresh(forceRefresh).ExecuteAsync(ct).GetAwaiter().GetResult(); }
                     catch (MsalUiRequiredException) { result = null; }
                 }
+                bool windowBroken = false;
                 if (result == null && _brokerApp != null)
                 {
-                    try
-                    {
-                        IAccount known = FindAccount(_brokerApp, loginHint);
-                        if (known != null) result = _brokerApp.AcquireTokenSilent(_scopes, known).WithForceRefresh(forceRefresh).ExecuteAsync(ct).GetAwaiter().GetResult();
-                        else if (loginHint != null) result = _brokerApp.AcquireTokenSilent(_scopes, loginHint).WithForceRefresh(forceRefresh).ExecuteAsync(ct).GetAwaiter().GetResult();
-                    }
-                    catch (MsalException) { result = null; }
+                    try { result = AcquireSilentFromBroker(loginHint, ct, forceRefresh, interactive); }
+                    catch (Exception ex) when (IsBrokerUnavailable(ex)) { windowBroken = true; BrokerProblem = "the Windows sign-in window could not be started (" + ex.GetType().Name + ": " + ex.Message + ")"; if (interactive) Trace(BrokerProblem); }
                 }
                 if (result == null)
                 {
                     if (!interactive) throw new InvalidOperationException("Not signed in: run the script interactively once.");
-                    if (DeviceCode || _brokerApp == null)
+                    if (DeviceCode || _brokerApp == null || windowBroken)
                     {
+                        Trace(DeviceCode ? "a device code was asked for" : "the Windows sign-in window cannot be used (" + BrokerProblem + "), using a device code");
                         result = AcquireWithDeviceCode(ct);
                     }
                     else
                     {
                         try { result = AcquireInWindow(loginHint, ct); }
-                        catch (Exception ex) when (ex is DllNotFoundException || ex is BadImageFormatException || ex is PlatformNotSupportedException || ex is TypeInitializationException || ex is EntryPointNotFoundException)
+                        catch (Exception ex) when (IsBrokerUnavailable(ex))
                         {
                             BrokerProblem = "the Windows sign-in window could not be started (" + ex.GetType().Name + ": " + ex.Message + ")";
+                            Trace(BrokerProblem + ", using a device code");
                             result = AcquireWithDeviceCode(ct);
                         }
                     }
                 }
                 Account = result.Account == null ? null : result.Account.Username;
                 ExpiresOn = result.ExpiresOn;
+                if (interactive) Trace("signed in as " + Account);
                 return result.AccessToken;
+            }
+        }
+
+        static bool IsBrokerUnavailable(Exception ex)
+        {
+            return ex is DllNotFoundException || ex is BadImageFormatException || ex is PlatformNotSupportedException || ex is TypeInitializationException || ex is EntryPointNotFoundException;
+        }
+
+        /// <summary>The token the Windows broker already holds for the account, without a window; null when it has none. It is given SilentTimeout: a broker that does not answer is the same as one that has nothing.</summary>
+        AuthenticationResult AcquireSilentFromBroker(string loginHint, CancellationToken ct, bool forceRefresh, bool trace)
+        {
+            using (var limit = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                limit.CancelAfter(SilentTimeout);
+                try
+                {
+                    IAccount known = FindAccount(_brokerApp, loginHint);
+                    if (trace) Trace(known != null ? "the Windows broker knows the account, asking it for a token without a window" : loginHint != null ? "the Windows broker does not list the account, asking it for " + loginHint + " without a window" : "no account to ask the Windows broker for");
+                    if (known != null) return _brokerApp.AcquireTokenSilent(_scopes, known).WithForceRefresh(forceRefresh).ExecuteAsync(limit.Token).GetAwaiter().GetResult();
+                    if (loginHint != null) return _brokerApp.AcquireTokenSilent(_scopes, loginHint).WithForceRefresh(forceRefresh).ExecuteAsync(limit.Token).GetAwaiter().GetResult();
+                    return null;
+                }
+                catch (MsalException ex) { if (trace) Trace("the Windows broker has no token without a window (" + ex.ErrorCode + ")"); return null; }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { if (trace) Trace("the Windows broker did not answer within " + (int)SilentTimeout.TotalSeconds + " seconds, a window is asked for"); return null; }
             }
         }
 
@@ -382,22 +460,46 @@ namespace MailboxTransfer
 
         AuthenticationResult AcquireInWindow(string loginHint, CancellationToken ct)
         {
-            IntPtr parent = ParentWindow != IntPtr.Zero ? ParentWindow : WindowsBroker.ConsoleOrForegroundWindow();
+            IntPtr parent = ParentWindow;
+            bool given = parent != IntPtr.Zero && WindowsBroker.IsUsableWindow(parent);
+            if (parent != IntPtr.Zero && !given) Trace("the window given by the caller cannot be seen (" + WindowsBroker.Describe(parent) + "), another one is chosen");
+            if (!given) parent = WindowsBroker.ConsoleOrForegroundWindow();
+            Trace("opening the Windows sign-in window over " + WindowsBroker.Describe(parent) + (given ? " (given by the caller)" : "") + ", waiting at most " + (int)WindowTimeout.TotalMinutes + " minutes");
             var builder = _brokerApp.AcquireTokenInteractive(_scopes)
                 .WithParentActivityOrWindow(parent)
                 .WithPrompt(Prompt.SelectAccount);
             if (loginHint != null) builder = builder.WithLoginHint(loginHint);
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                timeout.CancelAfter(TimeSpan.FromMinutes(5));
-                try { return builder.ExecuteAsync(timeout.Token).GetAwaiter().GetResult(); }
-                catch (MsalException ex)
+                timeout.CancelAfter(WindowTimeout);
+                try
                 {
-                    string message = WindowsBroker.MissingRedirectUriMessage(ex.Message, _clientId);
-                    if (message == null) throw;
-                    throw new InvalidOperationException(message, ex);
+                    // the wait is on the token too: a caller that cancels (the console, "Use a code instead") is freed even if the window itself cannot be interrupted
+                    Task<AuthenticationResult> request = builder.ExecuteAsync(timeout.Token);
+                    request.ContinueWith(t => { var ignored = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                    request.Wait(timeout.Token);
+                    return request.Result;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { Trace("the sign-in was cancelled by the caller"); throw; }
+                catch (OperationCanceledException) { Trace("no answer from the sign-in window within " + (int)WindowTimeout.TotalMinutes + " minutes"); throw TimedOut(); }
+                catch (AggregateException ex) when (ex.InnerException != null)
+                {
+                    Exception inner = ex.InnerException;
+                    Trace("the sign-in window ended with " + inner.GetType().Name + (inner is MsalException ? " (" + ((MsalException)inner).ErrorCode + ")" : "") + ": " + inner.Message);
+                    if (inner is OperationCanceledException) { if (ct.IsCancellationRequested) throw inner; throw TimedOut(); }
+                    if (inner is MsalClientException && ((MsalException)inner).ErrorCode == MsalError.AuthenticationCanceledError)
+                        throw new InvalidOperationException("The sign-in window was closed before the sign-in was finished. Sign in again, or sign in with a code.", inner);
+                    string message = WindowsBroker.MissingRedirectUriMessage(inner.Message, _clientId);
+                    if (message != null) throw new InvalidOperationException(message, inner);
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
+                    throw;
                 }
             }
+        }
+
+        static InvalidOperationException TimedOut()
+        {
+            return new InvalidOperationException("The sign-in window did not finish within " + (int)WindowTimeout.TotalMinutes + " minutes. Sign in again, or sign in with a code.");
         }
 
         /// <summary>The line shown to the user: starts with "DEVICE CODE:".</summary>

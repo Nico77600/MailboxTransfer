@@ -153,6 +153,26 @@ foreach ($theme in 'Light', 'Dark') {
         $a -and $b -and $c -and -not $g.S.Signed }
     Check 'sign-in as the application (fake) succeeds with the values of the file and says so' { $g.S.AppThumb = ''; $g.S.SignInError = ''; Start-MbtGuiSignIn; $ok = $g.S.Signed -and $g.S.Token.Access -match 'Application' -and (Find-Text $g.C.Page.Content 'Connected as the application'); $g.S.Signed = $false; $g.S.Locations = @(); $g.S.AuthMode = 'user'; $g.Engine.Capability.AppOnly = $false; Show-MbtGuiPage; $ok }
     Check 'sign-in with a bad address says so' { $g.S.Mailbox = 'nope'; Start-MbtGuiSignIn; $g.S.SignInError -match 'address' }
+    Check 'sign-in: "Use a code instead" while the window is waited for ends that wait and asks for the code; a closed window or a late one is said on the page, not waited for' {
+        $keep = $g.Engine.SignIn; $script:smCalls = [Collections.Generic.List[object]]::new()
+        $g.Engine.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow, $LogFolder, $Cancel) $script:smCalls.Add(@{ UseCode = $UseCode; Cancel = $Cancel; OnError = $OnError; Log = $LogFolder }) }
+        try {
+            $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.Signed = $false; $g.S.SignInError = ''
+            Start-MbtGuiSignIn
+            $first = $script:smCalls[0]
+            $a = $g.S.SigningIn -and -not $first.UseCode -and $first.Cancel -and -not $first.Cancel.IsCancellationRequested -and $first.Log -match 'logs$'
+            Start-MbtGuiSignIn -UseCode $true
+            $b = $first.Cancel.IsCancellationRequested -and $script:smCalls.Count -eq 1
+            & $first.OnError 'The operation was canceled.'
+            $c = $script:smCalls.Count -eq 2 -and $script:smCalls[1].UseCode -and $g.S.SigningIn -and -not $g.S.SignInError
+            & $script:smCalls[1].OnError 'The sign-in window was closed before the sign-in was finished. Sign in again, or sign in with a code.'
+            $d = -not $g.S.SigningIn -and $g.S.SignInError -match 'closed before' -and $g.S.SignInError -match 'use a code instead'
+            Start-MbtGuiSignIn
+            & $script:smCalls[2].OnError 'The sign-in window did not finish within 5 minutes. Sign in again, or sign in with a code.'
+            $e = -not $g.S.SigningIn -and $g.S.SignInError -match 'did not finish in time'
+            $a -and $b -and $c -and $d -and $e
+        } finally { $g.Engine.SignIn = $keep; $g.S.SigningIn = $false; $g.S.SignInError = ''; $g.S.CodeShown = $false; $g.S.SignInCts = $null; $g.S.SwitchToCode = $false; Show-MbtGuiPage }
+    }
     Check 'sign-in (fake) succeeds' { $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.SignInError = ''; Start-MbtGuiSignIn; $g.S.Signed -and @($g.S.Locations).Count -eq 3 }
     Check 'browse: three roots' { (Get-MbtGuiBrowser 'export').Roots.Count -eq 3 }
     Check 'from: the box "Include deleted items (Recoverable Items)" is off by default, with its help in plain words' {

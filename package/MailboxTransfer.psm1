@@ -580,6 +580,7 @@ function New-MbtAuth {
     $auth = [MailboxTransfer.GraphAuth]::new($ClientId, $TenantId, $Scopes, $CacheFile, $Configuration.Auth.RedirectUri, [bool]$DeviceCode, $DeviceCodeFile,
         $(if ($window -and $window.Available) { $window.Directory }), $(if ($window -and -not $window.Available) { $window.Reason }))
     if ($ParentWindow) { $auth.ParentWindow = [IntPtr]$ParentWindow }
+    $auth.Log = [Action[string]] { param($Line) Write-MbtLog -Level INFO -Message $Line }
     return $auth
 }
 
@@ -778,6 +779,8 @@ function Connect-MbtGraph {
         [switch]$DeviceCode,
         [string]$DeviceCodeFile,
         [long]$ParentWindow,
+        # Cancelling it stops the wait for the sign-in window or the code.
+        [Threading.CancellationToken]$CancellationToken = [Threading.CancellationToken]::None,
         [switch]$ForceRefresh,
         # Never prompts (no sign-in window, no device code): fails at once when no valid token is cached.
         [switch]$NoPrompt,
@@ -800,7 +803,8 @@ function Connect-MbtGraph {
         return $script:Session
     }
     $auth = New-MbtAuth -TenantId $TenantId -ClientId $ClientId -Scopes ([string[]]$Configuration.Auth.Scopes) -CacheFile $Configuration.Auth.CacheFile -Configuration $Configuration -DeviceCode:$DeviceCode -DeviceCodeFile $DeviceCodeFile -ParentWindow $ParentWindow
-    $first = $auth.GetToken($(if ($UserPrincipalName) { $UserPrincipalName }), (-not $NoPrompt),[Threading.CancellationToken]::None, [bool]$ForceRefresh)
+    Write-MbtLog -Level INFO -Message ('sign-in: {0}, tenant {1}, application {2}, {3}' -f $(if ($UserPrincipalName) { $UserPrincipalName } else { 'no account given' }), $TenantId, $ClientId, $(if ($NoPrompt) { 'no prompt' } elseif ($auth.SignInMethod -eq 'code') { 'with a code' + $(if ($auth.BrokerProblem) { " ($($auth.BrokerProblem))" }) } else { 'with the Windows sign-in window' }))
+    $first = $auth.GetToken($(if ($UserPrincipalName) { $UserPrincipalName }), (-not $NoPrompt), $CancellationToken, [bool]$ForceRefresh)
     $graph = [MailboxTransfer.GraphClient]::new($auth.Provider($(if ($UserPrincipalName) { $UserPrincipalName })), (New-MbtGraphOptions -Configuration $Configuration))
     $script:Session = [pscustomobject]@{
         Auth = $auth; Graph = $graph; Api = [MailboxTransfer.MailboxApi]::new($graph); Configuration = $Configuration

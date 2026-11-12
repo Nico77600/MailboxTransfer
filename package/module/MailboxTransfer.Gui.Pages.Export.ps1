@@ -20,6 +20,8 @@ function ConvertTo-MbtGuiMessage {
             if (-not $u) { $u = 'ms-appx-web://microsoft.aad.brokerplugin/<application id>' }
             "Microsoft does not accept the sign-in window for this application yet. Ask your administrator to add this redirect URI to the app registration (Authentication, Mobile and desktop applications): $u. Until then, use a code instead."; break
         }
+        'sign-in window was closed before' { 'The sign-in window was closed before the sign-in was finished. Press Sign in to try again, or use a code instead.'; break }
+        'sign-in window did not finish within' { 'The sign-in window did not finish in time. Press Sign in to try again, or use a code instead.'; break }
         'AADSTS50173|AADSTS700082|grant has expired|signin-required' { 'Your sign-in has expired. Sign in again to continue. Nothing is lost.'; break }
         'device.?code.*expired|AADSTS70019|code has expired' { 'The code has expired. Get a new code.'; break }
         'No certificate with the thumbprint|has no private key|certificate .* expired|is not valid before|Cannot open the certificate' { 'The certificate cannot be used. Check the thumbprint, that the certificate is installed on this PC with its private key, and that it has not expired.'; break }
@@ -72,6 +74,14 @@ function Get-MbtGuiWindowHandle {
 function Start-MbtGuiSignIn {
     param([bool]$UseCode = $false)
     $g = $script:Gui; $s = $g.S
+    if ($UseCode -and $s.SigningIn -and $s.SignInCts) {
+        # the sign-in window is still waited for: it is ended, and the code is asked for as soon as the worker is free
+        $s.SwitchToCode = $true
+        try { $s.SignInCts.Cancel() } catch { Write-Verbose "cancel: $_" }
+        $s.CodeShown = $true; $s.Code = $null
+        Show-MbtGuiPage
+        return
+    }
     $addr = $s.Mailbox.Trim()
     if ($addr -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
         $s.SignInError = 'Type the address of the mailbox, like adele.vance@contoso.com.'
@@ -101,22 +111,24 @@ function Start-MbtGuiSignIn {
         $win = $null; if ($probe) { try { $win = & $probe } catch { $win = $null } }
         if ($win -and -not $win.Available) { $UseCode = $true; $s.SignInNote = "The Windows sign-in window cannot be used on this PC ($($win.Reason)). A code is used instead." }
     }
-    $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null
+    $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null; $s.SwitchToCode = $false
+    $s.SignInCts = [Threading.CancellationTokenSource]::new()
     $codeFile = Get-MbtGuiDeviceCodeFile
     if (Test-Path -LiteralPath $codeFile) { Remove-Item -LiteralPath $codeFile -Force -ErrorAction SilentlyContinue }
     Show-MbtGuiPage
     & $g.Engine.SignIn $addr $UseCode $codeFile {
         param($info)
-        $s.SigningIn = $false; $s.Signed = $true; $s.Token = $info; $s.Account = $info.Account; $s.CodeShown = $false
+        $s.SigningIn = $false; $s.Signed = $true; $s.Token = $info; $s.Account = $info.Account; $s.CodeShown = $false; $s.SignInCts = $null
         Read-MbtGuiLocations
         Show-MbtGuiPage
     }.GetNewClosure() {
         param($msg)
-        $s.SigningIn = $false; $s.Signed = $false; $s.CodeShown = $false; $s.Code = $null
+        $s.SigningIn = $false; $s.Signed = $false; $s.CodeShown = $false; $s.Code = $null; $s.SignInCts = $null
+        if ($s.SwitchToCode) { $s.SwitchToCode = $false; Start-MbtGuiSignIn -UseCode $true; return }
         $m = ConvertTo-MbtGuiMessage $msg
         $s.SignInError = $m.Text; $s.SignInTech = $m.Tech
         Show-MbtGuiPage
-    }.GetNewClosure() $false $(if ($settings) { $settings.TenantId } else { '' }) $(if ($settings) { $settings.ClientId } else { '' }) $appArg (Get-MbtGuiWindowHandle)
+    }.GetNewClosure() $false $(if ($settings) { $settings.TenantId } else { '' }) $(if ($settings) { $settings.ClientId } else { '' }) $appArg (Get-MbtGuiWindowHandle) $(if ($s.WorkFolder) { Join-Path $s.WorkFolder 'logs' } else { '' }) $s.SignInCts
 }
 
 function Step-MbtGuiSignInCode {
