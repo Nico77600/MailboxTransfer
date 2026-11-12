@@ -85,10 +85,10 @@ namespace MailboxTransfer
         public string Summary()
         {
             var sb = new StringBuilder();
-            sb.AppendLine(Path + " (" + FileLength.ToString("N0") + " bytes)");
-            sb.Append("  ").Append(string.Join(", ", Stats.OrderBy(k => k.Key).Select(k => k.Key + " " + k.Value.ToString("N0"))));
+            sb.AppendLine(Path + " (" + FileLength.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " bytes)");
+            sb.Append("  ").Append(string.Join(", ", Stats.OrderBy(k => k.Key).Select(k => k.Key + " " + k.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture))));
             sb.AppendLine();
-            sb.Append("  result: ").Append(Errors).Append(" error(s), ").Append(Warnings).Append(" warning(s), ").Append(Infos).Append(" information(s) in ").Append(Elapsed.TotalSeconds.ToString("N1")).Append(" s");
+            sb.Append("  result: ").Append(Errors).Append(" error(s), ").Append(Warnings).Append(" warning(s), ").Append(Infos).Append(" information(s) in ").Append(Elapsed.TotalSeconds.ToString("N1", System.Globalization.CultureInfo.InvariantCulture)).Append(" s");
             return sb.ToString();
         }
     }
@@ -439,7 +439,7 @@ namespace MailboxTransfer
                 }
             }
             if (unmarked > 0) Err("NDB", "AMAP-UNMARKED", unmarked + " unit(s) of 64 bytes hold blocks or pages but the AMap says they are free (first near this offset): the next write would overwrite data.", firstUnmarked);
-            if (unusedBytes > 0) Info("NDB", "AMAP-UNUSED", unusedBytes.ToString("N0") + " byte(s) are marked allocated in the AMaps but belong to no block, page or map of the trees (reclaimable space, or deprecated map pages).");
+            if (unusedBytes > 0) Info("NDB", "AMAP-UNUSED", unusedBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " byte(s) are marked allocated in the AMaps but belong to no block, page or map of the trees (reclaimable space, or deprecated map pages).");
             Report.Stats["unusedBytes"] = unusedBytes;
         }
 

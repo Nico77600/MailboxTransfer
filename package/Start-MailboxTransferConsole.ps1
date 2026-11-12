@@ -54,6 +54,12 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     exit $LASTEXITCODE
 }
 
+# Every number and date of the tool is written the same way, whatever the language of Windows: en-US for the threads of this process and the ones that start later.
+$mbtCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
+[Globalization.CultureInfo]::DefaultThreadCurrentCulture = $mbtCulture
+[Globalization.CultureInfo]::DefaultThreadCurrentUICulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentCulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentUICulture = $mbtCulture
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # The package is verified before any of its code runs: the verifier must carry the owner signature, then it checks the signed manifest.

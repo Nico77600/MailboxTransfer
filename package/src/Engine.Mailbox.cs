@@ -63,7 +63,7 @@ namespace MailboxTransfer
     /// <summary>
     /// The listing of the items of a folder cannot be read now, and the service says it is a state, not a refusal: the folder is being moved to an
     /// auxiliary archive of an auto-expanding archive (the folder skeleton exists in the auxiliary archive before its content: 500 ErrorInternalServerError
-    /// "Cannot query rows in a table", measured on the lab tenant 2026-10-31), or the mailbox is moving / its store is unavailable (EWS error codes
+    /// "Cannot query rows in a table", measured on a test tenant 2026-10-31), or the mailbox is moving / its store is unavailable (EWS error codes
     /// ErrorMailboxMoveInProgress, ErrorMailboxStoreUnavailable, ErrorInternalServerTransientError). It is thrown after the bounded retries of
     /// <see cref="MailboxApi.EnumerateItems"/>; the folder is deferred, not empty, and not failed for good: ask again later.
     /// </summary>
@@ -211,7 +211,7 @@ namespace MailboxTransfer
     }
 
     /// <summary>
-    /// The id of a folder or a message as Exchange Online gives it (REST id, base64url, "AAMk..."), taken apart. Verified on the lab tenant 2026-10-31
+    /// The id of a folder or a message as Exchange Online gives it (REST id, base64url, "AAMk..."), taken apart. Verified on a test tenant 2026-10-31
     /// (folders of the main archive and of its first auxiliary archive, 89 bytes each):
     ///   00 03 | length (UInt16 LE, 36) | the mailbox guid as text | 00 | length (UInt16 LE, 46 for a folder, 70 for a message) | EntryID
     ///   EntryID of a folder (MS-OXCDATA 2.2.4.1): flags (4, zero) | provider uid (16, differs per mailbox) | folder type (2, 1 = private) |

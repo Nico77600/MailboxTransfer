@@ -14,7 +14,7 @@
 //        It gives per-item size and dates only; the subject and the rest come after the export, from the FastTransfer stream
 //        (the previews of the store).
 //
-//  Correlation of the two APIs (measured on the lab tenant, 2026-10-30):
+//  Correlation of the two APIs (measured on a test tenant, 2026-10-30):
 //    folders  the Mail API folder id and the import-export folder id are the SAME string (REST id) in the primary mailbox and in the
 //             main archive: 41 of 41 folders of the Mail API tree of the primary mailbox are in the import-export tree with the same
 //             id and the same item count. Recoverable Items (and its sub-folders) are not in the top-level listing of the import-export
@@ -820,7 +820,7 @@ namespace MailboxTransfer
 
         /// <summary>
         /// A folder of the import-export API under a Mail API folder (null: at the top). Known by id: nothing to do. Not known by id but a Mail API
-        /// folder of the same name is at the same place: it is that folder under another id (the lab tenant never does this, the ids are equal), its
+        /// folder of the same name is at the same place: it is that folder under another id (a test tenant never does this, the ids are equal), its
         /// ExportFolderId says which and a note tells. Otherwise it is a folder the Mail API does not list (with its own children).
         /// </summary>
         void MergeExportFolder(string mailboxId, FolderInfo f, BrowseFolder mailParent, BrowseTree tree, HashSet<string> known, CancellationToken ct)

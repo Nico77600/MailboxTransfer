@@ -23,7 +23,7 @@ namespace MailboxTransfer
     public sealed class PstByteRange
     {
         public long Offset, Length;
-        public override string ToString() { return Offset.ToString("N0") + "-" + (Offset + Length - 1).ToString("N0") + " (" + Length.ToString("N0") + " bytes)"; }
+        public override string ToString() { return Offset.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "-" + (Offset + Length - 1).ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " (" + Length.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " bytes)"; }
     }
 
     /// <summary>An attachment kept with unreadable parts (PstRepairOptions.KeepDamagedAttachments): where, and which byte ranges are zeros.</summary>
@@ -38,7 +38,7 @@ namespace MailboxTransfer
 
         public override string ToString()
         {
-            return Where + (OriginalName != null ? " '" + OriginalName + "'" : "") + ": " + (Length - BadBytes).ToString("N0") + " of " + Length.ToString("N0") + " bytes read, " + BadBytes.ToString("N0")
+            return Where + (OriginalName != null ? " '" + OriginalName + "'" : "") + ": " + (Length - BadBytes).ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " of " + Length.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " bytes read, " + BadBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)
                 + " bytes zero-filled in " + BadRanges.Count + " range(s): " + string.Join(", ", BadRanges.Take(8)) + (BadRanges.Count > 8 ? ", ... (" + (BadRanges.Count - 8) + " more)" : "");
         }
     }

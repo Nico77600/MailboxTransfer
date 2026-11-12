@@ -6,16 +6,19 @@
 //  request, for hours. MSAL gives exactly that: AcquireTokenSilent returns the cached token or refreshes it with the
 //  refresh token, and the cache survives between runs (DPAPI, current user). The library is the one shipped with the
 //  Microsoft.Graph.Authentication module; it is compiled separately because the rest of the engine does not need it.
-//  Interactive sign-in uses the system browser and the redirect URI http://localhost (public client, no secret), or, when
-//  the browser cannot be used (no window handle, window not visible), the device code flow: the code and the URL are
-//  written at once to the standard output ("DEVICE CODE: ...") and to a file, then the call waits until the code really
-//  expires (about 15 minutes). The callback is C# (a PowerShell script block would run outside its runspace). The token
-//  cache is the same for both modes: one sign-in serves every later run.
+//  Interactive sign-in is a Windows sign-in window (the Windows account broker, WAM) opened over the console: the operator types the
+//  account, nothing is loaded into a browser profile. The broker comes from the same Microsoft.Graph.Authentication module as MSAL
+//  (WindowsBroker). When it cannot be loaded, or when the operator asks for it, the device code flow is used: the code and the URL
+//  are written at once to the standard output ("DEVICE CODE: ...") and to a file, then the call waits until the code really
+//  expires (about 15 minutes). There is no system-browser sign-in. The callback is C# (a PowerShell script block would run outside
+//  its runspace). A token obtained with a code is kept in the DPAPI cache file; the broker keeps its own.
 //  GraphAppAuth (end of the file) is the non-interactive sign-in of the application itself (client credentials with a certificate,
 //  "app-only"): no user, no refresh token, no file cache; the token (claim roles, not scp) is kept in memory until shortly before it expires.
 // =============================================================================
 using System;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -128,11 +131,108 @@ namespace MailboxTransfer
         }
     }
 
+    /// <summary>
+    /// The Windows account broker (WAM) of MSAL.NET. The assembly Microsoft.Identity.Client.Broker is not shipped here: it is loaded from the folder of the
+    /// Microsoft.Graph.Authentication module that holds the MSAL in use (same version), with its native runtime (msalruntime). It is reached by reflection so that
+    /// this file compiles, and the engine works with a device code, when the broker is not there.
+    /// </summary>
+    public static class WindowsBroker
+    {
+        public const string BrokerAssemblyName = "Microsoft.Identity.Client.Broker";
+        static readonly object Gate = new object();
+        static MethodInfo _withBroker;
+
+        /// <summary>The redirect URI the Windows sign-in window needs on the app registration (public client).</summary>
+        public static string RedirectUri(string clientId) { return "ms-appx-web://microsoft.aad.brokerplugin/" + clientId; }
+
+        /// <summary>Loads the broker from the folder (an assembly already loaded in the process is used as it is). Returns null when it is ready, else the reason in plain words.</summary>
+        public static string Prepare(string directory)
+        {
+            lock (Gate)
+            {
+                if (_withBroker != null) return null;
+                try
+                {
+                    Assembly broker = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == BrokerAssemblyName);
+                    if (broker == null)
+                    {
+                        if (string.IsNullOrEmpty(directory)) return "the Windows sign-in component was not found next to MSAL";
+                        string file = Path.Combine(directory, BrokerAssemblyName + ".dll");
+                        if (!File.Exists(file)) return "the installed Microsoft.Graph.Authentication module has no Windows sign-in component (" + BrokerAssemblyName + ".dll)";
+                        string native = Path.Combine(directory, NativeRuntimeFile());
+                        if (File.Exists(native)) { try { NativeLibrary.Load(native); } catch (Exception) { } }
+                        string interop = Path.Combine(directory, "Microsoft.Identity.Client.NativeInterop.dll");
+                        if (File.Exists(interop) && !AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Microsoft.Identity.Client.NativeInterop")) Assembly.LoadFrom(interop);
+                        broker = Assembly.LoadFrom(file);
+                    }
+                    Type ext = broker.GetType("Microsoft.Identity.Client.Broker.BrokerExtension", false);
+                    MethodInfo m = ext == null ? null : ext.GetMethod("WithBroker", new[] { typeof(PublicClientApplicationBuilder), typeof(BrokerOptions) });
+                    if (m == null) return "the Windows sign-in component of this Microsoft.Graph.Authentication module is not the expected one";
+                    _withBroker = m;
+                    return null;
+                }
+                catch (Exception ex) { return "the Windows sign-in component could not be loaded (" + ex.GetType().Name + ": " + ex.Message + ")"; }
+            }
+        }
+
+        /// <summary>The native runtime file of this process architecture, next to the managed broker.</summary>
+        public static string NativeRuntimeFile()
+        {
+            switch (RuntimeInformation.ProcessArchitecture)
+            {
+                case Architecture.X86: return "msalruntime_x86.dll";
+                case Architecture.Arm64: return "msalruntime_arm64.dll";
+                default: return "msalruntime.dll";
+            }
+        }
+
+        /// <summary>The builder with the Windows broker switched on (Prepare must have returned null).</summary>
+        public static PublicClientApplicationBuilder Enable(PublicClientApplicationBuilder builder, string title)
+        {
+            if (_withBroker == null) throw new InvalidOperationException("The Windows broker is not loaded.");
+            var options = new BrokerOptions(BrokerOptions.OperatingSystems.Windows) { Title = title };
+            try { return (PublicClientApplicationBuilder)_withBroker.Invoke(null, new object[] { builder, options }); }
+            catch (TargetInvocationException ex) { throw ex.InnerException ?? ex; }
+        }
+
+        [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern IntPtr GetDesktopWindow();
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+
+        /// <summary>The window the sign-in opens over, from a command line: the console window when it is visible (a terminal that hosts the console has a hidden one), else the foreground window.</summary>
+        public static IntPtr ConsoleOrForegroundWindow()
+        {
+            try
+            {
+                IntPtr w = GetConsoleWindow();
+                if (w != IntPtr.Zero && IsWindowVisible(w)) return w;
+                w = GetForegroundWindow();
+                if (w != IntPtr.Zero) return w;
+                return GetDesktopWindow();
+            }
+            catch (Exception) { return IntPtr.Zero; }
+        }
+
+        /// <summary>The actionable message when Entra says the redirect URI is not registered on the application; null for any other error.</summary>
+        public static string MissingRedirectUriMessage(string errorText, string clientId)
+        {
+            if (string.IsNullOrEmpty(errorText)) return null;
+            bool missing = errorText.Contains("AADSTS50011") || errorText.Contains("AADSTS500113")
+                || (errorText.IndexOf("redirect uri", StringComparison.OrdinalIgnoreCase) >= 0 && (errorText.IndexOf("does not match", StringComparison.OrdinalIgnoreCase) >= 0 || errorText.IndexOf("not registered", StringComparison.OrdinalIgnoreCase) >= 0));
+            if (!missing) return null;
+            return "The application " + clientId + " does not accept the Windows sign-in window yet. Ask the administrator to add this redirect URI to its registration "
+                + "(Authentication, platform \"Mobile and desktop applications\"): " + RedirectUri(clientId) + ". Until then, sign in with a code (-DeviceCode, or \"Use a code instead\" in the console).";
+        }
+    }
+
     public sealed class GraphAuth
     {
         readonly IPublicClientApplication _app;
+        readonly IPublicClientApplication _brokerApp;
         readonly string[] _scopes;
         readonly string _cachePath;
+        readonly string _clientId;
         readonly TokenCacheFile _cacheFile;
         readonly object _tokenLock = new object();
         /// <summary>Set when the token cache file was unreadable and put aside (see <see cref="TokenCacheFile.Warning"/>).</summary>
@@ -141,22 +241,57 @@ namespace MailboxTransfer
         /// <summary>Account signed in, null until the first token.</summary>
         public string Account { get; private set; }
         public DateTimeOffset? ExpiresOn { get; private set; }
-        /// <summary>Sign in with a device code instead of the browser (no time limit other than the life of the code).</summary>
+        /// <summary>Sign in with a device code instead of the Windows sign-in window (no time limit other than the life of the code).</summary>
         public bool DeviceCode { get; set; }
         /// <summary>File that receives the "DEVICE CODE: ..." line (overwritten each time); null: none.</summary>
         public string DeviceCodeFile { get; set; }
+        /// <summary>The window the Windows sign-in opens over (the console of the tool, set by the caller); zero: the console window, else the foreground window.</summary>
+        public IntPtr ParentWindow { get; set; }
+        /// <summary>True when the Windows sign-in window can be used.</summary>
+        public bool BrokerEnabled { get { return _brokerApp != null; } }
+        /// <summary>Why the Windows sign-in window cannot be used (a code is used instead); null when it can, or when no window was asked for.</summary>
+        public string BrokerProblem { get; private set; }
+        /// <summary>The application of the Windows sign-in window (null when there is none).</summary>
+        public IPublicClientApplication WindowApp { get { return _brokerApp; } }
+        /// <summary>The application that holds the DPAPI cache and runs the device code flow.</summary>
+        public IPublicClientApplication CacheApp { get { return _app; } }
+        /// <summary>How an interactive sign-in is done now: "window" (Windows sign-in window) or "code" (device code).</summary>
+        public string SignInMethod { get { return DeviceCode || _brokerApp == null ? "code" : "window"; } }
 
+        /// <summary>
+        /// brokerDirectory: the folder that holds the Windows broker next to MSAL (see WindowsBroker); null: no window is asked for, the device code is used.
+        /// brokerProblem: why the caller already knows the window cannot be used (kept in BrokerProblem).
+        /// </summary>
         public GraphAuth(string clientId, string tenantId, string[] scopes, string cachePath, string redirectUri = "http://localhost",
-            bool deviceCode = false, string deviceCodeFile = null)
+            bool deviceCode = false, string deviceCodeFile = null, string brokerDirectory = null, string brokerProblem = null)
         {
             _scopes = scopes;
             _cachePath = cachePath;
+            _clientId = clientId;
             DeviceCode = deviceCode;
             DeviceCodeFile = deviceCodeFile;
+            BrokerProblem = brokerProblem;
             _app = PublicClientApplicationBuilder.Create(clientId)
                 .WithAuthority(AzureCloudInstance.AzurePublic, tenantId)
                 .WithRedirectUri(redirectUri)
                 .Build();
+            if (!string.IsNullOrEmpty(brokerDirectory))
+            {
+                string problem = WindowsBroker.Prepare(brokerDirectory);
+                if (problem == null)
+                {
+                    try
+                    {
+                        _brokerApp = WindowsBroker.Enable(PublicClientApplicationBuilder.Create(clientId)
+                            .WithAuthority(AzureCloudInstance.AzurePublic, tenantId)
+                            .WithRedirectUri(WindowsBroker.RedirectUri(clientId)), "Mailbox Transfer").Build();
+                        var concrete = _brokerApp as PublicClientApplication;
+                        if (concrete != null && !concrete.IsBrokerAvailable()) { _brokerApp = null; problem = "Windows does not offer its sign-in broker to this session"; }
+                    }
+                    catch (Exception ex) { _brokerApp = null; problem = "the Windows sign-in component could not be started (" + ex.GetType().Name + ": " + ex.Message + ")"; }
+                }
+                if (_brokerApp == null) BrokerProblem = problem;
+            }
             if (!string.IsNullOrEmpty(cachePath))
             {
                 _cacheFile = new TokenCacheFile(cachePath);
@@ -178,9 +313,17 @@ namespace MailboxTransfer
             }
         }
 
+        static IAccount FindAccount(IPublicClientApplication app, string loginHint)
+        {
+            var accounts = app.GetAccountsAsync().GetAwaiter().GetResult().ToList();
+            return loginHint == null
+                ? accounts.FirstOrDefault()
+                : accounts.FirstOrDefault(a => string.Equals(a.Username, loginHint, StringComparison.OrdinalIgnoreCase));
+        }
+
         /// <summary>
-        /// A valid access token: from the cache, else renewed with the refresh token, else (first run, or the refresh token
-        /// expired) after an interactive sign-in (browser, or device code). Safe to call from several threads.
+        /// A valid access token: from the DPAPI cache, else from the Windows broker, renewed with the refresh token, else (first run, or the refresh token
+        /// expired) after an interactive sign-in: a Windows sign-in window over the console, or a device code. Safe to call from several threads.
         /// The account is the one of loginHint: another account of the cache is never used in its place.
         /// forceRefresh: the cached access token is not used, a new one is asked with the refresh token (the permissions granted since are then in it).
         /// </summary>
@@ -189,42 +332,71 @@ namespace MailboxTransfer
             lock (_tokenLock)
             {
                 AuthenticationResult result = null;
-                var accounts = _app.GetAccountsAsync().GetAwaiter().GetResult().ToList();
-                IAccount account = loginHint == null
-                    ? accounts.FirstOrDefault()
-                    : accounts.FirstOrDefault(a => string.Equals(a.Username, loginHint, StringComparison.OrdinalIgnoreCase));
+                IAccount account = FindAccount(_app, loginHint);
                 if (account != null)
                 {
                     try { result = _app.AcquireTokenSilent(_scopes, account).WithForceRefresh(forceRefresh).ExecuteAsync(ct).GetAwaiter().GetResult(); }
                     catch (MsalUiRequiredException) { result = null; }
                 }
+                if (result == null && _brokerApp != null)
+                {
+                    try
+                    {
+                        IAccount known = FindAccount(_brokerApp, loginHint);
+                        if (known != null) result = _brokerApp.AcquireTokenSilent(_scopes, known).WithForceRefresh(forceRefresh).ExecuteAsync(ct).GetAwaiter().GetResult();
+                        else if (loginHint != null) result = _brokerApp.AcquireTokenSilent(_scopes, loginHint).WithForceRefresh(forceRefresh).ExecuteAsync(ct).GetAwaiter().GetResult();
+                    }
+                    catch (MsalException) { result = null; }
+                }
                 if (result == null)
                 {
                     if (!interactive) throw new InvalidOperationException("Not signed in: run the script interactively once.");
-                    if (DeviceCode)
+                    if (DeviceCode || _brokerApp == null)
                     {
-                        try { result = _app.AcquireTokenWithDeviceCode(_scopes, ShowDeviceCode).ExecuteAsync(ct).GetAwaiter().GetResult(); }
-                        catch (MsalServiceException ex) when (ex.Message.Contains("AADSTS7000218"))
-                        {
-                            throw new InvalidOperationException("The device code flow needs \"Allow public client flows\" on the application (Authentication blade, or run tools\\Grant-LabConsent.ps1 which turns it on). " + ex.Message, ex);
-                        }
-                        Account = result.Account == null ? null : result.Account.Username;
-                        ExpiresOn = result.ExpiresOn;
-                        return result.AccessToken;
+                        result = AcquireWithDeviceCode(ct);
                     }
-                    var builder = _app.AcquireTokenInteractive(_scopes)
-                        .WithUseEmbeddedWebView(false)
-                        .WithPrompt(Prompt.SelectAccount);
-                    if (loginHint != null) builder = builder.WithLoginHint(loginHint);
-                    using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                    else
                     {
-                        timeout.CancelAfter(TimeSpan.FromMinutes(5));
-                        result = builder.ExecuteAsync(timeout.Token).GetAwaiter().GetResult();
+                        try { result = AcquireInWindow(loginHint, ct); }
+                        catch (Exception ex) when (ex is DllNotFoundException || ex is BadImageFormatException || ex is PlatformNotSupportedException || ex is TypeInitializationException || ex is EntryPointNotFoundException)
+                        {
+                            BrokerProblem = "the Windows sign-in window could not be started (" + ex.GetType().Name + ": " + ex.Message + ")";
+                            result = AcquireWithDeviceCode(ct);
+                        }
                     }
                 }
                 Account = result.Account == null ? null : result.Account.Username;
                 ExpiresOn = result.ExpiresOn;
                 return result.AccessToken;
+            }
+        }
+
+        AuthenticationResult AcquireWithDeviceCode(CancellationToken ct)
+        {
+            try { return _app.AcquireTokenWithDeviceCode(_scopes, ShowDeviceCode).ExecuteAsync(ct).GetAwaiter().GetResult(); }
+            catch (MsalServiceException ex) when (ex.Message.Contains("AADSTS7000218"))
+            {
+                throw new InvalidOperationException("The device code flow needs \"Allow public client flows\" on the application (Authentication blade of the app registration). " + ex.Message, ex);
+            }
+        }
+
+        AuthenticationResult AcquireInWindow(string loginHint, CancellationToken ct)
+        {
+            IntPtr parent = ParentWindow != IntPtr.Zero ? ParentWindow : WindowsBroker.ConsoleOrForegroundWindow();
+            var builder = _brokerApp.AcquireTokenInteractive(_scopes)
+                .WithParentActivityOrWindow(parent)
+                .WithPrompt(Prompt.SelectAccount);
+            if (loginHint != null) builder = builder.WithLoginHint(loginHint);
+            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                timeout.CancelAfter(TimeSpan.FromMinutes(5));
+                try { return builder.ExecuteAsync(timeout.Token).GetAwaiter().GetResult(); }
+                catch (MsalException ex)
+                {
+                    string message = WindowsBroker.MissingRedirectUriMessage(ex.Message, _clientId);
+                    if (message == null) throw;
+                    throw new InvalidOperationException(message, ex);
+                }
             }
         }
 
@@ -249,6 +421,11 @@ namespace MailboxTransfer
 
         Task ShowDeviceCode(DeviceCodeResult d)
         {
+            if (!DeviceCode && !string.IsNullOrEmpty(BrokerProblem))
+            {
+                Console.Out.WriteLine("The Windows sign-in window cannot be used (" + BrokerProblem + "). A code is used instead.");
+                Console.Out.Flush();
+            }
             PublishDeviceCode(DeviceCodeLine(d.UserCode, d.VerificationUrl, d.ExpiresOn), DeviceCodeFile);
             return Task.CompletedTask;
         }
@@ -264,6 +441,15 @@ namespace MailboxTransfer
         {
             foreach (IAccount a in _app.GetAccountsAsync().GetAwaiter().GetResult().ToList())
                 _app.RemoveAsync(a).GetAwaiter().GetResult();
+            if (_brokerApp != null)
+            {
+                try
+                {
+                    foreach (IAccount a in _brokerApp.GetAccountsAsync().GetAwaiter().GetResult().ToList())
+                        _brokerApp.RemoveAsync(a).GetAwaiter().GetResult();
+                }
+                catch (MsalException) { }
+            }
             if (!string.IsNullOrEmpty(_cachePath) && File.Exists(_cachePath)) File.Delete(_cachePath);
         }
     }

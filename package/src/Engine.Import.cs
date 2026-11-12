@@ -235,7 +235,7 @@ namespace MailboxTransfer
         }
     }
 
-    /// <summary>Shared by the import and by the replication of the lab: one item, one session, the refusals that can be repaired.</summary>
+    /// <summary>Shared by the import and by the replication of a test corpus: one item, one session, the refusals that can be repaired.</summary>
     public static class ImportHelper
     {
         static readonly Regex ExpectedMailbox = new Regex(@"expected in mailbox\s+(?<id>MBX:[0-9A-Fa-f-]+@[0-9A-Fa-f-]+)", RegexOptions.Compiled);
@@ -346,7 +346,7 @@ namespace MailboxTransfer
     /// id, type, changeKey, size, createdDateTime and lastModifiedDateTime: no subject, no InternetMessageId, no search key. A candidate is an item
     ///   - of exactly the size of the source item (the announced size of the export listing is the size the target listing gives back);
     ///   - that no import row of the store is Done with (an item the store already accounts for is never the lost one);
-    ///   - that was created or modified after the request began. On the lab tenant an imported item carries the time of the import
+    ///   - that was created or modified after the request began. On a test tenant an imported item carries the time of the import
     ///     (created 23:18:18Z, modified 23:18:22Z for an import started at 23:18:15Z), not the dates of the source: an item that was already in the
     ///     folder before the attempt (an earlier import, a copy of the same mail) is therefore not mistaken for the one the attempt created.
     /// The time bound is the start of the attempt minus ClockSkew when this run knows it, else the end of the request minus LookBack (the longest
@@ -464,7 +464,7 @@ namespace MailboxTransfer
 
     /// <summary>
     /// Creates the missing folders of a list of target paths (parents first), create only: a folder is found by its name under its parent
-    /// and never renamed, moved or deleted. Used by the import and by the replication of the lab.
+    /// and never renamed, moved or deleted. Used by the import and by the replication of a test corpus.
     /// </summary>
     public sealed class FolderEnsurer
     {

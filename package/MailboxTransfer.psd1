@@ -4,7 +4,7 @@
 #  Author  : Nicolas Fabert
 #  Version : see ModuleVersion
 #
-#  Loaded by Invoke-MailboxTransfer.ps1 and the lab scripts (Import-Module by path).
+#  Loaded by Invoke-MailboxTransfer.ps1 and the scripts of the repository (Import-Module by path).
 #
 @{
     RootModule        = 'MailboxTransfer.psm1'
@@ -14,10 +14,10 @@
     Description       = 'Mailbox Transfer: exports Exchange Online mailboxes (primary and archive) to local storage and imports them into another mailbox with the Microsoft Graph mailbox import and export API. Phase 0: feasibility (folder tree, exportItems, FastTransfer reader, importItem).'
     PowerShellVersion = '7.4'
 
-    # Functions called by the entry script, the lab scripts and the tests.
+    # Functions called by the entry script, the scripts of the repository and the tests.
     FunctionsToExport = @(
         'Write-MbtStep', 'Write-MbtItem', 'Write-MbtDetail', 'Write-MbtBanner', 'Write-MbtSummary', 'Write-MbtLog', 'Start-MbtLog', 'Stop-MbtLog', 'Get-MbtLogPath', 'Format-MbtBytes', 'Format-MbtNumber', 'Format-MbtDuration', 'Format-MbtRate'
-        'Import-MbtConfiguration', 'Initialize-MbtEngine', 'Initialize-MbtAuthEngine', 'Find-MbtMsal'
+        'Import-MbtConfiguration', 'Initialize-MbtEngine', 'Initialize-MbtAuthEngine', 'Find-MbtMsal', 'Get-MbtWindowsSignIn', 'Get-MbtWorkFolderStatus'
         'Connect-MbtGraph', 'Get-MbtAccessToken', 'Disconnect-MbtGraph', 'Get-MbtSession', 'Set-MbtSession', 'Get-MbtTokenInfo', 'Get-MbtCertificate', 'Get-MbtAppPermission', 'Get-MbtMissingAppPermission', 'Test-MbtAppOnly', 'Get-MbtSessionUser', 'Get-MbtExchangeSettingsPath'
         'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath'
         'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem'

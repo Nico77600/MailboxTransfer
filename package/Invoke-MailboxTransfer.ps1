@@ -494,6 +494,12 @@ if ($FolderFile) {
     }
 }
 
+# Every number and date of the tool is written the same way, whatever the language of Windows: en-US for the threads of this process and the ones that start later.
+$mbtCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
+[Globalization.CultureInfo]::DefaultThreadCurrentCulture = $mbtCulture
+[Globalization.CultureInfo]::DefaultThreadCurrentUICulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentCulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentUICulture = $mbtCulture
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # -WhatIf only means "plan the import": the files of the run (store, transcript) are always written.
@@ -511,15 +517,15 @@ if (-not $UserPrincipalName) { $UserPrincipalName = $config.Tenant.UserPrincipal
 $configured = Get-MbtConfiguredMailboxId -Configuration $config -UserPrincipalName $UserPrincipalName
 if (-not $PrimaryMailboxId) { $PrimaryMailboxId = $configured.Primary }
 if (-not $ArchiveMailboxId) { $ArchiveMailboxId = $configured.Archive }
-# App-only (certificate): the application, the tenant and the target mailbox are always given (parameters or the Auth.App* keys), never the lab defaults of a delegated sign-in.
+# App-only (certificate): the application, the tenant and the target mailbox are always given (parameters or the Auth.App* keys), never the user defaults of a delegated sign-in.
 if (-not $CertificateThumbprint -and -not $CertificatePath -and $AppOnly) { $CertificateThumbprint = $config.Auth.CertificateThumbprint; $CertificatePath = $config.Auth.CertificatePath }
 $useCertificate = [bool]($CertificateThumbprint -or $CertificatePath)
 if ($AppOnly -and -not $useCertificate) { throw '-AppOnly needs -CertificateThumbprint or -CertificatePath (or Auth.CertificateThumbprint / Auth.CertificatePath in the configuration).' }
 if ($useCertificate) {
-    if (-not $PSBoundParameters.ContainsKey('TenantId')) { $TenantId = $config.Auth.AppTenantId }
+    if (-not $PSBoundParameters.ContainsKey('TenantId')) { $TenantId = if ($config.Auth.AppTenantId) { $config.Auth.AppTenantId } else { $config.Tenant.TenantId } }
     if (-not $PSBoundParameters.ContainsKey('ClientId')) { $ClientId = $config.Auth.AppClientId }
     if (-not $ClientId) { throw 'App-only: give -ClientId (the application with the certificate) or set Auth.AppClientId in the configuration.' }
-    if (-not $TenantId) { throw 'App-only: give -TenantId (tenant id or domain) or set Auth.AppTenantId in the configuration.' }
+    if (-not $TenantId) { throw 'App-only: give -TenantId (tenant id or domain) or set Auth.AppTenantId (or Tenant.TenantId) in the configuration.' }
     if (-not $PSBoundParameters.ContainsKey('UserPrincipalName')) { $UserPrincipalName = $null }
     if (-not $PSBoundParameters.ContainsKey('PrimaryMailboxId')) { $PrimaryMailboxId = $null }
     if (-not $PSBoundParameters.ContainsKey('ArchiveMailboxId')) { $ArchiveMailboxId = $null }
@@ -632,7 +638,7 @@ $exitCode = 0
 # App-only: the application signs in with its certificate (no user, no prompt). Nothing here goes through /me: -UserPrincipalName is the owner of the target mailbox.
 function Connect-AppOnlyForTransfer {
     if ($DeviceCode) { throw '-DeviceCode is a delegated sign-in: it cannot be combined with a certificate (app-only).' }
-    if (-not $UserPrincipalName) { throw 'App-only sign-in has no signed-in user: give -UserPrincipalName, the address of the target mailbox (its owner, or the shared mailbox itself). The lab user is never assumed.' }
+    if (-not $UserPrincipalName) { throw 'App-only sign-in has no signed-in user: give -UserPrincipalName, the address of the target mailbox (its owner, or the shared mailbox itself). The user of the configuration is never assumed.' }
     $certName = if ($CertificateThumbprint) { "certificate $CertificateThumbprint" } else { "certificate file $CertificatePath" }
     Write-MbtItem INFO "signing in as the application $ClientId with its $certName (app-only; target mailbox $UserPrincipalName)"
     $session = if ($CertificateThumbprint) { Connect-MbtGraph -TenantId $TenantId -ClientId $ClientId -UserPrincipalName $UserPrincipalName -CertificateThumbprint $CertificateThumbprint -Configuration $config }
@@ -686,7 +692,7 @@ function Connect-ForTransfer {
     if ($Mode -notin 'Browse', 'ExportEml' -and -not ('MailboxItem.ImportExport' -in $t.Scopes -or ('MailboxItem.Export' -in $t.Scopes -and $Mode -eq 'Export'))) { $missing += 'MailboxItem.ImportExport' }
     if ($browseMail -and -not ('Mail.Read' -in $t.Scopes -or 'Mail.ReadWrite' -in $t.Scopes)) { $missing += 'Mail.Read (without it the browse shows the import-export listing: no subject, sender or body)' }
     if ($Mode -in 'Import', 'ImportEml' -and -not ('MailboxFolder.ReadWrite' -in $t.Scopes)) { $missing += 'MailboxFolder.ReadWrite (creates the folders)' }
-    if ($missing) { Write-MbtItem WARN ('missing in the token: ' + ($missing -join ', ') + '. Run tools\Grant-LabConsent.ps1 (as an administrator) then sign in again.') }
+    if ($missing) { Write-MbtItem WARN ('missing in the token: ' + ($missing -join ', ') + '. An administrator grants these permissions to the application (admin consent); then sign in again.') }
     # -MailboxId given as an SMTP address / UPN (shared mailbox, another user's mailbox): resolved once to its physical id, the kind is Primary unless -Mailbox says otherwise
     if ($MailboxId -and (Test-MbtMailboxAddress $MailboxId)) {
         $address = $MailboxId.Trim()

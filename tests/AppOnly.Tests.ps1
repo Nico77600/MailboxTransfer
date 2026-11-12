@@ -406,12 +406,12 @@ Describe 'Entry script and capability' {
         $c = Import-MbtConfiguration
         foreach ($k in 'AppTenantId', 'AppClientId', 'CertificateThumbprint', 'CertificatePath') { $c.Auth.$k | Should -Be '' -Because $k }
     }
-    It 'app-only never falls back on the lab application: -ClientId is required' {
+    It 'app-only never falls back on the application of a delegated sign-in: -ClientId is required' {
         $r = Invoke-EntryChild @('-Mode', 'Export', '-CertificateThumbprint', ('AB' * 20), '-UserPrincipalName', 'adele@contoso.com', '-TenantId', $script:Tenant, '-StorePath', (Join-Path $script:Tmp 's1'))
         $r.Code | Should -Not -Be 0
         $r.Text | Should -Match 'App-only: give -ClientId'
     }
-    It 'app-only never assumes the lab user: the mailbox address is required' {
+    It 'app-only never assumes the user of the configuration: the mailbox address is required' {
         $r = Invoke-EntryChild @('-Mode', 'Export', '-CertificateThumbprint', ('AB' * 20), '-ClientId', $script:Client, '-TenantId', $script:Tenant, '-StorePath', (Join-Path $script:Tmp 's2'))
         $r.Code | Should -Not -Be 0
         $r.Text | Should -Match 'give -UserPrincipalName, the address of the target mailbox'
@@ -425,6 +425,23 @@ Describe 'Entry script and capability' {
     It '-DeviceCode cannot be combined with a certificate' {
         $r = Invoke-EntryChild @('-Mode', 'Browse', '-CertificateThumbprint', ('00' * 20), '-DeviceCode', '-ClientId', $script:Client, '-TenantId', $script:Tenant, '-UserPrincipalName', 'adele@contoso.com', '-StorePath', (Join-Path $script:Tmp 's4'))
         $r.Text | Should -Match 'DeviceCode is a delegated sign-in'
+    }
+    It 'app-only without a tenant of its own takes the tenant of the configuration, and still never borrows the mailbox' {
+        $r = Invoke-EntryChild @('-Mode', 'Browse', '-CertificateThumbprint', ('00' * 20), '-ClientId', $script:Client, '-UserPrincipalName', 'adele@contoso.com', '-StorePath', (Join-Path $script:Tmp 's6'))
+        $r.Text | Should -Not -Match 'App-only: give -TenantId'
+        $r.Text | Should -Match 'No certificate with the thumbprint' -Because 'the run went on to the certificate, so the tenant of the configuration was used'
+        $r = Invoke-EntryChild @('-Mode', 'Export', '-CertificateThumbprint', ('00' * 20), '-ClientId', $script:Client, '-StorePath', (Join-Path $script:Tmp 's7'))
+        $r.Text | Should -Match 'give -UserPrincipalName, the address of the target mailbox'
+    }
+    It 'app-only with no tenant anywhere says where to put it' {
+        $empty = Join-Path $TestDrive 'empty-local.psd1'
+        Set-Content -LiteralPath $empty -Value '@{ }'
+        $saved = $env:MAILBOXTRANSFER_LOCAL_CONFIG
+        try {
+            $env:MAILBOXTRANSFER_LOCAL_CONFIG = $empty
+            $r = Invoke-EntryChild @('-Mode', 'Browse', '-CertificateThumbprint', ('00' * 20), '-ClientId', $script:Client, '-UserPrincipalName', 'adele@contoso.com', '-StorePath', (Join-Path $script:Tmp 's8'))
+        } finally { $env:MAILBOXTRANSFER_LOCAL_CONFIG = $saved }
+        $r.Text | Should -Match 'App-only: give -TenantId \(tenant id or domain\) or set Auth\.AppTenantId \(or Tenant\.TenantId\)'
     }
     It '-AppOnly without any certificate says what to give' {
         $r = Invoke-EntryChild @('-Mode', 'Status', '-AppOnly', '-StorePath', (Join-Path $script:Tmp 's5'))

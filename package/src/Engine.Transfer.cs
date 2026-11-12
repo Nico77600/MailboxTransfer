@@ -9,7 +9,7 @@
 //  - StorePreviews: what the browser of the store shows of an item (from the FastTransfer reader).
 //
 //  Context: this is the owner's own tooling to migrate or back up Exchange Online mailboxes that the operator is authorised to
-//  access (delegated consent of the mailbox user); the lab scripts only target the owner's private lab tenant.
+//  access (delegated consent of the mailbox user); the scripts of the repository only target a private test tenant.
 //  Throttling policy: compliance, not evasion. Retry-After is honoured exactly (GraphClient), one 429 / 503 stops every worker
 //  until its delay is over, the concurrency is halved on 429 / 503 and grows back slowly, and it never exceeds the documented
 //  4 concurrent requests per mailbox. One application and one identity only: nothing here multiplies the quota.

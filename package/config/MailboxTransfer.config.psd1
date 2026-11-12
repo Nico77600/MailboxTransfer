@@ -4,7 +4,7 @@
 #  Every key is optional: the values below are the built-in defaults.
 #  The Tenant section holds your tenant, your application and the mailbox to work on: the console shows them on its Setup page and the command line
 #  uses them when the matching parameter is not given (-TenantId, -ClientId, -UserPrincipalName ...). A file that still calls this section Lab is read the same way.
-#  The Auth section holds the application that signs in with a certificate (no user). The Lab section only holds what the lab scripts (tools\*.ps1) need.
+#  The Auth section holds the application that signs in with a certificate (no user). The Lab section only holds what the developer scripts (tools\*.ps1) need.
 #  Do not write your own tenant, application or mailbox ids in this file. Put them in
 #  config\MailboxTransfer.config.local.psd1 (same layout, only the keys you change): git ignores it, and it is read after this file.
 #  What you change in the console for one run is never written to either file.
@@ -25,7 +25,7 @@
     }
 
     Auth = @{
-        # .default: the delegated permissions granted to the application (see tools\Grant-LabConsent.ps1).
+        # .default: the delegated permissions granted to the application (admin consent).
         Scopes      = @('https://graph.microsoft.com/.default')
         RedirectUri = 'http://localhost'
         # Token cache (DPAPI, current user). Empty: %LOCALAPPDATA%\MailboxTransfer\token.cache
@@ -56,10 +56,10 @@
         ArchiveMailboxId  = ''
     }
 
-    # Only for the lab scripts (tools\*.ps1). The keys of Tenant are accepted here too, as in earlier versions.
+    # Only for the developer scripts (tools\*.ps1). The keys of Tenant are accepted here too, as in earlier versions.
     Lab = @{
-        UserObjectId      = ''     # only for tools\Grant-LabConsent.ps1 when the directory cannot be read
-        # Folders of the lab scripts (tools\Invoke-Phase0.ps1).
+        UserObjectId      = ''     # only for a developer script of tools\ when the directory cannot be read
+        # Folders of the developer scripts (tools\Invoke-Phase0.ps1).
         SourceFolder      = ''
         TargetFolder      = ''
     }

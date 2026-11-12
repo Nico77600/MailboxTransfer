@@ -172,7 +172,7 @@ namespace MailboxTransfer
         }
         public void Report(EmlProgress p)
         {
-            Line(string.Format("{0}: {1} exported, {2} resumed, {3} skipped, {4} failed, {5:N1} MiB{6}", p.Folder ?? p.Stage, p.Exported, p.Resumed, p.Skipped, p.Failed, p.Bytes / 1048576.0, p.FolderItems >= 0 ? " (folder: " + p.FolderItems + " item(s))" : ""));
+            Line(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}: {1} exported, {2} resumed, {3} skipped, {4} failed, {5:N1} MiB{6}", p.Folder ?? p.Stage, p.Exported, p.Resumed, p.Skipped, p.Failed, p.Bytes / 1048576.0, p.FolderItems >= 0 ? " (folder: " + p.FolderItems + " item(s))" : ""));
         }
         public void Report(EmlImportProgress p)
         {
