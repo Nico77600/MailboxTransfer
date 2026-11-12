@@ -502,7 +502,7 @@ function New-MbtGuiSettingsSection {
     if ('tries' -in $Include) {
         $rows.Add((& $label 'Tries per item' 'Tries'))
         $tb = New-GuiTextBox -Text ([string]$s.Tries) -Automation 'Tries per item' -OnChange { param($x, $e) $v = 0; if ([int]::TryParse($x.Text, [ref]$v) -and $v -ge 1 -and $v -le 20 -and $v -ne $s.Tries) { $s.Tries = $v; $s.Changed['Tries'] = $true } }.GetNewClosure()
-        $rows.Add($tb)
+        $rows.Add($tb); $rows.Add((New-GuiText 'How many times an item is tried before it is marked failed. Default 3.' 'Hint'))
     }
     $modified = @($s.Changed.Keys | Where-Object { $_ -in 'Conc', 'Retry', 'Tries', 'Reconcile' })
     return (New-GuiMore -Summary $(if ($modified.Count) { 'Expert mode (modified for this run)' } else { 'Expert mode' }) -Content $rows.ToArray() -Open:($modified.Count -gt 0))

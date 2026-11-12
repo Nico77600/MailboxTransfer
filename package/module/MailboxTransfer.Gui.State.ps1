@@ -54,7 +54,7 @@ function New-MbtGuiState {
         Mailbox = ''; AuthMode = 'user'; AppTenant = ''; AppClient = ''; AppThumb = ''; TenantId = ''; ClientId = ''; Shared = ''; ImShared = ''; Signed = $false; SigningIn = $false; CodeShown = $false; Code = $null; SignInError = ''; Account = ''; Token = $null
         Locations = @(); LocationChecked = @{}; Reading = $false; LocationsFile = ''; RecoverableItems = $false
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
-        Conc = 4; Retry = 2; Tries = 6; Reconcile = 5; Awake = $true; WorkFolder = $WorkFolder; Changed = @{}
+        Conc = 4; Retry = 2; Tries = 3; Reconcile = 5; Awake = $true; WorkFolder = $WorkFolder; Changed = @{}
         ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirmed = $false; ConfirmKey = ''
         SetupReturn = -1; AuthEdit = $false; ConfigPath = ''
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false

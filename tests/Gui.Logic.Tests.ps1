@@ -150,7 +150,7 @@ Describe 'Names and settings' {
 
 Describe 'Commands of a job' {
     BeforeAll {
-        $script:S = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Shared = ''; ImShared = ''; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'adele.pst'; SplitGB = 20; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 6; Reconcile = 5; Awake = $true; ImSrc = 'store'; ImPath = 'D:\Store'; TgtLoc = 'Archive'; TgtMode = 'new'; TgtName = 'Imported x'; Mapping = ''; RpPath = 'D:\a.pst'; RpDest = 'D:\a.repaired.pst'; RpLevel = 'Automatic'; RpKeep = $false; Changed = @{} }
+        $script:S = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Shared = ''; ImShared = ''; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'adele.pst'; SplitGB = 20; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 3; Reconcile = 5; Awake = $true; ImSrc = 'store'; ImPath = 'D:\Store'; TgtLoc = 'Archive'; TgtMode = 'new'; TgtName = 'Imported x'; Mapping = ''; RpPath = 'D:\a.pst'; RpDest = 'D:\a.repaired.pst'; RpLevel = 'Automatic'; RpKeep = $false; Changed = @{} }
         $script:Job = @{ Id = 'job-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; ConfigPath = $null; StorePath = 'D:\Store'; SelectionFiles = @('D:\J\selection-1.json'); JobName = 'import-1' }
     }
     It 'builds the export command from controls: selection file, store, PST size, events, stop, keep awake' {
@@ -309,7 +309,7 @@ Describe 'Capabilities of the engine adapter' {
         foreach ($n in 'PstImport', 'EmlExport', 'EmlImport', 'SharedMailbox', 'PstExport', 'PstCheck', 'PstRepair', 'Events', 'FolderChoice', 'PstCopy', 'PstPreview') { $c.$n | Should -BeTrue -Because $n }
         $entry = Get-Command (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1')
         foreach ($p in 'PstPath', 'EmlPath', 'MailboxId', 'TargetRoot', 'EventsFile', 'StopFile', 'KeepAwake', 'NoPrompt', 'TempPath') { $entry.Parameters.ContainsKey($p) | Should -BeTrue -Because $p }
-        $s = @{ Task = 'export'; OpPath = 'D:\open.pst'; Mailbox = 'adele@contoso.com'; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'a.pst'; SplitGB = 20; CheckEach = $true; SepAux = $true; Conc = 4; Tries = 6; Reconcile = 5; Awake = $true; ImSrc = 'pst'; ImPath = 'D:\a.pst'; ImShared = 'p@contoso.com'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Mapping = 'D:\m.psd1'; RpPath = 'D:\a.pst'; RpDest = 'D:\b.pst'; RpLevel = 'Automatic'; RpKeep = $true; Changed = @{} }
+        $s = @{ Task = 'export'; OpPath = 'D:\open.pst'; Mailbox = 'adele@contoso.com'; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'a.pst'; SplitGB = 20; CheckEach = $true; SepAux = $true; Conc = 4; Tries = 3; Reconcile = 5; Awake = $true; ImSrc = 'pst'; ImPath = 'D:\a.pst'; ImShared = 'p@contoso.com'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Mapping = 'D:\m.psd1'; RpPath = 'D:\a.pst'; RpDest = 'D:\b.pst'; RpLevel = 'Automatic'; RpKeep = $true; Changed = @{} }
         $j = @{ Id = 'job-1'; Folder = 'D:\J'; EventsPath = 'D:\J\e.jsonl'; StopPath = 'D:\J\s'; ConfigPath = 'D:\J\c.psd1'; StorePath = 'D:\Store'; SelectionFiles = @('D:\J\sel.json'); JobName = 'j'; FolderFile = 'D:\J\folders.txt'; ItemsFile = 'D:\J\items.txt' }
         $modes = @($entry.Parameters['Mode'].Attributes.Where({ $_ -is [Management.Automation.ValidateSetAttribute] }).ValidValues)
         foreach ($case in @(@('export', 'pst'), @('export', 'eml'), @('export', 'store'), @('import', 'pst'), @('import', 'eml'), @('import', 'store'), @('repair', ''), @('check', ''), @('copy', 'pst'))) {
@@ -360,7 +360,7 @@ Describe 'Folders of a PST or of .eml files, numbers of the plan, items refused 
         Write-MbtGuiFolderFiles -Job $j -Choice ([pscustomobject]@{ Include = @('Inbox', 'Old, mail'); Exclude = @('Inbox/*'); Nids = @([uint32]7) })
         Get-Content -LiteralPath $j.FolderFile -Encoding utf8 | Should -Be @('+Inbox', '+Old, mail', '-Inbox/*')
         Get-Content -LiteralPath $j.ItemsFile | Should -Be @('7')
-        $s = @{ Task = 'import'; Mailbox = 'a@contoso.com'; ImSrc = 'pst'; ImPath = 'D:\a.pst'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Conc = 4; Tries = 6; Reconcile = 5; Awake = $true; Changed = @{}; Mapping = ''; ImShared = '' }
+        $s = @{ Task = 'import'; Mailbox = 'a@contoso.com'; ImSrc = 'pst'; ImPath = 'D:\a.pst'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Conc = 4; Tries = 3; Reconcile = 5; Awake = $true; Changed = @{}; Mapping = ''; ImShared = '' }
         $a = (Get-MbtGuiCommand -Task import -S $s -Job $j)[0].Arguments
         $a[($a.IndexOf('-FolderFile') + 1)] | Should -Be $j.FolderFile
         $s.ImSrc = 'store'
@@ -371,7 +371,7 @@ Describe 'Folders of a PST or of .eml files, numbers of the plan, items refused 
     It 'the copy command reads the open PST and writes new PST files, with the folders and messages ticked' {
         $j = New-MbtGuiJob -WorkFolder $TestDrive -Task copy -EntryScript 'x.ps1'
         Write-MbtGuiFolderFiles -Job $j -Choice ([pscustomobject]@{ Include = @('Inbox'); Exclude = @(); Nids = @([uint32]5) })
-        $s = @{ Task = 'copy'; OpPath = 'D:\open.pst'; OutFolder = 'D:\Out'; OutName = 'copy.pst'; SplitGB = 20; CheckEach = $false; Conc = 4; Tries = 6; Awake = $true; Changed = @{} }
+        $s = @{ Task = 'copy'; OpPath = 'D:\open.pst'; OutFolder = 'D:\Out'; OutName = 'copy.pst'; SplitGB = 20; CheckEach = $false; Conc = 4; Tries = 3; Awake = $true; Changed = @{} }
         $a = (Get-MbtGuiCommand -Task copy -S $s -Job $j)[0].Arguments
         $a[($a.IndexOf('-Mode') + 1)] | Should -Be 'ExportPst'
         $a[($a.IndexOf('-PstPath') + 1)] | Should -Be 'D:\open.pst'

@@ -284,7 +284,7 @@ Describe 'Review 7: the console starts its children without manual quoting' {
         [bool](Test-MbtGuiFolderName $Name) | Should -Be $Bad
     }
     It 'the command of an import throws for a refused folder name' {
-        $s = @{ Task = 'import'; Mailbox = 'a@contoso.com'; ImShared = ''; Dest = 'pst'; OutFolder = ''; OutName = ''; SplitGB = 20; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 6; Reconcile = 5; Awake = $false; ImSrc = 'pst'; ImPath = 'D:\a.pst'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = '-ConfigPath'; Mapping = ''; Changed = @{} }
+        $s = @{ Task = 'import'; Mailbox = 'a@contoso.com'; ImShared = ''; Dest = 'pst'; OutFolder = ''; OutName = ''; SplitGB = 20; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 3; Reconcile = 5; Awake = $false; ImSrc = 'pst'; ImPath = 'D:\a.pst'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = '-ConfigPath'; Mapping = ''; Changed = @{} }
         $j = @{ Id = 'j'; Folder = 'D:\J'; EventsPath = 'D:\J\e'; StopPath = 'D:\J\s'; ConfigPath = $null; StorePath = 'D:\S'; SelectionFiles = @(); JobName = 'import-1' }
         { Get-MbtGuiCommand -Task import -S $s -Job $j } | Should -Throw '*refused*'
         $s.TgtName = 'Imported "x" \'
