@@ -10,12 +10,16 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 - **The command line is shown** on the Verify and Next steps pages, with a Copy button, and the Next steps page offers the logical next buttons.
 - Tries per item are 3 in the console, as on the command line.
 - The configuration section an operator fills in is now **`Tenant`**; a file that still says `Lab` keeps working.
+- **Sign-in in a Windows window (no browser tab)**: a Microsoft sign-in window opens over the console and you type the account. The code stays as the alternative. Your administrator adds one redirect address to the application (user guide, chapter 2).
+- **Keep this PC awake** is off by default and moved to the Expert mode of the Verify pages; Setup no longer has it.
 
 ### Added
 - **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.
 
 ### Fixed
 - Works with **PowerShell 7.6** (the console of 1.1.0 closed at the first click).
+- The Setup page shows the work folder and its free space with the real engine. The certificate sign-in uses the tenant of the configuration when it has none of its own.
+- Every number is written the same way (en-US), whatever the language of Windows.
 - Names, addresses, paths and job names are **not case sensitive**: resuming a job, or importing again, no longer creates duplicates because of a capital letter.
 
 ## 1.1.0 — 2026-11-10

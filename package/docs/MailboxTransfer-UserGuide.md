@@ -110,7 +110,7 @@ The pictures and the commands use one example. Replace the names in the right co
 If one box stays empty, stop and ask.
 
 - [ ] I have a quiet hour for a small job, or a night for a big one. A 50 GB import takes more than half a day because Microsoft limits the speed (chapter 8).
-- [ ] The PC is plugged in. The tool keeps it awake, but it cannot stop a closed lid or a restart.
+- [ ] The PC is plugged in. Windows follows your company's power settings: if the PC goes to sleep, the job stops, and **Continue** does what is left. The box **Keep this PC awake while it runs** (**Expert mode** of the **Verify** page) asks Windows not to sleep by itself. It cannot stop a closed lid or a restart.
 - [ ] There is free disk space: about **twice the size of what you copy** (the store plus the PST files). The console says how much is needed before you start.
 - [ ] I know the address of the mailbox, for example `adele.vance@contoso.com`.
 - [ ] For a first try I have a **test mailbox** or a small folder, not the boss's mailbox.
@@ -146,7 +146,7 @@ Then wait for **two numbers**: the **tenant id** and the **application (client) 
 
 This section is for the administrator. It is done **once for the whole company**, not once per person. The exact commands, the table of permissions per task and the Exchange RBAC steps are in [the reference guide](MailboxTransfer-Guide.md#4-the-exact-rights).
 
-**Step A · Register the application.** In Microsoft Entra ID, create an **app registration** for the tool. It is a *public client*: no secret, no password. Add the redirect address `http://localhost` and switch **Allow public client flows** on (the sign-in with a code needs it).
+**Step A · Register the application.** In Microsoft Entra ID, create an **app registration** for the tool. It is a *public client*: no secret, no password. In **Authentication**, add the platform **Mobile and desktop applications** with the redirect address `ms-appx-web://microsoft.aad.brokerplugin/<application (client) id>` (the application id of this very registration; the Windows sign-in window needs it), and switch **Allow public client flows** on (the sign-in with a code needs it). The address `http://localhost`, which earlier versions asked for, is no longer needed to sign in: leave it if it is there, it does no harm.
 
 **Step B · Give the permissions.** Add the **delegated** permissions that the operators need (Microsoft Graph; table in [reference guide 4.3](MailboxTransfer-Guide.md#43-minimum-delegated-permissions-per-task-a-person-signs-in)) and give **admin consent**. Nothing else is needed for browsing, exporting, or importing into the mailbox of the person who signs in.
 
@@ -154,7 +154,7 @@ This section is for the administrator. It is done **once for the whole company**
 
 - The administrator creates a self-signed certificate on the PC that runs the tool (`Cert:\CurrentUser\My`, private key not exportable), uploads its public part (`.cer`) to the app registration, and gives the application the **application** permissions (admin consent), for example `MailboxFolder.ReadWrite.All`, `MailboxItem.Read.All` and `MailboxItem.ImportExport.All` to import, or the `.Read.All` and `MailboxItem.Export.All` ones to browse and export.
 - To limit the application to some mailboxes, the administrator gives the same rights through **Exchange RBAC for Applications** instead of the consent (reference guide, [4.6](MailboxTransfer-Guide.md#46-no-person-present-certificate-app-only)).
-- The administrator writes the tenant, the application id and the thumbprint in the **`Auth`** section of the operator's configuration file (chapter 3). The console then **reads them by itself**: nobody types them again at each run.
+- The administrator writes the tenant, the application id and the thumbprint in the **`Auth`** section of the operator's configuration file (chapter 3). The console then **reads them by itself**: nobody types them again at each run. The tenant of the application is the same as the one of the people in practice: if `Auth` has no `AppTenantId`, the tool uses the `TenantId` of the `Tenant` section. The mailbox to work on is never taken from the configuration: the operator types it.
 - The end date of a certificate is not shown by the console. A certificate that has ended makes the sign-in fail until it is renewed. Look at it with `Get-ChildItem Cert:\CurrentUser\My | Format-Table Subject, NotAfter, Thumbprint`.
 
 **Step D · Give the operator the values.** The **tenant id** and the **application (client) id** (and the **thumbprint** for step C). They go in the operator's configuration file (chapter 3).
@@ -233,18 +233,17 @@ cd C:\Tools\MailboxTransfer
 
 The Setup page is the first page, each time you open the console. It answers one question: *Is this computer ready?*
 
-![The Setup page. 1: the box This computer, with its lights. 2: the box Sign-in. 3: the box Files and folders. 4: the box While a job runs. 5: the button Choose a task](images/console-setup-light.png)
+![The Setup page. 1: the box This computer, with its lights. 2: the box Sign-in. 3: the box Files and folders. 4: the button Choose a task](images/console-setup-light.png)
 
 **Do:** look at the page. If everything is green, click **Choose a task** at the bottom right.
 
-**You should see:** four boxes.
+**You should see:** three boxes.
 
 | Box | What it says, in plain words |
 |---|---|
-| **This computer** | The **lights**. **Ready** at the top right means that everything the tool needs is in place. The five lights are: **PowerShell 7.5 or later**; **Sign-in component (MSAL)**, the part that talks to Microsoft's sign-in; **Work folder**, with its free space; **Network connection**, which says whether Microsoft's sign-in answers; **Files unblocked**, which says whether Windows marked the tool as downloaded. **Check again** looks again. |
+| **This computer** | The **lights**. **Ready** at the top right means that everything the tool needs is in place. The five lights are: **PowerShell 7.5 or later**; **Sign-in component (MSAL)**, the part that talks to Microsoft's sign-in, which also says whether the **Windows sign-in window** is available (if it is not, with the reason, the console signs in with a code); **Work folder**, with its path and its free space (red, with the reason, if the folder cannot be created or written to, or if less than 5 GiB is free); **Network connection**, which says whether Microsoft's sign-in answers; **Files unblocked**, which says whether Windows marked the tool as downloaded. **Check again** looks again. |
 | **Files and folders** | The **configuration file** in use, the one you wrote in step 3. **Reload** reads it again, **Open** shows it in your editor. The **work folder** is where the tool keeps its jobs, its export stores and its logs. **Choose a folder...** picks another one **for this run only**. |
-| **Sign-in** | **Sign in as: Me (delegated, recommended)**: a Microsoft window opens and you sign in as yourself. Or **The application (certificate)**: no window and no person, for scheduled or bulk jobs and for writing into a shared mailbox. Below, the **values for the sign-in** (the tenant, the application id and, for the certificate, its thumbprint) are **read from the configuration file**. **Change for this run** lets you type other values, **for this run only**: nothing is saved. A value changed this way is marked *modified · this run only*. |
-| **While a job runs** | **Keep this PC awake while it runs** is ticked. It stops Windows from going to sleep by itself during a job. It cannot stop a closed lid or a Sleep you choose yourself. |
+| **Sign-in** | **Sign in as: Me (delegated, recommended)**: a Microsoft sign-in window opens over the console and you sign in as yourself. Or **The application (certificate)**: no window and no person, for scheduled or bulk jobs and for writing into a shared mailbox. Below, the **values for the sign-in** (the tenant, the application id and, for the certificate, its thumbprint) are **read from the configuration file**. **Change for this run** lets you type other values, **for this run only**: nothing is saved. A value changed this way is marked *modified · this run only*. |
 
 ![The Setup page with the application sign-in chosen: the values come from the configuration file; one of them is marked as changed for this run only](images/console-setup-application-light.png)
 
@@ -268,15 +267,19 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 
 ### 4.2 Task · From: sign in
 
-**Do:** type the address of the mailbox (`adele.vance@contoso.com`). Click **Sign in...**. A Microsoft sign-in window opens: sign in as yourself. (You chose **Me** or **The application** on the Setup page; the box shows the choice, with **Change in Setup**.)
+**Do:** type the address of the mailbox (`adele.vance@contoso.com`). Click **Sign in...**. A Microsoft sign-in window opens over the console: type the account that may open the mailbox (yourself, with the right on that mailbox). The window is a Windows one: nothing is loaded into your browser, and no browser tab opens. (You chose **Me** or **The application** on the Setup page; the box shows the choice, with **Change in Setup**.)
 
 **You should see:** a green line: *Signed in as adele.vance@contoso.com. The sign-in is kept on this PC, encrypted for your Windows account.*
+
+> [!TIP]
+> **First sign-in of an account that Windows does not know.** If Windows asks whether to stay signed in to all your apps, choose **No, sign in to this app only**. The account is then used by this tool only, and not added to Windows.
 
 ![Before signing in: the address box and the Sign in button. 1: the box Sign in. 2: the address you type. 3: the button Sign in](images/console-signin-light.png)
 
 **If not:**
 
-- *Nothing opens.* The sign-in window may be hidden behind another window. Or click **Use a code instead**: a **code** appears (see the picture). On any device, open the web address shown, type the code, sign in. The code is valid for 15 minutes. After that the window says *The code has expired. Get a new code.* Click for a new one.
+- *Nothing opens.* The sign-in window may be hidden behind the console or another window: look in the taskbar. Or click **Use a code instead**: a **code** appears (see the picture). On any device, open the web address shown, type the code, sign in. The code is valid for 15 minutes. After that the window says *The code has expired. Get a new code.* Click for a new one.
+- *A red message that names a redirect address.* The application is not yet set up for the Windows sign-in window. Copy the address in the message (it starts with `ms-appx-web://microsoft.aad.brokerplugin/`) and send it to your administrator (step A of chapter 2). Meanwhile, click **Use a code instead**.
 - *A red message about a permission.* Your administrator has not given you the rights of chapter 2. Copy the permission name in the message and send it to them.
 - *Your sign-in has expired.* Sign in again. Nothing is lost.
 
@@ -343,7 +346,7 @@ Click **Continue to Verify**.
 > **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 8.
 
 > [!NOTE]
-> **Expert mode** holds four numbers for this run only (how many requests in parallel, how long to wait before a retry, how many tries per item, how long to wait before checking an uncertain item). You do not need it, and nothing in it is saved.
+> **Expert mode** holds four numbers for this run only (how many requests in parallel, how long to wait before a retry, how many tries per item, how long to wait before checking an uncertain item) and the box **Keep this PC awake while it runs**. You do not need it, and nothing in it is saved.
 
 ### 4.7 Run: wait
 
@@ -602,7 +605,7 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 | The network dropped | *We cannot reach Microsoft. Trying again every 30 seconds.* | Check the connection. It carries on. |
 
 > [!NOTE]
-> **Keep awake.** While a job runs, the tool asks Windows not to sleep because of inactivity (the box **Keep this PC awake while it runs** on the Setup page, ticked). It cannot stop a closed lid, a Sleep you choose yourself, or a restart. The Verify page says so before you start (**What if this PC sleeps, or I close the window?**).
+> **Keep awake.** Windows follows your company's power settings unless you tick **Keep this PC awake while it runs** (in **Expert mode**, at the bottom of the Verify page; it is off by default). If the PC goes to sleep, the job stops and **Continue** does what is left. Ticked, the tool asks Windows not to sleep because of inactivity; it still cannot stop a closed lid, a Sleep you choose yourself, or a restart. The Verify page says so before you start (**What if this PC sleeps, or I close the window?**).
 
 <!-- icon: lifebuoy -->
 ## 9. When something goes wrong
@@ -620,7 +623,7 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 | 4 | *"AUX" is a name Windows keeps for itself* | A file name such as `AUX`, `CON`, `NUL`, `COM1`… is reserved by Windows. Outlook crashes on such a PST. | Type another name. |
 | 5 | Many items **Refused**, *The mailbox is full* | The archive or the mailbox has no more room (the limit is set by Microsoft and your company). | Import into another mailbox, or ask your administrator for more room. |
 | 6 | A code box, *The code has expired. Get a new code.* | The sign-in code is valid for 15 minutes. | Click for a new code. Type it at the web address shown, on any device. If Microsoft says *public client* (error AADSTS7000218), your administrator must switch on **Allow public client flows** (chapter 2, step A). |
-| 7 | The sign-in window does not open | Hidden, or blocked. | On the **From** page (the **To** page for an import) use **Use a code instead**. |
+| 7 | The sign-in window does not appear | It is behind the console or another window, or the Windows sign-in component is missing (the light **Sign-in component (MSAL)** on the **Setup** page says so). | Look in the taskbar. Or, on the **From** page (the **To** page for an import), use **Use a code instead**. |
 | 8 | *This sign-in is not allowed to do this. Ask your administrator for the permission…* | A permission is missing (403). | Copy the name in the message to your administrator (chapter 2). |
 | 9 | *Your sign-in has expired* | Your company's rules ask for a new sign-in (password change, security rule). | Sign in again, then **Continue**. Nothing is lost. |
 | 10 | *We cannot find this mailbox* | Wrong address, or the mailbox is not in Exchange Online (on your own servers, for instance), or has no archive. | Check the address. |
@@ -638,6 +641,7 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 | 22 | Slow even on a fast PC | It is Microsoft's limit per mailbox. | Chapter 8. Only several target mailboxes at once go faster. |
 | 23 | A folder *Restored deleted items* appears after an import | The export held deleted items. Exchange does not accept an import there, so they are put in a normal folder. | Nothing. They are ordinary items now. See 5.2. |
 | 24 | *The mailbox … cannot be reached by the mailbox import-export API* | The mailbox is **soft-deleted** (its user was deleted less than 30 days ago) or **inactive** (kept on hold after its user was deleted). Microsoft gives no way to read such a mailbox with this tool. | Ask your administrator to restore the user within 30 days, or to recover the inactive mailbox into an active one (reference guide, 13.1). Then run the export again. |
+| 25 | *Microsoft does not accept the sign-in window for this application yet... redirect URI...* (error AADSTS50011) | The registration of the application lacks the redirect address of the Windows sign-in window. | Send the address shown in the message (`ms-appx-web://microsoft.aad.brokerplugin/<application id>`) to your administrator (step A of chapter 2). Meanwhile use **Use a code instead**. |
 | 25 | *Package integrity: SHA256 mismatch*, *missing inventory path*, *unexpected stable file* or *verifier must have the trusted, timestamped owner signature* | The tool checks its own files each time it starts. A file was changed, deleted or added inside the tool's folder, or the files are not the ones of the release (a copy of the repository, a ZIP re-saved by another program). | Download the ZIP again from the **latest release** page (not *Source code*), extract it into a clean folder and unblock it. Do not edit the files of the tool. Your settings go in `config\MailboxTransfer.config.local.psd1`, which is never checked. Keep your exports outside the tool's folder. |
 | 26 | *PackageIntegrity.psd1 is missing* | You started a copy of the repository, not the release. | Use the ZIP of the latest release. Only the maintainer starts a copy of the repository, with `-DevelopmentMode`. |
 | 27 | The window closes by itself at the first click, and shows nothing | You use PowerShell **7.6** with version 1.1.0 of the tool. | Use version **1.2.0** or later (the **Latest release** link at the top right of the window). |
@@ -679,12 +683,13 @@ Every word below is a word you see on the screen or in this guide, explained wit
 | **Refused item** | An item the mailbox would not accept. It is listed with the reason and skipped. | The **Next steps** page. |
 | **Check / Repair** | Check: a read-only test of a PST file. Repair: writing a new, repaired PST from a damaged one. | The **From** and **To** pages of *Check and repair a PST*. |
 | **Delegated / app-only** | Delegated: the tool acts as **you** (*Me*). App-only: the tool acts as itself, with a certificate and no person (*The application*). | The box **Sign-in** of the **Setup** page. |
+| **Sign-in window** | The Microsoft window that opens over the console, where you type your account. | The **From** page, **Sign in...**. |
 | **Device code** | A short code you type on a web page, on any device, to sign in. | **Use a code instead**. |
 | **Permission** | A right a program asks Microsoft for, such as `MailboxItem.Read`. The administrator says yes once, for the whole company (**admin consent**). | Chapter 2 of this guide. |
 | **Tenant** and **application (client) id** | The **tenant** is your company's own space at Microsoft; the **application id** is the number of the tool's registration in your company. Both are long numbers. | The box **Sign-in** of the **Setup** page, and the configuration file. |
 | **Configuration file** | The text file where your numbers are written (`config\MailboxTransfer.config.local.psd1`). | The box **Files and folders** of the **Setup** page. |
 | **Work folder** | Where the tool keeps its jobs, its stores and its logs. | The box **Files and folders** of the **Setup** page. |
-| **Expert mode** | Four numbers for one run, at the bottom of the Verify page. You do not need it. | The **Verify** page. |
+| **Expert mode** | Four numbers for one run and the box **Keep this PC awake while it runs**, at the bottom of the Verify page. You do not need it. | The **Verify** page. |
 | **Command line** | The same job written as one line of text. The console shows it, with **Copy**. | **The same from the command line**, on the **Verify** and **Next steps** pages. |
 | **Signed** | A digital stamp that proves a file comes from its author and was not changed. The tool checks it each time it starts. | Right-click a .ps1, *Properties*, *Digital Signatures*. |
 | **Log file** | A text file that keeps, line by line, what a run did, with the time. You send it to your administrator when something fails. | **Open the log**, on the **Next steps** page. |

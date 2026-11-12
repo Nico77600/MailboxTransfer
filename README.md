@@ -90,7 +90,7 @@ cd C:\Tools\MailboxTransfer
 <br>
 <table>
   <tr>
-    <td width="50%" valign="top"><a href="package/docs/images/console-setup-light.png"><img alt="The Setup page of the console: the stepper Setup, Task, Verify, Run, Next steps; 1 the box This computer with its lights, 2 the box Sign-in with Me or The application and the values read from the configuration file, 3 the box Files and folders, 4 the box While a job runs, 5 the button Choose a task" src="package/docs/images/console-setup-light.png"></a><br><sub><b>Setup</b> &middot; the lights of this computer, the sign-in and the configuration file</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-setup-light.png"><img alt="The Setup page of the console: the stepper Setup, Task, Verify, Run, Next steps; 1 the box This computer with its lights, 2 the box Sign-in with Me or The application and the values read from the configuration file, 3 the box Files and folders, 4 the button Choose a task" src="package/docs/images/console-setup-light.png"></a><br><sub><b>Setup</b> &middot; the lights of this computer, the sign-in and the configuration file</sub></td>
     <td width="50%" valign="top"><a href="package/docs/images/console-task-light.png"><img alt="The Task page of the console: the stepper with What, From and To under Task; the four task cards Browse and export, Import, Check and repair a PST, Open an export or a PST; the jobs you can continue; what will happen" src="package/docs/images/console-task-light.png"></a><br><sub><b>Task</b> &middot; the four tasks and the jobs to continue</sub></td>
   </tr>
 </table>
@@ -322,7 +322,7 @@ There is no unsigned mode. A source checkout of this repository (no manifest) is
 | `package\lib\sqlite\` | SQLite for the export store (see `THIRD-PARTY-NOTICES.md`) |
 | `package\PackageIntegrity.psd1`, `product.json` | The signed manifest of the files, and the identity of the product |
 | `tests\` | Pester tests, no network |
-| `tools\` | The package builder, the signing helpers, the pictures of the documentation, and lab scripts for the maintainer |
+| `tools\` | The package builder, the signing helpers, the pictures of the documentation, and developer scripts for the maintainer |
 
 ## Documentation
 

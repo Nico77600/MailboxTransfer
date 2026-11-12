@@ -47,9 +47,9 @@ The console is a window that builds the command line for you. It never does anyt
 
 | Page | What it holds | What it does in the engine |
 |---|---|---|
-| **Setup** | The lights of the computer (PowerShell 7.5 or later, the sign-in component, the work folder with its free space, the network, the unblocked files). The configuration file in use (**Reload**, **Open**). The work folder. **Sign in as**: **Me (delegated)** or **The application (certificate)**, with the values read from the configuration: `Tenant` (`TenantId`, `ClientId`) for **Me**, `Auth` (`AppTenantId`, `AppClientId`, `CertificateThumbprint`) for **The application**. **Change for this run** replaces a value for the current window only. **Keep this PC awake while it runs**. | Reads the configuration file (chapter 12) and nothing else. Nothing on this page is ever written to a file. |
+| **Setup** | The lights of the computer (PowerShell 7.5 or later, the sign-in component, the work folder with its free space, the network, the unblocked files). The configuration file in use (**Reload**, **Open**). The work folder. **Sign in as**: **Me (delegated)** or **The application (certificate)**, with the values read from the configuration: `Tenant` (`TenantId`, `ClientId`) for **Me**, `Auth` (`AppTenantId`, `AppClientId`, `CertificateThumbprint`) for **The application**. **Change for this run** replaces a value for the current window only. | Reads the configuration file (chapter 12) and nothing else. Nothing on this page is ever written to a file. |
 | **Task** | **What**: four cards (Browse and export, Import, Check and repair a PST, Open an export or a PST) and the list of jobs that can be continued. **From** and **To** depend on the task (table below). | Sign-in, browsing (`-Mode Browse`), the read-only check of a PST, the folder tree of a PST or a store. Reads only. |
-| **Verify** | **Checks** (one line per check, green, amber or red), **What will be done**, **What is in it** (export) or **Before anything is written** (import), **The same from the command line**, **Expert mode**. | The plan: the read-only run (`-WhatIf`) of the same request. The command line is the command the **Start** button runs, with the values that equal the default of the entry script left out (for instance `-Concurrency 4`, `-MaxAttempts 3`, `-PstMaxSizeGB 50`). **Copy** puts it on the clipboard. |
+| **Verify** | **Checks** (one line per check, green, amber or red), **What will be done**, **What is in it** (export) or **Before anything is written** (import), **The same from the command line**, **Expert mode** (the four run settings, and **Keep this PC awake while it runs**, off by default, which adds `-KeepAwake` to the command line). | The plan: the read-only run (`-WhatIf`) of the same request. The command line is the command the **Start** button runs, with the values that equal the default of the entry script left out (for instance `-Concurrency 4`, `-MaxAttempts 3`, `-PstMaxSizeGB 50`). **Copy** puts it on the clipboard. |
 | **Run** | The summary and the bar, the **steps** (all known before the start), the folders with their counts, the details of the step or folder clicked, **Stop and keep progress**. | Reads `events.jsonl` and `status.json` of the job and stops it with the stop file (chapter 9). |
 | **Next steps** | The result by exit code (chapter 10), **What to do next** (buttons: **Import into a mailbox**, **How to open the PST in Outlook**, **Continue**, **Try again**), **The same from the command line** (the commands that were run), **Reports and log**. | Nothing: it reads the job folder. |
 
@@ -183,9 +183,9 @@ All examples run from the `package` folder. `-WhatIf` prints the plan in every m
 | Parameter | Modes | Meaning |
 |---|---|---|
 | `-ConfigPath <psd1>` | all | The configuration file (chapter 12). |
-| `-DeviceCode` | sign-in | Sign in with a code instead of the browser. The line `DEVICE CODE: <code> URL: <url>` goes to the console and to `device-code.txt`. A cached token makes it silent. |
+| `-DeviceCode` | sign-in | Sign in with a code instead of the Windows sign-in window. The line `DEVICE CODE: <code> URL: <url>` goes to the console and to `device-code.txt`. A cached token makes it silent. Without `-DeviceCode`, the first sign-in opens the Windows sign-in window over the console window (chapter 4.2); if that window cannot be used, the same code flow is used and a line says why. There is no sign-in through the browser. |
 | `-NoPrompt` | sign-in | Silent sign-in only. Without a valid cached token: exit 2, error code `signin-required`. |
-| `-TenantId`, `-ClientId`, `-UserPrincipalName` | sign-in | Default from the `Tenant` section of the configuration (chapter 12; a file that still says `Lab` is read the same way). Delegated sign-in as this user. With a certificate (next row): the application, its tenant and the **target mailbox**, never defaulted. |
+| `-TenantId`, `-ClientId`, `-UserPrincipalName` | sign-in | Default from the `Tenant` section of the configuration (chapter 12; a file that still says `Lab` is read the same way). Delegated sign-in as this user. With a certificate (next row): the application, its tenant (`Auth.AppTenantId`, else `Tenant.TenantId`) and the **target mailbox**; the application id and the mailbox are never defaulted. |
 | `-CertificateThumbprint`, `-CertificatePath`, `-CertificatePassword`, `-AppOnly` | sign-in | Sign in as the application, with a certificate (chapter 4.6): from `CurrentUser\My` / `LocalMachine\My`, or a `.pfx` read in memory. `-AppOnly` takes the certificate from the `Auth` keys. Not with `-DeviceCode`. |
 | `-Mailbox` | Export, Import, Browse… | `Primary` (default), `Archive`, `AuxArchive`, `All` (Export). |
 | `-MailboxId` | Export, Import, Browse… | One location: `MBX:<guid>@<tenant>`, a bare guid, or the SMTP address or UPN of a shared or another user's mailbox. |
@@ -225,7 +225,9 @@ Windows 10 or 11, PowerShell 7.5 (7.4 command line), the module `Microsoft.Graph
 
 ### 4.2 In Microsoft Entra ID, once
 
-An **app registration**, a public client: redirect URI `http://localhost`, **Allow public client flows** on (needed for the device code, otherwise error AADSTS7000218), the delegated permissions below, **admin consent**. Your tenant id and the application id go in the `Tenant` section of `config\MailboxTransfer.config.local.psd1` (chapter 12); the console shows them on its Setup page. `tools\Grant-LabConsent.ps1` is a lab helper that does the registration changes and the consent for one user; read it before use.
+An **app registration**, a public client: under **Authentication**, the platform **Mobile and desktop applications** with the redirect URI `ms-appx-web://microsoft.aad.brokerplugin/<application (client) id>` (the Windows sign-in window, WAM, needs it; Entra answers AADSTS50011 without it, and the tool then names this exact URI), **Allow public client flows** on (needed for the device code, otherwise error AADSTS7000218), the delegated permissions below, **admin consent**. `http://localhost`, which earlier versions asked for, is no longer needed for the interactive sign-in; it does no harm if it is there (`Auth.RedirectUri` still names it for the application that keeps the token cache and runs the code flow). Your tenant id and the application id go in the `Tenant` section of `config\MailboxTransfer.config.local.psd1` (chapter 12); the console shows them on its Setup page. The `tools\` folder of the repository holds a developer helper that does the registration changes and the consent for one user; read it before use.
+
+**How the Windows sign-in window is loaded.** The tool ships neither MSAL nor the Windows broker. MSAL is read from the installed `Microsoft.Graph.Authentication` module (the newest one, or the one already loaded in the session). The broker (`Microsoft.Identity.Client.Broker.dll`, with `Microsoft.Identity.Client.NativeInterop.dll` and the native `msalruntime.dll` of the architecture, `_x86` or `_arm64` for those) is loaded from the same `Dependencies` folder of that module, and must be of the same version as that MSAL (module 2.41.1 has both at 4.90). The sign-in is a Windows window opened over the console window of the command line, or over the window of the console of the tool; the operator types the account (nothing is loaded into a browser profile) and the broker keeps the tokens it obtains, so later runs are silent. When the module is older or missing, or the component cannot be loaded, the **Sign-in component (MSAL)** light of the Setup page says so, with the reason, and the sign-in uses the device code (never the system browser). The DPAPI token cache (`Auth.CacheFile`) keeps serving silent sign-ins and the tokens obtained with a code.
 
 ### 4.3 Minimum delegated permissions per task (a person signs in)
 
@@ -244,7 +246,7 @@ An **app registration**, a public client: redirect URI `http://localhost`, **All
 
 A `ReadWrite` variant is accepted for the matching `Read` (`MailboxFolder.ReadWrite` for `MailboxFolder.Read`, `MailboxItem.ReadWrite` for `MailboxItem.Read`, `Mail.ReadWrite` for `Mail.Read`).
 
-One consent covering everything for a first lab: `MailboxFolder.ReadWrite`, `MailboxItem.Read`, `MailboxItem.ImportExport`, `Mail.Read` (and `User.Read.All` if wanted).
+One consent covering everything for a first try: `MailboxFolder.ReadWrite`, `MailboxItem.Read`, `MailboxItem.ImportExport`, `Mail.Read` (and `User.Read.All` if wanted).
 
 ### 4.4 Where the mailbox ids come from
 
@@ -274,10 +276,10 @@ Writing into a shared mailbox, or running with no person at the keyboard (schedu
 ```
 
 - The certificate is found in `CurrentUser\My`, then `LocalMachine\My` (it needs its private key), or read from a `.pfx` (loaded in memory only). Its public part (`.cer`) is uploaded to the app registration (Certificates & secrets). The token (scope `https://graph.microsoft.com/.default`) is kept in memory; nothing is written to disk.
-- `-TenantId` and `-ClientId` are never taken from the `Tenant` defaults of a delegated sign-in: give them, or set `Auth.AppTenantId` / `Auth.AppClientId` (and `Auth.CertificateThumbprint` or `Auth.CertificatePath` with `-AppOnly`). `-UserPrincipalName` is required and never defaulted; the mailbox ids of the configuration are not used for it.
+- `-ClientId` is never taken from the `Tenant` defaults of a delegated sign-in: give it, or set `Auth.AppClientId` (and `Auth.CertificateThumbprint` or `Auth.CertificatePath` with `-AppOnly`). The tenant is `-TenantId`, else `Auth.AppTenantId`, else `Tenant.TenantId` (the application is in the same tenant in practice). `-UserPrincipalName` is required and never defaulted; the user and the mailbox ids of the configuration are not used for it.
 - A mailbox in the scope is found from its address alone; `-MailboxId` with an address or an `MBX:...` id works as in the delegated mode. `-DeviceCode` and `-NoPrompt` have no meaning here.
 - The console offers **The application (certificate)** in the Sign-in box of its Setup page. The tenant, the application id and the thumbprint are read from the `Auth` section of the configuration (`AppTenantId`, `AppClientId`, `CertificateThumbprint`), so nobody types them at each run; **Change for this run** replaces them for the current window only (nothing is saved). The address of the mailbox to work on is typed on the From page. It does not show the end date of the certificate: look at it with `Get-ChildItem Cert:\CurrentUser\My | Format-Table Subject, NotAfter, Thumbprint`, and renew the certificate before it ends (a sign-in with an expired certificate fails).
-- `Get-MbtAppPermission -Mode <mode>` prints the table below for a mode. `tools\New-MbtAppOnlyLab.ps1` is an optional script for a lab: it creates a dedicated application and a self-signed certificate and prints the steps with the ids filled in (`-WhatIf` first). The product never runs it.
+- `Get-MbtAppPermission -Mode <mode>` prints the table below for a mode. `tools\New-MbtAppOnlyLab.ps1` is an optional developer script: it creates a dedicated application and a self-signed certificate and prints the steps with the ids filled in (`-WhatIf` first). The product never runs it.
 
 | Task | Application permission (Microsoft Graph) | Why |
 |---|---|---|
@@ -536,7 +538,7 @@ A long job is run by the entry script in a child process. The console never read
 
 - `-EventsFile <path>`: one JSON object per line (UTF-8, no BOM, flushed at each line). The folder is the job folder; `status.json` (the state for the **Continue a job** list) is written beside it.
 - `-StopFile <path>`: when the file exists the job stops like Ctrl+C: requests in flight finish, state is saved, **exit 2**, next `continue`, reason `stopped`. Looked at when the script starts, then every second.
-- `-KeepAwake`: Windows does not sleep by idle while the script runs. A closed lid, a chosen Sleep and a restart still stop the PC.
+- `-KeepAwake`: Windows does not sleep by idle while the script runs. A closed lid, a chosen Sleep and a restart still stop the PC. Off unless given; the console offers it in the **Expert mode** of its Verify pages, unticked.
 - `-NoPrompt`: silent sign-in only; without a valid token, exit 2, error `signin-required`.
 - Event kinds: `plan`, `step`, `object`, `item`, `wait`, `rate`, `warn`, `decision`, `error`, `result`, `slept`, `info`.
 - The console keeps each job in `<work folder>\jobs\<date>-<task>-<id>\`: `request.json`, `events.jsonl`, `status.json`, `stdout.txt`, `report.csv`, `report.json`; the selections it writes for the command line are in `<work folder>\selections\`. The default work folder is `%LOCALAPPDATA%\MailboxTransfer`. A run changed in **Expert mode** passes its values to the command as parameters; no configuration file is written, and the configuration file of the package is never modified.
@@ -597,14 +599,14 @@ Memory does not depend on the size of an item, in both directions: the peak work
 | `Graph.ExportBatchSize` | 20 | 1 to 20 |
 | `Graph.ItemPageSize` | 0 | `$top` of item listings; 0 = the service chooses |
 | `Auth.Scopes` | `https://graph.microsoft.com/.default` | |
-| `Auth.RedirectUri` | `http://localhost` | |
+| `Auth.RedirectUri` | `http://localhost` | no longer needed for the interactive sign-in (the Windows sign-in window uses `ms-appx-web://microsoft.aad.brokerplugin/<client id>`, chapter 4.2); it stays on the application of the token cache and the code flow, where it is harmless |
 | `Auth.CacheFile` | `%LOCALAPPDATA%\MailboxTransfer\token.cache` | token cache, encrypted with DPAPI for the current user |
 | `Output.Root` | `.\out` | |
 | `Tenant.TenantId`, `ClientId`, `UserPrincipalName` | empty | the section an operator fills in: the defaults of the command line and the values shown on the Setup page of the console; also parameters. A file of an earlier version that says `Lab` instead of `Tenant` is read the same way (a key written in one of the two sections is seen in both, `Tenant` first) |
 | `Tenant.PrimaryMailboxId`, `ArchiveMailboxId` | empty | `MBX:<guid>@<tenant>`; empty: read through Graph when allowed |
-| `Lab.UserObjectId` | empty | only for `tools\Grant-LabConsent.ps1` |
-| `Lab.SourceFolder`, `TargetFolder` | empty | defaults of the lab script |
-| `Auth.AppTenantId`, `AppClientId` | empty | the tenant and the application of the certificate sign-in (chapter 4.6); the console reads them on its Setup page; `-TenantId` / `-ClientId` win |
+| `Lab.UserObjectId` | empty | only for a developer script of `tools\` |
+| `Lab.SourceFolder`, `TargetFolder` | empty | defaults of the developer scripts |
+| `Auth.AppTenantId`, `AppClientId` | empty | the tenant and the application of the certificate sign-in (chapter 4.6); the console reads them on its Setup page; `-TenantId` / `-ClientId` win. An empty `AppTenantId` means `Tenant.TenantId` |
 | `Auth.CertificateThumbprint`, `CertificatePath` | empty | the certificate used by `-AppOnly`; `-CertificateThumbprint` / `-CertificatePath` win |
 
 An unknown section or key is refused with its name.
@@ -620,6 +622,9 @@ An unknown section or key is refused with its name.
 | 403 `ErrorAccessDenied`, *Delegate access to this API requires the following permissions…* | The token lacks a permission, or you work on another user's mailbox with a delegated token. | The message names the permissions. See 4.3 and 4.5. |
 | 404 `ErrorItemNotFound` on a folder listing of a shared mailbox | The signed-in user has no right on that mailbox. | Grant FullAccess; allow up to 60 minutes. |
 | AADSTS7000218 | **Allow public client flows** is off. | Switch it on in the app registration. |
+| AADSTS50011 (the tool says *does not accept the Windows sign-in window yet* and names the URI) | The redirect URI of the Windows sign-in window is not on the app registration. | Add `ms-appx-web://microsoft.aad.brokerplugin/<client id>` under **Authentication**, **Mobile and desktop applications**, or use `-DeviceCode` meanwhile. |
+| *The Windows sign-in window cannot be used (…). A code is used instead.* | `Microsoft.Graph.Authentication` is missing, older, or its Windows sign-in component cannot be loaded. | `Update-Module Microsoft.Graph.Authentication`, then open a new `pwsh`; the code flow works meanwhile. |
+| The sign-in window does not appear | It is behind the console window, or in a session without a desktop. | Look in the taskbar; use `-DeviceCode`. |
 | AADSTS50173, AADSTS700082 | The sign-in grant expired. | Sign in again. |
 | 308, `ErrorArchiveFolderMovedPermanently`, 409 | A folder lives in an auxiliary archive. | Followed by the engine. Nothing to do. |
 | A folder *deferred*, exit 2 | Microsoft is moving it. | Run the same command later. |

@@ -88,8 +88,8 @@ $screens = [ordered]@{
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.
 $callouts = @{
-    Setup = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 592, 650), @(5, 1252, 913))
-    SetupApplication = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 592, 716), @(5, 1252, 913))
+    Setup = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 1252, 913))
+    SetupApplication = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 1252, 913))
     TaskWhat = @(@(1, 50, 116), @(2, 16, 214), @(3, 16, 372), @(4, 866, 372))
     ExportFromSignedOut = @(@(1, 16, 190), @(2, 30, 263), @(3, 30, 415))
     ExportFromCode = @(@(1, 16, 190), @(2, 16, 330))
