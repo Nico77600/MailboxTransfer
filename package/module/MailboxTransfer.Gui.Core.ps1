@@ -631,6 +631,15 @@ function Start-MbtGuiWork {
     Step-MbtGuiWork $Worker
 }
 
+function Write-MbtGuiFault {
+    <# A step of the console that failed after an engine call: written to the log (with where it failed), so that a page that stops changing can be explained. #>
+    param([string]$Where, $Record)
+    Write-Verbose "${Where}: $Record"
+    if (Get-Command Write-MbtLog -ErrorAction SilentlyContinue) {
+        try { Write-MbtLog -Level FAIL -Message ('console: {0} failed: {1} {2}' -f $Where, $Record, ($Record.ScriptStackTrace -split "`r?`n" | Select-Object -First 1)) } catch { Write-Verbose "log: $_" }
+    }
+}
+
 function Step-MbtGuiWork {
     param([Parameter(Mandatory)]$Worker)
     if ($Worker.Inline) { return }
@@ -643,8 +652,8 @@ function Step-MbtGuiWork {
             if ($cur.Shell.HadErrors) { $err = ($cur.Shell.Streams.Error | Select-Object -First 1).ToString() }
         } catch { $err = $_.Exception.Message }
         $cur.Shell.Dispose()
-        if ($err) { if ($cur.OnError) { try { & $cur.OnError $err } catch { Write-Verbose "OnError: $_" } } }
-        elseif ($cur.OnDone) { try { & $cur.OnDone $result } catch { Write-Verbose "OnDone: $_" } }
+        if ($err) { if ($cur.OnError) { try { & $cur.OnError $err } catch { Write-MbtGuiFault 'OnError' $_ } } }
+        elseif ($cur.OnDone) { try { & $cur.OnDone $result } catch { Write-MbtGuiFault 'OnDone' $_ } }
     }
     if (-not $Worker.Current -and $Worker.Queue.Count -gt 0) {
         $job = $Worker.Queue.Dequeue()

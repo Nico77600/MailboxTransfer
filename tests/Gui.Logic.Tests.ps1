@@ -441,3 +441,24 @@ Describe 'Report' {
         (Import-Csv -LiteralPath (Join-Path $TestDrive 'job\report.csv')).Count | Should -Be 2
     }
 }
+
+Describe 'Results of the engine handed to the pages' {
+    It 'the worker hands an array: an engine call whose page expects one object unwraps it (the sign-in gives one object, never an array)' {
+        $file = Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1'
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+        $raw = foreach ($call in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-MbtGuiWork' }, $true)) {
+            $i = [array]::FindIndex([object[]]$call.CommandElements, [Predicate[object]] { param($x) $x -is [Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -eq 'OnDone' })
+            if ($i -ge 0 -and $call.CommandElements[$i + 1].Extent.Text -eq '$OnDone') {
+                $assign = $call.Parent; while ($assign -and $assign -isnot [Management.Automation.Language.AssignmentStatementAst]) { $assign = $assign.Parent }
+                $assign.Left.Extent.Text
+            }
+        }
+        @($raw | Sort-Object) | Should -Be @('$e.SaveSelection', '$e.SaveSelections') -Because 'these two hand a path that the page reads as an array; every other call gives @($res)[0]'
+        (Get-Content -LiteralPath $file -Raw) | Should -Match '(?s)\$e\.SignIn = .*?-OnDone \{ param\(\$res\) & \$OnDone @\(\$res\)\[0\] \}'
+    }
+    It 'a page step that fails after an engine call is written down, not raised' {
+        $record = try { throw 'boom' } catch { $_ }
+        { Write-MbtGuiFault 'OnDone' $record } | Should -Not -Throw
+    }
+}

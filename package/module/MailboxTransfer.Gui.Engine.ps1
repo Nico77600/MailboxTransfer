@@ -123,7 +123,7 @@ function New-MbtGuiRealEngine {
     # -LogFolder: where the log of the sign-in is written (each stage of it); -Cancel: a CancellationTokenSource that ends the wait for the window or the code
     $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow, $LogFolder, $Cancel)
         $token = if ($Cancel) { $Cancel.Token } else { [Threading.CancellationToken]::None }
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App, [long]$ParentWindow, [string]$LogFolder, $token) -OnDone $OnDone -OnError $OnError -Script {
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App, [long]$ParentWindow, [string]$LogFolder, $token) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
             param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app, $parent, $logFolder, $cancelToken)
             if ($logFolder) { try { $null = Start-MbtLog -Directory $logFolder } catch { Write-Verbose "no log: $_" } }
             $cfg = Import-MbtConfiguration

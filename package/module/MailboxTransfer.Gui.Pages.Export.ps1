@@ -180,8 +180,9 @@ function New-MbtGuiSignInCard {
         $out.Margin = [Windows.Thickness]::new(0)
         $row = New-GuiRow -Box $box -Button $out
         $tok = $s.Token
-        $missing = if ($tok -and @($tok.Missing).Count) { (@($tok.Missing) -join ', ') } else { 'Nothing' }
-        $facts = New-GuiFacts @(@('Access', $(if ($tok) { [string]$tok.Access } else { 'Delegated (you, with your rights)' })), @('Can read', $(if ($tok -and $tok.CanReadMail) { 'Mail, folders, items (live view)' } else { 'Folders and items (listing without subjects)' })), @('Missing', $(if ($missing -eq 'Nothing') { New-GuiText 'Nothing' 'Muted' } else { $missing })))
+        $gaps = @(Get-MbtGuiProp $tok 'Missing' @())
+        $missing = if ($gaps.Count) { ($gaps -join ', ') } else { 'Nothing' }
+        $facts = New-GuiFacts @(@('Access', $(if ($tok) { [string](Get-MbtGuiProp $tok 'Access' 'Delegated (you, with your rights)') } else { 'Delegated (you, with your rights)' })), @('Can read', $(if ($tok -and (Get-MbtGuiProp $tok 'CanReadMail' $false)) { 'Mail, folders, items (live view)' } else { 'Folders and items (listing without subjects)' })), @('Missing', $(if ($missing -eq 'Nothing') { New-GuiText 'Nothing' 'Muted' } else { $missing })))
         $more = New-GuiMore -Summary 'Sign-in details' -Content @($facts)
         $msgs = @((New-GuiMessage -Kind ok -Icon check -Text $(if ($s.AuthMode -eq 'app') { "Connected as the application (chosen in Setup), working on **$($s.Account)**. Nothing is kept on this PC." } else { "Signed in as **$($s.Account)** (delegated, chosen in Setup). The sign-in is kept on this PC, encrypted for your Windows account." })))
         if ($tok -and -not $tok.CanReadMail) { $msgs += New-GuiMessage -Kind warn -Icon warn -Text 'Subjects need the Mail.Read permission. You can still export.' }
