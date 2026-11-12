@@ -1063,6 +1063,29 @@ Describe 'Browse: module functions and the entry script' {
         { Invoke-Entry $w ($common + @{ Folder = 'Inbox'; ItemId = '9' }) } | Should -Throw '*the listing has 5 row(s)*'
     }
 
+    It 'the command line values, the mailbox id and the folder path are accepted in any case, and give what the exact spelling gives' {
+        $w = New-World
+        $common = @{ PrimaryMailboxId = $script:Src; StorePath = (Join-Path $script:Tmp 'cli-none') }
+        function Get-Rows([string]$Text) { @($Text -split "`r?`n" | Where-Object { $_ -match '^\s+\d+\s+2026-\d\d-\d\d \d\d:\d\d\s' }) }
+        $exact = Invoke-Entry $w ($common + @{ Mode = 'Browse'; Folder = 'Inbox/Projects'; Top = 0 })
+        $exact | Should -Match 'folder Inbox/Projects: 3 item\(s\)'
+        $lower = Invoke-Entry $w ($common + @{ Mode = 'browse'; Folder = 'inbox/PROJECTS'; Top = 0 })
+        $lower | Should -Match 'folder Inbox/Projects: 3 item\(s\)'
+        (Get-Rows $lower) | Should -Be (Get-Rows $exact)
+        foreach ($sort in 'ReceivedDescending', 'ReceivedAscending', 'SentDescending', 'SentAscending', 'SubjectAscending', 'SubjectDescending') {
+            $a = Invoke-Entry $w ($common + @{ Mode = 'Browse'; Folder = 'Inbox'; Top = 0; Sort = $sort })
+            foreach ($spelling in $sort.ToLowerInvariant(), $sort.ToUpperInvariant()) {
+                $b = Invoke-Entry $w ($common + @{ Mode = 'Browse'; Folder = 'inbox'; Top = 0; Sort = $spelling })
+                (Get-Rows $b) | Should -Be (Get-Rows $a) -Because $spelling
+                (Get-Rows $b).Count | Should -Be 5
+            }
+        }
+        $arch = Invoke-Entry $w @{ Mode = 'browse'; Mailbox = 'archive'; ArchiveMailboxId = $script:Arch.ToUpperInvariant(); StorePath = (Join-Path $script:Tmp 'cli-none') }
+        $arch | Should -Match 'browsing the Archive mailbox MBX:aaaaaaaa'
+        $arch | Should -Match 'Old Mail\s+4 item\(s\)'
+        $w.Mail.RequestsOf("/users/$($script:Arch)/") | Should -BeGreaterThan 0
+    }
+
     It '-Mode Browse -Mailbox AuxArchive: tree and sizes from the import-export API, a note that the details come after the export, no Mail API request' {
         $w = New-World
         $common = @{ Mode = 'Browse'; Mailbox = 'AuxArchive'; MailboxId = $script:Aux1; StorePath = (Join-Path $script:Tmp 'cli-none'); LocationsFile = $null }

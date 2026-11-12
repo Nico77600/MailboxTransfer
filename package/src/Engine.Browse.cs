@@ -1489,7 +1489,7 @@ namespace MailboxTransfer
                         BrowseFolder root = own == null ? null : own.Folders.FirstOrDefault(f => f.Id == pf.SourceFolderId || (pf.ExportFolderId != null && f.Id == pf.ExportFolderId))
                             ?? own.Folders.FirstOrDefault(f => string.Equals(f.Path, pf.Path, StringComparison.OrdinalIgnoreCase));
                         if (root == null) { plan.Notes.Add("'" + pf.Path + "': the folders below it could not be counted (the folder is not in the tree)."); continue; }
-                        var covered = own.Folders.Where(f => (f.Path == root.Path || f.Path.StartsWith(root.Path + "/", StringComparison.OrdinalIgnoreCase))).ToList();
+                        var covered = own.Folders.Where(f => (string.Equals(f.Path, root.Path, StringComparison.OrdinalIgnoreCase) || f.Path.StartsWith(root.Path + "/", StringComparison.OrdinalIgnoreCase))).ToList();
                         BrowseTotals t = BrowseTotals.Of(covered);
                         pf.Items = t.Items; pf.FolderCount = t.Folders; pf.Bytes = t.FoldersWithUnknownSize == t.Folders ? -1 : t.KnownSizeBytes; pf.FoldersUnknownSize = t.FoldersWithUnknownSize;
                     }
@@ -1499,7 +1499,7 @@ namespace MailboxTransfer
                         if (!infoTrees.TryGetValue(pf.MailboxId, out tree)) { tree = Api.GetFolderTree(pf.MailboxId, ct); infoTrees[pf.MailboxId] = tree; }
                         FolderInfo root = tree.FirstOrDefault(f => f.Id == pf.ExportFolderId);
                         if (root == null) { plan.Notes.Add("'" + pf.Path + "': the folders below it could not be counted (the folder is not in the tree of " + pf.MailboxId + ")."); continue; }
-                        var covered = tree.Where(f => f.Path == root.Path || (f.Path != null && f.Path.StartsWith(root.Path + "/", StringComparison.OrdinalIgnoreCase))).ToList();
+                        var covered = tree.Where(f => string.Equals(f.Path, root.Path, StringComparison.OrdinalIgnoreCase) || (f.Path != null && f.Path.StartsWith(root.Path + "/", StringComparison.OrdinalIgnoreCase))).ToList();
                         pf.Items = covered.Sum(f => (long)f.TotalItemCount); pf.FolderCount = covered.Count; pf.Bytes = -1; pf.FoldersUnknownSize = covered.Count;
                     }
                 }

@@ -886,4 +886,84 @@ Describe 'ExportStore' {
             finally { $r.Dispose() }
         }
     }
-}
+
+    Context 'Mailbox ids are compared without case' {
+        BeforeAll {
+            $script:CaseId = 'MBX:abcdef01-2345-6789-abcd-ef0123456789@1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
+            $script:CaseIdUpper = $script:CaseId.ToUpperInvariant()
+            function Invoke-Write {
+                param([string]$ExportPath, [string[]]$Sql)
+                $c = [Microsoft.Data.Sqlite.SqliteConnection]::new("Data Source=$(Join-Path $ExportPath 'catalog.db');Pooling=False"); $c.Open()
+                try { foreach ($q in $Sql) { $cmd = $c.CreateCommand(); $cmd.CommandText = $q; [void]$cmd.ExecuteNonQuery() } } finally { $c.Dispose() }
+            }
+            # A store whose id columns are case sensitive: byte-wise unique columns.
+            function New-OldColumnsStore {
+                param([string]$Name)
+                $s = New-TestStore $Name; $path = $s.Root; $s.Dispose()
+                Invoke-Write $path @(
+                    'PRAGMA writable_schema=ON',
+                    "UPDATE sqlite_master SET sql = replace(sql, 'UNIQUE COLLATE NOCASE', 'UNIQUE') WHERE type='table' AND name='mailbox'",
+                    'PRAGMA writable_schema=OFF',
+                    'DROP TABLE mailboxLocation',
+                    'CREATE TABLE mailboxLocation(mailbox_id TEXT PRIMARY KEY, kind INTEGER NOT NULL, upn TEXT, source TEXT NOT NULL, detail TEXT, rank INTEGER NOT NULL DEFAULT 1, discovered_utc INTEGER NOT NULL)')
+                $path
+            }
+        }
+
+        It 'one mailbox row whatever the case of the id, for the mailbox, its folders and its items' {
+            $s = New-TestStore 'case-ids'
+            try {
+                $k1 = $s.UpsertMailbox([MailboxTransfer.StoreMailbox]@{ Id = $script:CaseId; Kind = 'Primary'; Upn = 'a@contoso.test'; DisplayName = 'A' })
+                $k2 = $s.UpsertMailbox([MailboxTransfer.StoreMailbox]@{ Id = $script:CaseIdUpper; Kind = 'Primary'; Upn = 'a@contoso.test'; DisplayName = 'A again' })
+                $k3 = $s.EnsureMailbox([MailboxTransfer.StoreMailbox]@{ Id = 'mbx:' + $script:CaseIdUpper.Substring(4); Kind = 'Archive' })
+                $k2 | Should -Be $k1; $k3 | Should -Be $k1
+                @($s.GetMailboxes()).Count | Should -Be 1
+                $s.GetMailboxes()[0].Id | Should -BeExactly $script:CaseId -Because 'the spelling it was first written with is kept'
+                $s.GetMailboxes()[0].DisplayName | Should -Be 'A again'
+                $s.GetMailboxes()[0].Kind | Should -Be 'Primary' -Because 'EnsureMailbox leaves an existing mailbox as it is'
+                $s.UpsertFolders(@([MailboxTransfer.StoreFolder]@{ MailboxId = $script:CaseIdUpper; FolderId = 'F-1'; DisplayName = 'Inbox' })) | Out-Null
+                $entries = [System.Collections.Generic.List[MailboxTransfer.StoreItemEntry]]::new()
+                $entries.Add([MailboxTransfer.StoreItemEntry]@{ MailboxId = $script:CaseId; ItemId = 'I-1'; FolderId = 'F-1'; ChangeKey = 'c1'; ItemType = 'IPM.Note'; Size = 10 })
+                $entries.Add([MailboxTransfer.StoreItemEntry]@{ MailboxId = $script:CaseIdUpper; ItemId = 'I-1'; FolderId = 'F-1'; ChangeKey = 'c1'; ItemType = 'IPM.Note'; Size = 10 })
+                $s.UpsertItems($entries) | Out-Null
+                @($s.GetItemStats($script:CaseId) | ForEach-Object Count | Measure-Object -Sum).Sum | Should -Be 1 -Because 'the same item'
+                $s.FindFolderKey($script:CaseId, 'F-1') | Should -Be ($s.FindFolderKey($script:CaseIdUpper, 'F-1'))
+                $s.FindFolderKey($script:CaseId, 'f-1') | Should -BeNullOrEmpty -Because 'a folder id is a machine identifier, it stays exact'
+            } finally { $s.Dispose() }
+        }
+
+        It 'a store whose unique columns are case sensitive still finds a mailbox by any spelling, and does not add a second row for it' {
+            $path = New-OldColumnsStore 'case-old'
+            Invoke-Write $path @(
+                "INSERT INTO mailbox(mailbox_id, kind, upn) VALUES('$($script:CaseIdUpper)', 0, 'a@contoso.test')",
+                "INSERT INTO mailbox(mailbox_id, kind, upn) VALUES('$($script:CaseId)', 0, 'a@contoso.test')",
+                "INSERT INTO mailboxLocation(mailbox_id, kind, source, rank, discovered_utc) VALUES('$($script:CaseIdUpper)', 0, 'Parameter', 2, 1)")
+            $s = [MailboxTransfer.ExportStore]::Open($path)
+            try {
+                @($s.GetMailboxes()).Count | Should -Be 2 -Because 'what an older build wrote is left alone'
+                $key = $s.UpsertMailbox([MailboxTransfer.StoreMailbox]@{ Id = 'Mbx:' + $script:CaseId.Substring(4); Kind = 'Primary'; Upn = 'b@contoso.test'; DisplayName = 'B' })
+                $key | Should -Be (@($s.GetMailboxes() | Sort-Object Key)[0].Key) -Because 'the first row of the mailbox is the one that is found, every time'
+                @($s.GetMailboxes()).Count | Should -Be 2
+                $s.EnsureMailbox([MailboxTransfer.StoreMailbox]@{ Id = $script:CaseId; Kind = 'Primary' }) | Should -Be $key
+                $s.UpsertFolders(@([MailboxTransfer.StoreFolder]@{ MailboxId = $script:CaseId; FolderId = 'F-1'; DisplayName = 'Inbox' })) | Out-Null
+                $s.FindFolderKey($script:CaseIdUpper, 'F-1') | Should -Not -BeNullOrEmpty
+                $s.RecordLocation([MailboxTransfer.StoreMailboxLocation]@{ MailboxId = $script:CaseId; Kind = 'Archive'; Source = 'Redirect308'; Rank = 1 }) | Should -BeFalse -Because 'the location is known'
+                @($s.GetLocations()).Count | Should -Be 1
+                $s.RecordLocation([MailboxTransfer.StoreMailboxLocation]@{ MailboxId = $script:CaseId; Kind = 'Archive'; Source = 'OperatorFile'; Rank = 3 }) | Should -BeFalse
+                @($s.GetLocations()).Count | Should -Be 1
+                $s.GetLocations()[0].Source | Should -Be 'OperatorFile'
+            } finally { $s.Dispose() }
+        }
+
+        It 'a new store holds the ids and the locations in case-insensitive columns' {
+            $s = New-TestStore 'case-new'; $path = $s.Root; $s.Dispose()
+            (Invoke-Sql $path "SELECT sql FROM sqlite_master WHERE type='table' AND name IN ('mailbox', 'mailboxLocation') ORDER BY name")[0][0] | Should -BeLike '*COLLATE NOCASE*'
+            (Invoke-Sql $path "SELECT sql FROM sqlite_master WHERE type='table' AND name = 'mailboxLocation'")[0][0] | Should -BeLike '*COLLATE NOCASE*'
+            $r = [MailboxTransfer.ExportStore]::Open($path)
+            try {
+                $null = $r.RecordLocation([MailboxTransfer.StoreMailboxLocation]@{ MailboxId = $script:CaseId; Kind = 'Archive'; Source = 'Parameter'; Rank = 2 })
+                $r.RecordLocation([MailboxTransfer.StoreMailboxLocation]@{ MailboxId = $script:CaseIdUpper; Kind = 'Archive'; Source = 'Redirect308'; Rank = 1 }) | Should -BeFalse
+                @($r.GetLocations()).Count | Should -Be 1
+            } finally { $r.Dispose() }
+        }
+    }}

@@ -69,7 +69,7 @@ namespace MailboxTransfer
             _c.Open();
             // FULL: every state of a row (InFlight, Done...) is on disk when the call returns; a lost one could send an item twice
             Exec("PRAGMA journal_mode=WAL;"); Exec("PRAGMA synchronous=FULL;"); Exec("PRAGMA busy_timeout=10000;");
-            Exec(@"CREATE TABLE IF NOT EXISTS job(jobId INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, targetMailbox TEXT NOT NULL, targetRoot TEXT, createdUtc TEXT NOT NULL);
+            Exec(@"CREATE TABLE IF NOT EXISTS job(jobId INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL COLLATE NOCASE, targetMailbox TEXT NOT NULL, targetRoot TEXT, createdUtc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS pst(jobId INTEGER NOT NULL, pstId TEXT NOT NULL, sourcePath TEXT, workPath TEXT, length INTEGER, lastWriteTicks INTEGER, checkedUtc TEXT, errors INTEGER, warnings INTEGER, repaired INTEGER, note TEXT, PRIMARY KEY(jobId, pstId));
 CREATE TABLE IF NOT EXISTS item(itemKey INTEGER PRIMARY KEY AUTOINCREMENT, jobId INTEGER NOT NULL, pstId TEXT NOT NULL, nid INTEGER NOT NULL, fingerprint TEXT NOT NULL,
   pstPath TEXT, targetPath TEXT, targetMailbox TEXT, targetFolder TEXT, subject TEXT, class TEXT, size INTEGER, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -118,9 +118,10 @@ CREATE INDEX IF NOT EXISTS item_state ON item(jobId, state);");
             }
         }
 
+        /// <summary>The job of that name, case ignored (0 if none). A journal created with a case-sensitive name column may hold several spellings of one name: the most recent job is the one found.</summary>
         public long FindJob(string name)
         {
-            lock (_l) return Scalar<long>("SELECT jobId FROM job WHERE name=@n;", "@n", name);
+            lock (_l) return Scalar<long>("SELECT jobId FROM job WHERE name=@n COLLATE NOCASE ORDER BY jobId DESC LIMIT 1;", "@n", name);
         }
 
         public string JobTarget(long jobId) { lock (_l) return Scalar<string>("SELECT targetMailbox FROM job WHERE jobId=@j;", "@j", jobId); }
@@ -134,7 +135,7 @@ CREATE INDEX IF NOT EXISTS item_state ON item(jobId, state);");
         /// </summary>
         public int AttachFolder(long jobId, string pstId, string targetPath, string targetMailbox, string folderId)
         {
-            lock (_l) return Exec("UPDATE item SET targetFolder=@f, targetMailbox=@m, state='Pending', error=NULL, attempts=0, updatedUtc=@t WHERE jobId=@j AND pstId=@p AND targetPath=@tp AND targetFolder IS NULL AND state='Failed';",
+            lock (_l) return Exec("UPDATE item SET targetFolder=@f, targetMailbox=@m, state='Pending', error=NULL, attempts=0, updatedUtc=@t WHERE jobId=@j AND pstId=@p AND targetPath=@tp COLLATE NOCASE AND targetFolder IS NULL AND state='Failed';",
                 "@f", folderId, "@m", targetMailbox, "@t", Now(), "@j", jobId, "@p", pstId, "@tp", targetPath);
         }
 
@@ -143,7 +144,7 @@ CREATE INDEX IF NOT EXISTS item_state ON item(jobId, state);");
             lock (_l)
             {
                 Exec("INSERT INTO job(name, targetMailbox, targetRoot, createdUtc) VALUES(@n, @m, @r, @t);", "@n", name, "@m", targetMailbox, "@r", targetRoot, "@t", Now());
-                return Scalar<long>("SELECT jobId FROM job WHERE name=@n;", "@n", name);
+                return Scalar<long>("SELECT jobId FROM job WHERE name=@n COLLATE NOCASE ORDER BY jobId DESC LIMIT 1;", "@n", name);
             }
         }
 
@@ -170,7 +171,16 @@ CREATE INDEX IF NOT EXISTS item_state ON item(jobId, state);");
         /// <summary>The identity under which an earlier run of the job recorded this path when it is not <paramref name="pstId"/> (the file changed), else null.</summary>
         public string OtherPstIdForPath(long jobId, string sourcePath, string pstId)
         {
-            lock (_l) return Scalar<string>("SELECT pstId FROM pst WHERE jobId=@j AND sourcePath=@s AND pstId<>@p LIMIT 1;", "@j", jobId, "@s", sourcePath, "@p", pstId);
+            lock (_l)
+                using (SqliteCommand cmd = _c.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT pstId, sourcePath FROM pst WHERE jobId=@j AND pstId<>@p ORDER BY rowid;";
+                    cmd.Parameters.AddWithValue("@j", jobId); cmd.Parameters.AddWithValue("@p", pstId);
+                    using (SqliteDataReader r = cmd.ExecuteReader())
+                        while (r.Read())
+                            if (!r.IsDBNull(1) && string.Equals(r.GetString(1), sourcePath, StringComparison.OrdinalIgnoreCase)) return r.GetString(0);
+                    return null;
+                }
         }
 
         public void SavePst(long jobId, PstImportSource s)
@@ -529,7 +539,7 @@ VALUES(@j,@p,@n,@f,@pp,@tp,@tm,@tf,@s,@c,@z,@st,@e,@u);";
 
         void Problem(string text) { lock (_result.Problems) _result.Problems.Add(text); Log(text); }
 
-        /// <summary>What decides which folder of the target an item goes to, written the same way every time: the target folder, the well-known folders, the file subfolders, the map.</summary>
+        /// <summary>What decides which folder of the target an item goes to, written the same way every time: the target folder, the well-known folders, the file subfolders, the map. Two runs are compared without case (folder names are not case sensitive in a mailbox).</summary>
         public static string TargetOptions(PstImportOptions o)
         {
             string map = o.FolderMap == null ? "" : string.Join("|", o.FolderMap.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase).Select(kv => kv.Key.Trim('/').ToLowerInvariant() + ">" + (kv.Value ?? "").Trim('/')));
@@ -592,13 +602,13 @@ VALUES(@j,@p,@n,@f,@pp,@tp,@tm,@tf,@s,@c,@z,@st,@e,@u);";
             long jobId = _journal.FindJob(_o.JobName);
             bool resumed = jobId != 0;
             if (!resumed) jobId = _journal.CreateJob(_o.JobName, target, _o.TargetFolder);
-            else if (!string.Equals(_journal.JobTarget(jobId), target, StringComparison.Ordinal))
+            else if (!MailboxApi.SameMailbox(_journal.JobTarget(jobId), target))
                 throw new InvalidOperationException("The import job '" + _o.JobName + "' of the journal targets another mailbox (" + _journal.JobTarget(jobId) + "). Give another -JobName.");
             // the same job name with other target options would send the rest of the items to other folders than the first ones
             string options = TargetOptions(_o);
             string was = _journal.JobOptions(jobId);
             if (was == null) _journal.SetJobOptions(jobId, options);
-            else if (!string.Equals(was, options, StringComparison.Ordinal))
+            else if (!string.Equals(was, options, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The import job '" + _o.JobName + "' of the journal was started with other target options (" + was + "), these are " + options +
                     ". Resuming it would send the rest of the items to other folders than the first ones. Give the same options, or another -JobName.");
             _result.JobId = jobId;

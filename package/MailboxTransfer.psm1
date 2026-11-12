@@ -79,7 +79,7 @@ function Assert-MbtPackageIntegrity {
     }
     $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $verifier -ErrorAction Stop
     if ([string]$signature.Status -cne 'Valid' -or $null -eq $signature.SignerCertificate -or
-        $signature.SignerCertificate.Thumbprint -cne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
+        $signature.SignerCertificate.Thumbprint -ne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
         $null -eq $signature.TimeStamperCertificate) {
         throw 'Package integrity: verifier must have the trusted, timestamped owner signature.'
     }
@@ -877,8 +877,16 @@ function ConvertTo-MbtMailboxId {
     param([Parameter(Mandatory)][string]$Value, [Parameter(Mandatory)][string]$TenantId)
     $v = $Value.Trim()
     $guid = [guid]::Empty
-    if ($v -match '^MBX:(?<m>[^@]+)@(?<t>.+)$' -and [guid]::TryParse($Matches.m, [ref]$guid) -and [guid]::TryParse($Matches.t, [ref]$guid)) { return $v }
-    if ([guid]::TryParse($v, [ref]$guid)) { return "MBX:$($guid.ToString())@$TenantId" }
+    $tenantGuid = [guid]::Empty
+    # The canonical form is lower case, so the same mailbox always gets the same id whatever the operator typed.
+    if ($v -match '^(?i:MBX):(?<m>[^@]+)@(?<t>.+)$' -and [guid]::TryParse($Matches.m, [ref]$guid) -and [guid]::TryParse($Matches.t, [ref]$tenantGuid)) {
+        return "MBX:$($guid.ToString())@$($tenantGuid.ToString())"
+    }
+    if ([guid]::TryParse($v, [ref]$guid)) {
+        $tenant = $TenantId.Trim()
+        if ([guid]::TryParse($tenant, [ref]$tenantGuid)) { $tenant = $tenantGuid.ToString() } else { $tenant = $tenant.ToLowerInvariant() }
+        return "MBX:$($guid.ToString())@$tenant"
+    }
     throw "'$Value' is not a mailbox id: expected MBX:<mailbox guid>@<tenant id> (or the bare mailbox guid; an SMTP address / UPN is resolved by Resolve-MbtMailboxAddress). Get it with Exchange Online PowerShell: Get-MailboxLocation -User <upn>."
 }
 

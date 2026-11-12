@@ -616,6 +616,20 @@ Describe 'Mailbox ids and folder creation' {
         { ConvertTo-MbtMailboxId -Value 'adele' -TenantId $script:Tenant } | Should -Throw '*Get-MailboxLocation*'
         { ConvertTo-MbtMailboxId -Value 'MBX:nope@nope' -TenantId $script:Tenant } | Should -Throw '*not a mailbox id*'
     }
+    It 'gives one canonical lower-case id whatever the case of the prefix, the guids and the tenant, for the full and the bare form' {
+        $mailbox = '11111111-aaaa-bbbb-cccc-dddddddddddd'
+        $tenant = $script:Tenant
+        $canonical = "MBX:$mailbox@$tenant"
+        foreach ($value in "MBX:$($mailbox.ToUpperInvariant())@$($tenant.ToUpperInvariant())", "mbx:$mailbox@$tenant", "Mbx:$($mailbox.ToUpperInvariant())@$tenant", "  $canonical  ") {
+            ConvertTo-MbtMailboxId -Value $value -TenantId $tenant | Should -BeExactly $canonical -Because $value
+        }
+        foreach ($tenantId in $tenant, $tenant.ToUpperInvariant()) {
+            ConvertTo-MbtMailboxId -Value $mailbox.ToUpperInvariant() -TenantId $tenantId | Should -BeExactly $canonical
+            ConvertTo-MbtMailboxId -Value $mailbox -TenantId $tenantId | Should -BeExactly $canonical
+        }
+        ConvertTo-MbtMailboxId -Value $mailbox.ToUpperInvariant() -TenantId 'Contoso.OnMicrosoft.com' | Should -BeExactly "MBX:$mailbox@contoso.onmicrosoft.com"
+        { ConvertTo-MbtMailboxId -Value 'MBX:NOPE@NOPE' -TenantId $tenant } | Should -Throw '*not a mailbox id*'
+    }
     It 'reads the primary mailbox id from GET /users/{upn}/settings/exchange' {
         $h = [MailboxTransfer.Tests.FakeHandler]::new()
         $h.Enqueue(200, ('{"primaryMailboxId":"' + $script:Mbx + '"}'))
