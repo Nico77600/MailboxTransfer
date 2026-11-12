@@ -295,11 +295,11 @@ function Build-MbtGuiRepairFromPage {
             $pills = New-GuiStack @($(if ($chk.Errors) { $p = New-GuiPill "$($chk.Errors) errors" 'bad'; $p.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $p }), $(if ($chk.Warnings) { New-GuiPill "$($chk.Warnings) warnings" 'warn' })) -Orientation Horizontal
             $resBody.Add($pills)
             $resBody.Add((New-GuiMessage -Kind warn -Icon warn -Text $(if ($chk.Errors) { '**The file has damage, but it can probably be repaired.** Outlook may refuse to open it, or show folders that are empty or missing items.' } else { '**The file has small problems.** Outlook can probably open it. A repaired copy puts the counters right.' })))
-            $rows = foreach ($f in @($chk.Findings)) {
+            $rows = @(foreach ($f in @($chk.Findings)) {
                 $label = New-GuiStack @((New-GuiStack @((New-GuiPill $(if ($f.Severity -eq 'Error') { 'Error' } else { 'Warning' }) $(if ($f.Severity -eq 'Error') { 'bad' } else { 'warn' }) -Light), (New-GuiText $f.Text 'Body')) -Orientation Horizontal), (New-GuiText $f.Code 'Small'))
                 $label.Children[0].Children[1].Margin = [Windows.Thickness]::new(8, 0, 0, 0)
                 , @($label, [string]$f.Count, $f.Level)
-            }
+            })
             $resBody.Add((New-GuiTable -Headers @('What was found', 'Count', 'Repaired by level') -Rows @($rows) -Widths @('*', '70', '130') -Right @(1)))
             $resBody.Add((New-GuiText "Recommended: **$($chk.Recommended)**. It also does everything Recompute does." 'Hint'))
         } else {

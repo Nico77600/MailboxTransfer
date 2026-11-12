@@ -320,7 +320,15 @@ function ConvertTo-MbtGuiHandler {
         if ($v.Name -notin $skip -and -not ($v.Options -band $locked)) { $vars.Add([psvariable]::new($v.Name, $v.Value)) }
     }
     $inner = $Block
-    return { param($sender, $e) $null = $inner.InvokeWithContext($null, $vars, @($sender, $e)) }.GetNewClosure()
+    return {
+        param($sender, $e)
+        try { $null = $inner.InvokeWithContext($null, $vars, @($sender, $e)) }
+        catch {
+            $record = if ($_.Exception.InnerException -is [Management.Automation.IContainsErrorRecord]) { $_.Exception.InnerException.ErrorRecord } else { $_ }
+            Write-MbtGuiFault 'a control of the page' $record
+            throw
+        }
+    }.GetNewClosure()
 }
 
 function Add-MbtGuiHandler {
@@ -635,9 +643,15 @@ function Write-MbtGuiFault {
     <# A step of the console that failed after an engine call: written to the log (with where it failed), so that a page that stops changing can be explained. #>
     param([string]$Where, $Record)
     Write-Verbose "${Where}: $Record"
-    if (Get-Command Write-MbtLog -ErrorAction SilentlyContinue) {
-        try { Write-MbtLog -Level FAIL -Message ('console: {0} failed: {1} {2}' -f $Where, $Record, ($Record.ScriptStackTrace -split "`r?`n" | Select-Object -First 1)) } catch { Write-Verbose "log: $_" }
-    }
+    try {
+        $work = if ($script:Gui -and $script:Gui.S -and $script:Gui.S.WorkFolder) { [string]$script:Gui.S.WorkFolder } else { $null }
+        if (-not $work) { return }
+        $dir = Join-Path $work 'logs'
+        $null = [IO.Directory]::CreateDirectory($dir)
+        $trace = (@([string]$Record.ScriptStackTrace -split "`r?`n" | Where-Object { $_ } | Select-Object -First 6) -join ' < ')
+        $line = '{0} [{1,-6}] console: {2} failed: {3} | at {4}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff'), 'FAIL', $Where, ($Record -replace '[\r\n]+', ' '), $trace
+        [IO.File]::AppendAllText((Join-Path $dir ('MailboxTransfer_{0}.log' -f (Get-Date).ToString('yyyyMMdd'))), $line + "`r`n", [Text.UTF8Encoding]::new($false))
+    } catch { Write-Verbose "log: $_" }
 }
 
 function Step-MbtGuiWork {

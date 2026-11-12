@@ -479,7 +479,7 @@ function New-MbtGuiObjectDetailsColumn {
         $items.Add((New-GuiText $(if ($o.Msg) { $o.Msg } else { 'Microsoft refused it. Nothing was created.' }) 'Hint'))
     } elseif ($rel.Count) {
         $items.Add((New-GuiText "$($rel.Count) item$(if ($rel.Count -gt 1) { 's were' } else { ' was' }) sent but Microsoft did not answer. We are looking in the folder to see if they arrived." 'Hint'))
-        $rows = foreach ($r in $rel) { , @($r.Key, (New-GuiPill $(if ($r.State -eq 'decision') { 'Two matches' } else { 'Checking' }) 'warn')) }
+        $rows = @(foreach ($r in $rel) { , @($r.Key, (New-GuiPill $(if ($r.State -eq 'decision') { 'Two matches' } else { 'Checking' }) 'warn')) })
         $items.Add((New-GuiTable -Headers @('Item', 'State') -Rows @($rows) -Widths @('*', 'Auto')))
     } else {
         $stateWord = switch ($o.Tone) { 'ok' { 'Done' } 'run' { 'Running' } 'warn' { 'Needs attention' } default { 'Waiting' } }
@@ -795,7 +795,7 @@ function New-MbtGuiRefusedBlock {
                     "Everything else is done: the job is finished, so **Continue** has nothing left to do. The list below says why, item by item.")))
     $items = @($run.Items | Where-Object { $_.State -eq 'refused' })
     if ($items.Count) {
-        $rows = foreach ($i in ($items | Select-Object -First 25)) { , @((New-GuiStack @((New-GuiText $(if ($i.Key) { $i.Key } else { '(no subject)' }) 'Body'), (New-GuiText $i.Detail 'Small'))), (ConvertTo-MbtGuiRefusalReason $i.Msg)) }
+        $rows = @(foreach ($i in ($items | Select-Object -First 25)) { , @((New-GuiStack @((New-GuiText $(if ($i.Key) { $i.Key } else { '(no subject)' }) 'Body'), (New-GuiText $i.Detail 'Small'))), (ConvertTo-MbtGuiRefusalReason $i.Msg)) })
         $parts.Add((New-GuiMore -Summary "The first $($rows.Count) of $(Format-MbtGuiCount $n) refused items" -Open -Content @((New-GuiTable -Headers @('Item', 'Why it was refused') -Rows @($rows) -Widths @('*', '*')))))
     }
     $csv = [string](Get-MbtGuiCount $run 'report' '')
@@ -857,7 +857,7 @@ function New-MbtGuiRepairDone {
     $parts = @($tiles, $ba, $facts)
     $incomplete = @($run.Items | Where-Object { $_.State -in 'partial', 'lost' })
     if ($incomplete.Count) {
-        $rows = foreach ($w in $incomplete) { $name = New-GuiStack @((New-GuiText $(if ($w.Key) { $w.Key } else { '(no subject)' }) 'Body'), (New-GuiText $w.Detail 'Small')); , @($name, (New-GuiPill $(if ($w.State -eq 'lost') { 'Lost' } else { 'Partial' }) $(if ($w.State -eq 'lost') { 'bad' } else { 'warn' })), $w.Msg) }
+        $rows = @(foreach ($w in $incomplete) { $name = New-GuiStack @((New-GuiText $(if ($w.Key) { $w.Key } else { '(no subject)' }) 'Body'), (New-GuiText $w.Detail 'Small')); , @($name, (New-GuiPill $(if ($w.State -eq 'lost') { 'Lost' } else { 'Partial' }) $(if ($w.State -eq 'lost') { 'bad' } else { 'warn' })), $w.Msg) })
         $parts += New-GuiMore -Summary "The $($incomplete.Count) messages that are not complete" -Content @((New-GuiTable -Headers @('Message', 'Result', 'What was lost') -Rows @($rows) -Widths @('*', '90', '*')))
     }
     $did = @($run.Steps | Where-Object { $_.State -eq 'done' } | ForEach-Object { $x = New-GuiText ([char]0x2022 + '  ' + $_.Title + $(if ($_.Msg) { ': ' + $_.Msg } else { '' })) 'Body'; $x.FontSize = 13; $x })
