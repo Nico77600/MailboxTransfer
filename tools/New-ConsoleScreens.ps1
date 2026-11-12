@@ -18,11 +18,14 @@
 .PARAMETER Version
     The version shown in the corner of the window (default: ModuleVersion of the manifest).
 
+.PARAMETER Mockup
+    The screens of the console mockup, in the order of the flow, named 01-setup, 02-task-what, ... (Get-MbtGuiMockupShots).
+
 .PARAMETER OutDir
     Default: <repository>\out\console-screens.
 #>
 [CmdletBinding()]
-param([string[]]$Scenario, [string[]]$Theme = @('Light', 'Dark'), [string]$OutDir, [int]$Width = 1480, [int]$Height = 940, [string]$Version)
+param([string[]]$Scenario, [string[]]$Theme = @('Light', 'Dark'), [string]$OutDir, [int]$Width = 1480, [int]$Height = 940, [string]$Version, [switch]$Mockup)
 
 if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     $a = @('-NoProfile', '-STA', '-File', $PSCommandPath)
@@ -38,7 +41,10 @@ $Scenario = @($Scenario | ForEach-Object { $_ -split ',' } | Where-Object { $_ }
 if (-not $OutDir) { $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'out\console-screens' }
 foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') { . (Join-Path $package "module\MailboxTransfer.Gui.$f.ps1") }
 $script:GuiRoot = $package
-if (-not $Scenario) { $Scenario = Get-MbtGuiScenarioName }
+if ($Mockup) { $shots = @(Get-MbtGuiMockupShots) } else {
+    if (-not $Scenario) { $Scenario = Get-MbtGuiScenarioName }
+    $n = 0; $shots = @($Scenario | ForEach-Object { $n++; @{ File = ('{0:00}-{1}' -f $n, $_); Scenario = $_ } })
+}
 $stateOnly = $null
 
 function Wait-Dispatcher {
@@ -52,15 +58,14 @@ function Wait-Dispatcher {
 foreach ($t in $Theme) {
     $dir = Join-Path $OutDir $t.ToLowerInvariant()
     $null = New-Item -ItemType Directory -Force -Path $dir
-    $engine = New-MbtGuiFakeEngine -Capability @{ PstImport = $true; EmlExport = $true; EmlImport = $true; SharedMailbox = $true; FolderChoice = $true; PstCopy = $true; PstPreview = $true }
+    $engine = New-MbtGuiFakeEngine -Capability @{ PstImport = $true; EmlExport = $true; EmlImport = $true; SharedMailbox = $true; FolderChoice = $true; PstCopy = $true; PstPreview = $true; AppOnly = $true }
     $window = New-MbtGuiWindow -Engine $engine -Theme $t -WorkFolder 'D:\MailboxTransfer' -EntryScript (Join-Path $package 'module\MailboxTransfer.Gui.DemoJob.ps1') -Version $Version
     $window.WindowStartupLocation = 'Manual'; $window.Left = 0; $window.Top = 0
     $window.Width = $Width + 16; $window.Height = $Height + 39; $window.MinWidth = 0; $window.MinHeight = 0
     $window.Opacity = 0; $window.ShowInTaskbar = $false; $window.ShowActivated = $false
     $window.Show()
-    $n = 0
-    foreach ($name in $Scenario) {
-        $n++
+    foreach ($shot in $shots) {
+        $name = $shot.Scenario
         $g = $script:Gui
         # a clean state for each scenario (the window and its browsers live on)
         $g.S = New-MbtGuiState -WorkFolder 'D:\MailboxTransfer'; $g.Run = $null; $g.Job = $null
@@ -69,12 +74,12 @@ foreach ($t in $Theme) {
         Wait-Dispatcher
         $root = $window.Content
         $root.UpdateLayout()
-        $w = [int]$root.ActualWidth; $h = [int]$root.ActualHeight
+        $w = $Width; $h = $Height
         $bmp = [Windows.Media.Imaging.RenderTargetBitmap]::new($w, $h, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
         $bmp.Render($root)
         $enc = [Windows.Media.Imaging.PngBitmapEncoder]::new()
         $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bmp))
-        $file = Join-Path $dir ('{0:00}-{1}.png' -f $n, $name)
+        $file = Join-Path $dir ($shot.File + '.png')
         $fs = [IO.File]::Create($file); try { $enc.Save($fs) } finally { $fs.Dispose() }
         Write-Host "$t $name -> $file ($w x $h)"
     }

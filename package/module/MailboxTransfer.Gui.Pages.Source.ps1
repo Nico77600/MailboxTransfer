@@ -77,7 +77,7 @@ function New-MbtGuiSourceCard {
         $line = [Windows.Controls.WrapPanel]::new(); $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
         $t = New-GuiText 'A damaged PST? ' 'Small'; $t.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
         $line.Children.Add($t) | Out-Null
-        $lk = New-GuiLink 'Check and repair it first' { $s.Task = 'repair'; $s.Sel = 'repair'; $s.Step = 1; if ($s.ImPath) { $s.RpPath = $s.ImPath }; Show-MbtGuiPage }; $lk.FontSize = 12
+        $lk = New-GuiLink 'Check and repair it first' { $s.Task = 'repair'; $s.Sel = 'repair'; $s.Step = $script:Flows.repair.IndexOf('rpFrom'); if ($s.ImPath) { $s.RpPath = $s.ImPath }; Show-MbtGuiPage }; $lk.FontSize = 12
         $line.Children.Add($lk) | Out-Null
         $content.Add($line)
     }
@@ -167,8 +167,44 @@ function Build-MbtGuiImportToPage {
         $t = New-GuiText 'Sign in to choose the mailbox.' 'Muted'; $t.TextAlignment = 'Center'; $t.Margin = [Windows.Thickness]::new(10, 40, 10, 40)
         New-GuiCard -Title 'Where to import' -Content @($t)
     }
-    Set-MbtGuiActions -Footer $(if ($s.Signed) { 'Choose the mailbox and where in it the items go.' } else { 'Sign in first.' }) -Label 'Continue to the plan' -Enabled $s.Signed -OnClick { if ($s.TgtMode -eq 'new' -and (Test-MbtGuiFolderName $s.TgtName)) { Show-MbtGuiPage } else { Move-MbtGuiStep 1 } }
+    Set-MbtGuiActions -Footer $(if ($s.Signed) { 'Choose the mailbox and where in it the items go.' } else { 'Sign in first.' }) -Label 'Continue to Verify' -Enabled $s.Signed -OnClick { if ($s.TgtMode -eq 'new' -and (Test-MbtGuiFolderName $s.TgtName)) { Show-MbtGuiPage } else { Move-MbtGuiStep 1 } }
     return (New-GuiStack @((New-GuiText 'Into which mailbox?' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+}
+
+function New-MbtGuiImportConfirmCard {
+    <# "Before anything is written": the target, the volume, what the import does, and ONE box that says exactly what and where. Start stays grey until it is ticked. #>
+    param([long]$Items, [long]$Bytes, [string]$ItemsText, [bool]$SizeUnknown)
+    $g = $script:Gui; $s = $g.S
+    $mid = [char]0x00B7
+    $mailbox = if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }
+    $where = if ($s.TgtLoc -eq 'Archive' -and -not $s.ImShared) { 'Archive' } else { 'Primary' }
+    $folderText = if ($s.TgtMode -eq 'new') { "new folder $($s.TgtName)" } else { 'folders with the same names' }
+    $target = [Windows.Controls.Border]::new(); $target.CornerRadius = [Windows.CornerRadius]::new(8); $target.Padding = [Windows.Thickness]::new(14, 10, 14, 12); $target.Margin = [Windows.Thickness]::new(0, 4, 0, 0)
+    Set-MbtGuiResource $target ([Windows.Controls.Border]::BackgroundProperty) 'MbtAccentSoft'
+    $eyebrow = New-GuiText 'INTO' 'Small' -NoWrap; $eyebrow.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $eyebrow ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText'
+    $big = New-GuiText $mailbox 'Big' -NoWrap; $big.FontSize = 22
+    $line = [Windows.Controls.StackPanel]::new(); $line.Orientation = 'Horizontal'; $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    $pill = New-GuiPill $where 'run'; $pill.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
+    $fi = New-GuiIcon folder 14; $fi.Margin = [Windows.Thickness]::new(0, 0, 6, 0)
+    $ft = New-GuiText $(if ($s.TgtMode -eq 'new') { "in a new folder named **$($s.TgtName)**" } else { 'in the folders that have the same names' }) 'Body'; $ft.VerticalAlignment = 'Center'
+    $line.Children.Add($pill) | Out-Null; $line.Children.Add($fi) | Out-Null; $line.Children.Add($ft) | Out-Null
+    $target.Child = (New-GuiStack @($eyebrow, $big, $line))
+    $volume = if ($SizeUnknown) { "$ItemsText items" } else { "$ItemsText items $mid $(Format-MbtGuiBytes $Bytes)" }
+    $vol = New-GuiText $volume 'Big'; $vol.Margin = [Windows.Thickness]::new(0, 12, 0, 0)
+    $sub = New-GuiText 'will be added to this mailbox.' 'Hint'; $sub.Margin = [Windows.Thickness]::new(0)
+    $warn = New-GuiMessage -Kind warn -Icon shield -Text '**Adds only.** Nothing is deleted or overwritten. This tool cannot undo an import: you would delete the items yourself.'
+    $claim = "I checked: add $ItemsText items to $mailbox $mid $where $mid $folderText"
+    $box = New-GuiOption -Type Check -Title $claim -Checked $s.Confirmed -Margin '0,12,0,0' -OnChange {
+        param($x, $e)
+        $s.Confirmed = [bool]$x.IsChecked
+        $s.ConfirmKey = $(if ($s.Confirmed) { Get-MbtGuiPlanKey } else { '' })
+        Update-MbtGuiPrimary -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok') -Footer $(if ($s.Confirmed) { 'Ready. Nothing is written before you press Start.' } else { 'Tick the box to unlock Start.' })
+    }.GetNewClosure()
+    $box.FontWeight = [Windows.FontWeights]::SemiBold
+    $frame = [Windows.Controls.Border]::new(); $frame.BorderThickness = [Windows.Thickness]::new(1); $frame.CornerRadius = [Windows.CornerRadius]::new(8); $frame.Padding = [Windows.Thickness]::new(12, 0, 12, 12); $frame.Margin = [Windows.Thickness]::new(0, 14, 0, 0)
+    Set-MbtGuiResource $frame ([Windows.Controls.Border]::BorderBrushProperty) 'AccentFillColorDefaultBrush'
+    $frame.Child = $box
+    return (New-GuiCard -Title 'Before anything is written' -Content @($target, $vol, $sub, $warn, $frame))
 }
 
 function Build-MbtGuiImportPlanPage {
@@ -194,21 +230,23 @@ function Build-MbtGuiImportPlanPage {
     $facts = New-GuiFacts @(@('From', $srcText), @('Into', "$(if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }) $([char]0x00B7) $($s.TgtLoc) mailbox"), @('Time', (New-GuiText $etaText 'Body')))
     $warn = New-GuiMessage -Kind warn -Icon clock -Text '**This is a long job.** Microsoft accepts only about 4 GiB per hour into one mailbox, whatever the speed of your PC or network. You can stop and continue as often as you like; items already done are skipped.'
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
-    $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $warn, $g.PlanHolder)), (New-MbtGuiSettingsCard -Include @('conc', 'reconcile', 'tries')))
-    $box = New-GuiTextBox -Text $s.Confirm -Automation 'Type IMPORT' -OnChange { param($x, $e)
-        $s.Confirm = $x.Text
-        $ok = ($x.Text.Replace(' ', '').ToLowerInvariant() -eq 'import') -and $s.PlanState -eq 'ok'
-        Update-MbtGuiPrimary -Enabled $ok -Footer $(if ($x.Text.Replace(' ', '').ToLowerInvariant() -eq 'import') { 'Ready.' } else { 'Type IMPORT to unlock Start.' })
+    $sourceRow = if ($info -and $info.Ok) { New-MbtGuiCheckRow -State ok -Text $(if ($s.ImSrc -eq 'pst') { 'The PST file is clean' } else { 'The source is clean' }) -Detail $(if ($info.PSObject.Properties['Parts'] -and $info.Parts) { "$($info.Parts) parts, $(Format-MbtGuiBytes $info.Bytes)" } else { Format-MbtGuiBytes $info.Bytes }) } else { New-MbtGuiCheckRow -State bad -Text 'The source is not checked' -Detail 'go back to From' }
+    $roomRow = $null
+    $loc = @($s.Locations | Where-Object { $_.Kind -eq $s.TgtLoc -and $_.PSObject.Properties['Quota'] -and $_.Quota })
+    if ($loc.Count -and -not $s.ImShared) {
+        $fits = ($bytes -le ([double]$loc[0].Quota - [double]$loc[0].Used))
+        $roomRow = New-MbtGuiCheckRow -State $(if ($fits) { 'ok' } else { 'bad' }) -Text $(if ($fits) { 'The mailbox has room' } else { 'The mailbox is probably too small' }) -Detail "$($s.TgtLoc): $(Format-MbtGuiBytes $loc[0].Used) of $(Format-MbtGuiBytes $loc[0].Quota) used"
     }
-    $confirm = New-GuiCard -Title 'Confirm' -Content @((New-GuiText "This adds **$itemsText items** to a real mailbox. Type **IMPORT** to confirm." 'Body'), $box, (New-GuiText 'Capital letters and spaces do not matter.' 'Hint'))
-    $box.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
+    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $sourceRow, $roomRow)
+    $left = New-GuiStack @($checks, (New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $warn)))
     $before = New-GuiCard -Title 'Before you start' -Content @((New-GuiText ([char]0x2022 + '  Keep the PC plugged in and awake (the console does this for you).') 'Body'), (New-GuiText ([char]0x2022 + '  The source files must stay where they are until the end.') 'Body'), (New-MbtGuiSleepInfo))
-    $right = New-GuiStack @($confirm, $before)
+    $right = New-GuiStack @((New-MbtGuiImportConfirmCard -Items $items -Bytes $bytes -ItemsText $itemsText -SizeUnknown $sizeUnknown), $before)
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
-    $typed = $s.Confirm.Replace(' ', '').ToLowerInvariant() -eq 'import'
-    Set-MbtGuiActions -Footer $(if ($typed) { 'Ready.' } else { 'Type IMPORT to unlock Start.' }) -Label 'Start the import' -Icon play -Enabled ($typed -and $s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+    if ($s.ConfirmKey -ne $key) { $s.Confirmed = $false; $s.ConfirmKey = '' }
+    $mailbox = if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }
+    Set-MbtGuiActions -Footer $(if ($s.Confirmed) { 'Ready. Nothing is written before you press Start.' } else { 'Tick the box to unlock Start.' }) -Label "Start the import into $mailbox" -Icon play -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
+    return (New-GuiStack @((New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task import -Include @('conc', 'retry', 'reconcile', 'tries'))))
 }
 
 #endregion
@@ -273,10 +311,12 @@ function Build-MbtGuiRepairFromPage {
         $resBody.Add((New-GuiText 'Pick a PST file to check it.' 'Muted')); $info = ''
     }
     $right = New-GuiCard -Title 'Result of the check' -Info $info -Content $resBody.ToArray()
+    $rightStack = @($right)
+    if ($bad) { $rightStack += New-GuiCard -Title 'What to do next' -Content @((New-GuiText 'The file is damaged but can probably be repaired. A repaired copy is a new file; the original is never changed.' 'Body'), (New-GuiButton -Text 'Repair into a new file' -Icon wrench -Accent -OnClick { Move-MbtGuiStep 1 }.GetNewClosure() | ForEach-Object { $_.Margin = [Windows.Thickness]::new(0, 10, 0, 0); $_.HorizontalAlignment = 'Left'; $_ })) }
     if ($bad) { Set-MbtGuiActions -Footer 'The file has problems. You can write a repaired copy.' -Label 'Repair into a new file' -Icon wrench -OnClick { Move-MbtGuiStep 1 } }
-    elseif ($chk -and -not $chk.PSObject.Properties['Failed']) { Set-MbtGuiActions -Footer 'The file is clean. Nothing to repair.' -Label 'Start a new task' -OnClick { $s.Task = $null; $s.Sel = $null; $s.Step = 0; Show-MbtGuiPage } }
+    elseif ($chk -and -not $chk.PSObject.Properties['Failed']) { Set-MbtGuiActions -Footer 'The file is clean. Nothing to repair.' -Label 'Start a new task' -OnClick { $s.Task = $null; $s.Sel = $null; $s.Step = 1; Show-MbtGuiPage } }
     else { Set-MbtGuiActions -Footer 'Pick the PST file.' -Label 'Repair into a new file' -Icon wrench -Enabled $false -OnClick { } }
-    return (New-GuiStack @((New-GuiText 'Which PST file?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right (New-GuiStack @($right)))))
+    return (New-GuiStack @((New-GuiText 'Which PST file?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right (New-GuiStack $rightStack))))
 }
 
 function Test-MbtGuiRepairDestination {
@@ -315,7 +355,7 @@ function Build-MbtGuiRepairToPage {
     $keep = New-GuiMore -Summary 'More options' -Content @((New-GuiOption -Type Check -Title 'Keep damaged attachments' -Hint 'An attachment with unreadable blocks is kept at its full size, with zeros in place of what could not be read, and renamed **name (damaged).ext**. Off by default: such a file is damaged, so it says so.' -Checked $s.RpKeep -OnChange { param($x, $e) $s.RpKeep = [bool]$x.IsChecked }))
     $levelCard = New-GuiCard -Title 'Repair level' -Content (@($levels) + @($keep))
     $what = New-GuiCard -Title 'What a repair does' -Content @((@('Reads the damaged file as far as it can be read.', 'Writes a **new, clean PST** with everything it found.', 'Checks both files and shows a before and after.', 'Messages it could not read are listed with the reason. Nothing is guessed.') | ForEach-Object { $t = New-GuiText ([char]0x2022 + '  ' + $_) 'Body'; $t.Margin = [Windows.Thickness]::new(0, 0, 0, 6); $t }))
-    Set-MbtGuiActions -Footer 'The original file is never changed.' -Label 'Continue to the plan' -Enabled (-not (Test-MbtGuiRepairDestination $s)) -OnClick { Move-MbtGuiStep 1 }
+    Set-MbtGuiActions -Footer 'The original file is never changed.' -Label 'Continue to Verify' -Enabled (-not (Test-MbtGuiRepairDestination $s)) -OnClick { Move-MbtGuiStep 1 }
     & $update
     return (New-GuiStack @((New-GuiText 'How to repair it?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($newFile, $levelCard)) -Right (New-GuiStack @($what)))))
 }
@@ -331,10 +371,9 @@ function Build-MbtGuiRepairPlanPage {
     $mins = [math]::Max(1, [math]::Round($size / 1GB * 1.2))
     $facts = New-GuiFacts @(@('Original', (New-GuiText "$([IO.Path]::GetFileName($s.RpPath)) ($(Format-MbtGuiBytes $size)) $([char]0x00B7) **not changed**" 'Body')), @('New file', $s.RpDest), @('Time', (New-GuiText "measured once it runs (it depends on your disk)" 'Body')), @('Keep damaged attachments', $(if ($s.RpKeep) { 'yes' } else { 'no' })))
     $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts)))
-    $settings = New-GuiCard -Title 'Settings used' -Content @((New-GuiText 'Defaults from the configuration file.' 'Hint'), (New-MbtGuiSettingsSection -Include @()))
     $safe = New-GuiCard -Title 'Safe by design' -Content @((New-GuiText 'A cancelled or failed repair leaves no half-written file: the new file appears only when it is complete.' 'Body'))
     Set-MbtGuiActions -Footer 'Nothing starts before you press Start.' -Label 'Start the repair' -Icon play -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-GuiTwoColumns -Left $left -Right (New-GuiStack @($settings, $safe)))))
+    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right (New-GuiStack @($safe)) -LeftWidth 520) -Task repair -Include @())))
 }
 
 #endregion
@@ -365,7 +404,7 @@ function Build-MbtGuiOpenPage {
     $copyOn = Get-MbtGuiCapability 'PstCopy'
     $copyReady = { $x = Get-MbtGuiSelection -Roots @((Get-MbtGuiBrowser 'open').Roots); [bool]($script:Gui.S.OpInfo -and $script:Gui.S.OpInfo.Ok -and $script:Gui.S.OpSrc -eq 'pst' -and $x.Items -gt 0) }
     $export = New-GuiButton -Text $(if ($copyOn) { 'Export my ticks to a PST...' } else { 'Export my ticks to a PST... (coming in this version)' }) -Icon down -Disabled:(-not ($copyOn -and (& $copyReady))) -OnClick {
-        $s.Task = 'copy'; $s.Sel = 'copy'; $s.Step = 2
+        $s.Task = 'copy'; $s.Sel = 'copy'; $s.Step = $script:Flows.copy.IndexOf('cpTo')
         Initialize-MbtGuiCopy
         Show-MbtGuiPage
     }
@@ -374,7 +413,7 @@ function Build-MbtGuiOpenPage {
     $footerText = if ($copyOn -and $s.OpSrc -eq 'pst') { 'Read only. Tick folders or messages to write them into a new PST.' } else { 'Read only. Nothing is written.' }
     Set-MbtGuiActions -Footer $footerText -Extra $export -Label 'Import into a mailbox...' -Enabled $canImport -OnClick {
         $s.ImSrc = $s.OpSrc; $s.ImPath = $s.OpPath; $s.ImInfo = $s.OpInfo
-        $s.Task = 'import'; $s.Sel = 'import'; $s.Step = 1
+        $s.Task = 'import'; $s.Sel = 'import'; $s.Step = $script:Flows.import.IndexOf('imFrom')
         Show-MbtGuiPage
     }
     return (New-GuiTwoColumns -Left $left -Right $right)
@@ -433,7 +472,7 @@ function Build-MbtGuiCopyToPage {
     $left = New-GuiCard -Title 'Save as' -Content $content
     $sel = Get-MbtGuiSelection -Roots @((Get-MbtGuiBrowser 'open').Roots)
     $right = New-GuiStack @((New-MbtGuiSelectionCard $sel), (New-GuiCard -Title 'Good to know' -Content @((New-GuiText 'The original PST is only read. The new files hold the folders and messages you ticked, with the same folder names. A copy that is stopped leaves no file: start it again.' 'Body'))))
-    Set-MbtGuiActions -Footer 'Choose where to save the new PST. You can still change everything on the next page.' -Label 'Continue to the plan' -Enabled (-not (Test-MbtGuiCopyDestination $s)) -OnClick { Move-MbtGuiStep 1 }
+    Set-MbtGuiActions -Footer 'Choose where to save the new PST. You can still change everything on the next page.' -Label 'Continue to Verify' -Enabled (-not (Test-MbtGuiCopyDestination $s)) -OnClick { Move-MbtGuiStep 1 }
     & $update
     return (New-GuiStack @((New-GuiText 'Where to save the new PST?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right $right)))
 }
@@ -447,219 +486,13 @@ function Build-MbtGuiCopyPlanPage {
     $facts = New-GuiFacts @(@('From', "$([IO.Path]::GetFileName($s.OpPath)) $([char]0x00B7) **not changed**"), @('Saved to', [IO.Path]::Combine($s.OutFolder, $s.OutName)),
         @('Ticked', "$(Format-MbtGuiSelectionItems $sel) items $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText 'measured once it runs (it depends on your disk)' 'Body')))
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
-    $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $g.PlanHolder)), (New-MbtGuiSettingsCard -Include @()))
+    $left = New-GuiStack @((New-GuiCard -Title 'Checks' -Content @($g.PlanHolder)), (New-GuiCard -Title 'What will be done' -Content @($ol, $facts)))
     $right = New-GuiStack @((New-GuiCard -Title 'What is in it' -Content @((New-MbtGuiPlanTable $sel))), (New-GuiCard -Title 'Safe by design' -Content @((New-GuiText 'The original is only read. The new file appears only when it is complete: a copy that is stopped or fails leaves no file behind.' 'Body'))))
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
     Set-MbtGuiActions -Footer 'Read the plan. Nothing starts before you press Start.' -Label 'Start the copy' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task copy -Include @())))
 }
 
 #endregion
 
-# SIG # Begin signature block
-# MIImKAYJKoZIhvcNAQcCoIImGTCCJhUCAQExDzANBglghkgBZQMEAgEFADB5Bgor
-# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD3+lDST5yiDFRd
-# d2oCVgJU+54nw8etk2QOJsxO2VIeq6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
-# CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
-# EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
-# A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
-# Fw0xNjA2MjQyMDQ0MzBaFw0zMTA2MjQyMDQ0MzBaMHgxCzAJBgNVBAYTAlVTMQ4w
-# DAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENv
-# cnAxNDAyBgNVBAMMK1NTTC5jb20gQ29kZSBTaWduaW5nIEludGVybWVkaWF0ZSBD
-# QSBSU0EgUjEwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCfgxNzqrDG
-# bSHL24t6h3TQcdyOl3Ka5LuINLTdgAPGL0WkdJq/Hg9Q6p5tePOf+lEmqT2d0bKU
-# Vz77OYkbkStW72fL5gvjDjmMxjX0jD3dJekBrBdCfVgWQNz51ShEHZVkMGE6ZPKX
-# 13NMfXsjAm3zdetVPW+qLcSvvnSsXf5qtvzqXHnpD0OctVIFD+8+sbGP0EmtpuNC
-# GVQ/8y8Ooct8/hP5IznaJRy4PgBKOm8yMDdkHseudQfYVdIYyQ6KvKNc8HwKp4WB
-# wg6vj5lc02AlvINaaRwlE81y9eucgJvcLGfE3ckJmNVz68Qho+Uyjj4vUpjGYDdk
-# jLJvSlRyGMwnh/rNdaJjIUy1PWT9K6abVa8mTGC0uVz+q0O9rdATZlAfC9KJpv/X
-# gAbxwxECMzNhF/dWH44vO2jnFfF3VkopngPawismYTJboFblSSmNNqf1x1KiVgMg
-# Lzh4gL32Bq5BNMuURb2bx4kYHwu6/6muakCZE93vUN8BuvIE1tAx3zQ4XldbyDge
-# VtSsSKbt//m4wTvtwiS+RGCnd83VPZhZtEPqqmB9zcLlL/Hr9dQg1Zc0bl0EawUR
-# 0tOSjAknRO1PNTFGfnQZBWLsiePqI3CY5NEv1IoTGEaTZeVYc9NMPSd6Ij/D+KNV
-# t/nmh4LsRR7Fbjp8sU65q2j3m2PVkUG8qQIDAQABo4H7MIH4MA8GA1UdEwEB/wQF
-# MAMBAf8wHwYDVR0jBBgwFoAU3QQJB6L1en1SUxKSle44gCUNplkwMAYIKwYBBQUH
-# AQEEJDAiMCAGCCsGAQUFBzABhhRodHRwOi8vb2NzcHMuc3NsLmNvbTARBgNVHSAE
-# CjAIMAYGBFUdIAAwEwYDVR0lBAwwCgYIKwYBBQUHAwMwOwYDVR0fBDQwMjAwoC6g
-# LIYqaHR0cDovL2NybHMuc3NsLmNvbS9zc2wuY29tLXJzYS1Sb290Q0EuY3JsMB0G
-# A1UdDgQWBBRUwv4QlQCTzWr158DX2bJLuI8M4zAOBgNVHQ8BAf8EBAMCAYYwDQYJ
-# KoZIhvcNAQELBQADggIBAPUPJodwr5miyvXWyfCNZj05gtOII9iCv49UhCe204MH
-# 154niU2EjlTRIO5gQ9tXQjzHsJX2vszqoz2OTwbGK1mGf+tzG8rlQCbgPW/M9r1x
-# xs19DiBAOdYF0q+UCL9/wlG3K7V7gyHwY9rlnOFpLnUdTsthHvWlM98CnRXZ7WmT
-# V7pGRS6AvGW+5xI+3kf/kJwQrfZWsqTU+tb8LryXIbN2g9KR+gZQ0bGAKID+260P
-# Z+34fdzZcFt6umi1s0pmF4/n8OdX3Wn+vF7h1YyfE7uVmhX7eSuF1W0+Z0duGwdc
-# +1RFDxYRLhHDsLy1bhwzV5Qe/kI0Ro4xUE7bM1eV+jjk5hLbq1guRbfZIsr0WkdJ
-# LCjoT4xCPGRo6eZDrBmRqccTgl/8cQo3t51Qezxd96JSgjXktefTCm9r/o35pNfV
-# HUvnfWII+NnXrJlJ27WEQRQu9i5gl1NLmv7xiHp0up516eDap8nMLDt7TAp4z5T3
-# NmC2gzyKVMtODWgqlBF1JhTqIDfM63kXdlV4cW3iSTgzN9vkbFnHI2LmvM4uVEv9
-# XgMqyN0eS3FE0HU+MWJliymm7STheh2ENH+kF3y0rH0/NVjLw78a3Z9UVm1F5VPz
-# iIorMaPKPlDRADTsJwjDZ8Zc6Gi/zy4WZbg8Zv87spWrmo2dzJTw7XhQf+xkR6Od
-# MIIG9TCCBN2gAwIBAgIQBof4ljXihJpmCqqt2mhAWzANBgkqhkiG9w0BAQsFADB4
-# MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24x
-# ETAPBgNVBAoMCFNTTCBDb3JwMTQwMgYDVQQDDCtTU0wuY29tIENvZGUgU2lnbmlu
-# ZyBJbnRlcm1lZGlhdGUgQ0EgUlNBIFIxMB4XDTI2MTAxMzAyNDgwMloXDTI3MTAx
-# MzAyNDgwMlowXDELMAkGA1UEBhMCRlIxGzAZBgNVBAcMEkNoYW50ZWxvdXAtRW4t
-# QnJpZTEXMBUGA1UECgwOTmljb2xhcyBGYWJlcnQxFzAVBgNVBAMMDk5pY29sYXMg
-# RmFiZXJ0MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAsg6CT0mFQ4jB
-# V2plIS4uWFSoVqRHd82Y7XYZ4CUTe/7nPBRUlXXdKTZMMHzGgiG8dEXNE8K1Xe90
-# Dgl/FnorzAFlrNWSwf6t27UAUw9xkqtRDVVpVgpixpWkAwjcQeLG+YMqBkGbFi35
-# TGvS23lPFWvLp4DxARrv15MtZ/NjNTCAAGUlMP2hFVBknEmrnYjEGyeJ93sl20RS
-# WXQQLNqlenBdkGCrQW4XjHtRjJAEqAC68hN6nWevopSQ8CLUV7A1RFfHFarDrzrL
-# zr0/NjIdSyIfM9hShln31NDrktB6Ups2XIyrtPDNB7fjkW4jpLlOqQGfYKsU9ErE
-# 4SnFsh0yOOjitegyh1RvZ9wH++3DF4CmJfTli5l/gEIm8xCCryxI+K5EogW3wu1y
-# u8NT2hcvHjdh7OpRyPyFAuLZ8MfX7kPAJpnuCeOuktzY/20eVD8bDglj+4zgqzsn
-# cR/t6T/7w1/HxpRyrVoKvEyRx+mphYh5jMdEa0BjxOL0vAJpdGZSfXGmPm/yPqRn
-# 5STTkMtzkVQXPbcvgKM0luzFcQKPHk3qdHLEXa8gf93ktYDbLE5Wd2UHrXz3SZxN
-# URHPdIXCr1qgrqQve7041kMpzrkDI5DnG2lvRG4108gp02bHG0muKyZlDdCOra7h
-# Zonu2nO79sFallruzzNi0o994PoWksUCAwEAAaOCAZUwggGRMAwGA1UdEwEB/wQC
-# MAAwHwYDVR0jBBgwFoAUVML+EJUAk81q9efA19myS7iPDOMwegYIKwYBBQUHAQEE
-# bjBsMEgGCCsGAQUFBzAChjxodHRwOi8vY2VydC5zc2wuY29tL1NTTGNvbS1TdWJD
-# QS1Db2RlU2lnbmluZy1SU0EtNDA5Ni1SMS5jZXIwIAYIKwYBBQUHMAGGFGh0dHA6
-# Ly9vY3Nwcy5zc2wuY29tMFEGA1UdIARKMEgwCAYGZ4EMAQQBMDwGDCsGAQQBgqkw
-# AQMDATAsMCoGCCsGAQUFBwIBFh5odHRwczovL3d3dy5zc2wuY29tL3JlcG9zaXRv
-# cnkwEwYDVR0lBAwwCgYIKwYBBQUHAwMwTQYDVR0fBEYwRDBCoECgPoY8aHR0cDov
-# L2NybHMuc3NsLmNvbS9TU0xjb20tU3ViQ0EtQ29kZVNpZ25pbmctUlNBLTQwOTYt
-# UjEuY3JsMB0GA1UdDgQWBBRoUx3630l9wA1fUpkKkw2GUIxl/jAOBgNVHQ8BAf8E
-# BAMCB4AwDQYJKoZIhvcNAQELBQADggIBAE3oj6cNuwlDToi1BwjgsA5djfRN4DIi
-# BYDFZIRYaIRe/rEdnItz3aqQQdFuwXnJA/MQEmi2WAGek8GeZF+R41s8FbcDxBUE
-# BoSt98TuBE+0xgxQWDiPhhXaX1Aw9V0GF4ZnlfCSw1eu2KiASaKn7Bo0PLbEAXff
-# vftRXof/kyqtw8iID6I4Rhrf5DI3WVZQodakUUmWnbnziWvEZOWbNOfzwP+7BwEt
-# 7jQANfbmEfb4p75rfy5dQVwniTDSvdo6xkrbe1Cr93GS7cJta18IG5CoIVUmdK+s
-# W38B1sLuy8Mi0MstMXV3004yaRuzLdNaAM0f9WAFerxemiQC0kdmA44/lWV3lVkM
-# WJSwkHBkkSg8Eh0hxcGzTH2xmtDhLJHNNLRwkI9u2Ur+HbLCt50oBgSV8BcCs/1i
-# qi884iC/yuX+HIv9YgTUNZ8c4lLaq4VuliJpXLu2buHIsTkO0v0+5oCM91zjTVZm
-# ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
-# eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
-# Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYDzCCGAsCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
-# BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
-# A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
-# MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
-# AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAete3Y+6fZ
-# Y+prOVxqQVZ4TdIuFOdDOCeEV9GkOURw/DANBgkqhkiG9w0BAQEFAASCAgAOzTH7
-# 2MVI/3uS1xPKK65tzviyh+r+nsWtOt9qnB8DIL30vun5vaU2KK0NMbRdl0oi1aaW
-# 6CPvQ5cVrhrSoFalHt98qz1KzAqOIkGahwoB6JVEfXtg2Ad2YUHGAQzsqLHfx1aK
-# QWZ66nDYLwlrR+N/1XiVa/4QGKIEL9DFybXkXljzQqHKcHqSBn1QWMIGAJK8PPYh
-# aTlaeoGwe5IEcYppRLynbeaW3A3W6JUg+Ig/AqGwIe0Geor4t9g9X2Nb3jH8jDWj
-# iAHjuaWSt6PR8hLPAVuFu7/0YfDQqsyRBxDEXVOOLQTI3dfu2RUB6mxiIRUUAwqz
-# NSuXTEgNjHdqYGUzM2xCxB6mFnP5z0Ahx2GH0uHgp4m4EBqLduAThvJ+NLFm1+oC
-# caQQyAEDhZoP4jfmDvy31sOZJTJMuwAnN1dI5Blr9yMFCALFTmqWcjiYSzSFuwRK
-# Ss9tv1Rbwn4tgkm/eCGcwxvIHg/pnZYNwxSSf8W0hRRcLGjySRXpiw7/yoY7v+qM
-# dJZNz2F0/6+JVb5+/R3DB+jXd7gPlfsIYNNHbOOTPhpnp/WAfHlZS0x4HLwPsYti
-# KlN7a5+D3o6v46XxzxJMT9c34cGPdN3xN5bDdwIszRHNyWGlrfSHYtRMonTq7kF8
-# Dh9Tnby+ZCxbutMime//U+curZS9ksVnHYMnu6GCFMwwghTIBgorBgEEAYI3AwMB
-# MYIUuDCCFLQGCSqGSIb3DQEHAqCCFKUwghShAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
-# BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEII+2jEXdfOPdMjiNECCSuHsHzfsAl49JUplh7RyYZVEyAggULsbfE5+3
-# UBgPMjAyNjExMTAwODIyMzlaMAMCAQECEAfFtV2JI7fxjJu1Zf3pe1ugghGnMIIE
-# 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
-# CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
-# BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
-# c3N1aW5nIFJTQSBDQSAyMB4XDTI2MDYxMjE3MjI0NloXDTM2MDYwOTE3MjI0NVow
-# bjELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRleGFzMRAwDgYDVQQHDAdIb3VzdG9u
-# MREwDwYDVQQKDAhTU0wgQ29ycDEqMCgGA1UEAwwhU1NMLmNvbSBUaW1lc3RhbXBp
-# bmcgVW5pdCAyMDI2IEUxMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6CWLuGYT
-# LkiSOPMLNskOBthXsIhRSA46feOQwvSLcDaNh6vxUzBKEx1KdFBRFs7OHrnH/K0V
-# A6MbDQIFpUg0PaOCAVIwggFOMB8GA1UdIwQYMBaAFHCaZcFDgKP86bFkiW7xMJwJ
-# Icl8ME0GCCsGAQUFBwEBBEEwPzA9BggrBgEFBQcwAoYxaHR0cDovL2NlcnQuc3Ns
-# LmNvbS9TU0wuY29tLXRpbWVTdGFtcGluZy1JLVIyLmNlcjBRBgNVHSAESjBIMDwG
-# DCsGAQQBgqkwAQMGATAsMCoGCCsGAQUFBwIBFh5odHRwczovL3d3dy5zc2wuY29t
-# L3JlcG9zaXRvcnkwCAYGZ4EMAQQCMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEIG
-# A1UdHwQ7MDkwN6A1oDOGMWh0dHA6Ly9jcmxzLnNzbC5jb20vU1NMLmNvbS10aW1l
-# U3RhbXBpbmctSS1SMi5jcmwwHQYDVR0OBBYEFCesA1a6KGq6FzuDPUB/eagk7MM8
-# MA4GA1UdDwEB/wQEAwIHgDANBgkqhkiG9w0BAQsFAAOCAgEAT3ZuzvwDnsIZTXBn
-# +hjmuBXgzB12fbYxT9uYe6ZvhvpbZWKcyDQgacETkPw8k6yeqnYCYyFZ063lMPEq
-# AhAD2nMG614Zh7PtHW9DWqfsgivxbPYBeN+t7UxgkYT3expbWMdPEqBtWVyHOvLc
-# KvMxgJWfJjANwVkwVDfky/j7cf28+iimN8PKc7S/u8/LenRRnV2W2YfncRnkz9Cf
-# s5nRDzaZguiHrrp2GxwgnNQSH4GBjHOl3PzLsnVbGoZKi4ZEjgXups4mGGOK7+GB
-# 2HAlQn+OS944cHqlkH0gElt2WezoCNRpELph9qaxuBnjSEqXWWfgE6yGBwO0uxKN
-# qpWVTHmAwr6SvBPofxubXIuEn9ivR4CLOuAxUSrJ41ZBg/qqG0oJjF6GkRKbxq7c
-# yWSkEZYJhmKCg2Hg5fXHagOxiwbmn5JPZ1vhWCrbk3v/dTx2gvTK5+erC5H9/rTc
-# ljUI776yd2rfhjfkpvyAsbtXs4D7nrnw8i9wor5+fdtRSJBVxqzLmykFftoL0Up2
-# Q++tyKCUdribdcnrB4HKS3s+t3AjdcbA06DCL8GifQi9fL0yRBRNlA4o6BP+Sr75
-# 5MaCNjURYZDvDyxJHBBT7cqjZIwsiR8s+6860noFbBBtdge2Iw7CPC/1Q31I27hV
-# olS7B0yao3v8X2MtWy3msZlXTcEwggXdMIIDxaADAgECAgh7LJvTFoAymTANBgkq
-# hkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNV
-# BAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8GA1UEAwwo
-# U1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAeFw0xNjAy
-# MTIxNzM5MzlaFw00MTAyMTIxNzM5MzlaMHwxCzAJBgNVBAYTAlVTMQ4wDAYDVQQI
-# DAVUZXhhczEQMA4GA1UEBwwHSG91c3RvbjEYMBYGA1UECgwPU1NMIENvcnBvcmF0
-# aW9uMTEwLwYDVQQDDChTU0wuY29tIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3Jp
-# dHkgUlNBMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA+Q/doyt9y9Aq
-# /uxnhabnLhu6d+Hj9a+k7PpKXZHEV0drGHdrdvL9k+Q9D8IWngtmw1aUnheDhc5W
-# 7/IW/QBi9SIJVOhlF05BueBPRpeqG8i4bmJeabFf2yoCfvxsyvNB2O3Q6Pw/YUjt
-# sAMUHRAOSxngu07shmX/NvNeZwILnYZVYf16OO3+4hkAt2+hUGJ1dDyg+sglkrRu
-# eiLH+B6h47LdkTGrKx0E/6VKBDfphaQzK/3i1lU0fBmkSmjHsqjTt8qhk4jrwZe8
-# jPkd2SKEJHTHBD1qqSmTzOu4W+H+XyWqNFjIwSNUnRuYEcM4nH49hmylD0CGfAL0
-# XAJPKMuucZ8POsgz/hElNer8usVgPdl8GNWyqdN1eANyIso6wx/vLOUuqfqeLLZR
-# Rv2vA9bqYGjqhRY2a4XpHsCz3cQk3IAqgUFtlD7I4MmBQQCeXr9/xQiYohgsQkCz
-# +W84J0tOgPQ9gUfgiHzqHM61dVxRLhwrfxpyKOcAtdF0xtfkn60Hk7ZTNTX8N+TD
-# 9l0WviFz3pIK+KBjaryWkmo++LxlVZve9Q2JJgT8JRqmJWnLwm3KfOJZX5es6+8u
-# yLzXG1k8K8zyGciTaydjGc/86Sb4ynGbf5P+NGeETpnr/LN4CTNwumamdu0bc+sa
-# pQ3EIhMglFYKTixsTrH9z5wJuqIz7YcCAwEAAaNjMGEwHQYDVR0OBBYEFN0ECQei
-# 9Xp9UlMSkpXuOIAlDaZZMA8GA1UdEwEB/wQFMAMBAf8wHwYDVR0jBBgwFoAU3QQJ
-# B6L1en1SUxKSle44gCUNplkwDgYDVR0PAQH/BAQDAgGGMA0GCSqGSIb3DQEBCwUA
-# A4ICAQAgGBGUKfsmnRweHnBh8ZVyk3EkrWiTWI4yrxuzcAP8JSt0hZA9eGr0uYul
-# lzu1GJG7Hqf5QFuR+VWZrx4R0Fwdp2bjsZQHDDI5puobsHnYHZxwROOK3cT5lR+K
-# OEM/AYWlR6c9RrK85SJo93uc2Cw+CiHILTOsv8WBmTF0wXVxxb6x8CNF9J1r/Blj
-# naO8BMYYCyW7U4kPs4BQ3kXuRH+rlHhkmNP2KN2H2HBldPsOuRPrpw9hqTKWzN67
-# 7WNMGLupQPegVG4giHF1GOp6tDRy4CMnd1y2kOqGJUCr7zMPy5+CvqIg+/a1LRrm
-# woWxdA/7yGUCpFIBR91JIsG/2OtrrH7e7GMzFbcjCI/GD41BWt2OxbmP5UU/eNu6
-# 0htAsf5xTT/ggaK6XrTsFeCT3QgffuFVmQsh3pOeCvvmo0m9NjD+53eyoHWXtS2B
-# iBdlIPfakACfyVLMMso1fPU9D9gr1/UmbMkGNJYW6nBZGjJ5eQu2iH8PUkg9v2zY
-# okQu0U63cljTiROV/kSr+NeLG26cvCygW9VqAK9fN+HV+hALmJyG5yaPzvDsbopX
-# C4DjTrLAoGNhkLpVaDd0araS25+hhiK2ZScO7LafQmDkZ8K12kELxNOLYRu8+h+R
-# K9dEB166KazZxenvU0ha64DxKFghzbAGVfsnP1OQcKkEHlcnuTCCBsswggSzoAMC
-# AQICEFKdu8K4iYf1g4DgsOuiBjYwDQYJKoZIhvcNAQELBQAwfDELMAkGA1UEBhMC
-# VVMxDjAMBgNVBAgMBVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMRgwFgYDVQQKDA9T
-# U0wgQ29ycG9yYXRpb24xMTAvBgNVBAMMKFNTTC5jb20gUm9vdCBDZXJ0aWZpY2F0
-# aW9uIEF1dGhvcml0eSBSU0EwHhcNMjYwNjEyMTY0MjE1WhcNNDEwMjEyMTczOTM5
-# WjByMQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0
-# b24xETAPBgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFt
-# cGluZyBJc3N1aW5nIFJTQSBDQSAyMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
-# CgKCAgEAny+r5nNNkLwxRps2B3laUGNU9y7vWiJ5013yf0iXz65bQdwa9bjj8l/S
-# keXqHGqfSh2Foae+80E8mDEf93oIwjsy2CX2cXmKxqtF8HJGYB4f6yRhKED50wkb
-# OysL02IXf+/EZna44jffhhVz4OU/k52xQ/PnIg/uFhc2Wk+Sc/CHqAr+lYVkPz7L
-# y5RqB9f1RKGr9JC37W1LgVdHC50dNIdsa3QXPhltYZubR3npE4Bbfi0joUW5n5O0
-# ayweN45R/YVLxA0YGlp1OHVfVnsqXq8bhnw1Lc4kjJ6XOgXlOlw/a8ze57TvbduZ
-# l3ehewTmvO0Aky/nqOWDS9IPPxdxdG6vprBbSuHlxNANBAbHTiFgkfZmf0dZYlT/
-# AnZIoFxAq0HILPolf4OgWgET76SiWSlm2XYRIXwVjpeqG0plvXwRIQBzSiEJj7Qe
-# QFnCvHx4gQMINvN3+yG/1rxhEbajGve0tTP3lX4PPOHVAE0QJp4ZzPI1YYJkhVRr
-# iVVxVRU4Fsg4BPwP6I+YLmHb1tZ4RLwOFNLh/gJYDgPlChCoxOogFxXgwPZZrDyE
-# RYB0aeOexW0OKacN4RRu9cqF2KKu/Ab5AL7eYDLVGUPrEEyYbIMApVKqpebc0/jD
-# QniC+3rkauRAjgVc8m1ip/CQgG1Dw4Z9ulVRAY9VR6Za26LsTbUCAwEAAaOCAVEw
-# ggFNMBIGA1UdEwEB/wQIMAYBAf8CAQAwHwYDVR0jBBgwFoAU3QQJB6L1en1SUxKS
-# le44gCUNplkwTQYIKwYBBQUHAQEEQTA/MD0GCCsGAQUFBzAChjFodHRwOi8vY2Vy
-# dC5zc2wuY29tL1NTTGNvbS1Sb290Q0EtUlNBLTQwOTYtUjEuY2VyMD8GA1UdIAQ4
-# MDYwNAYEVR0gADAsMCoGCCsGAQUFBwIBFh5odHRwczovL3d3dy5zc2wuY29tL3Jl
-# cG9zaXRvcnkwEwYDVR0lBAwwCgYIKwYBBQUHAwgwQgYDVR0fBDswOTA3oDWgM4Yx
-# aHR0cDovL2NybHMuc3NsLmNvbS9TU0xjb20tUm9vdENBLVJTQS00MDk2LVIxLmNy
-# bDAdBgNVHQ4EFgQUcJplwUOAo/zpsWSJbvEwnAkhyXwwDgYDVR0PAQH/BAQDAgGG
-# MA0GCSqGSIb3DQEBCwUAA4ICAQBlFFvNMemA6iBiBYo56IKQjWhWuQaYKuo4qpf0
-# KJNERAt1gz+HsA2SL3xA/V+EA8SRPNP9SvX0is+5mDsppYvpKyYGqYP36YFW0mbF
-# 1F0ZtXxumCUUO/ZV5mBNKDf5Q4PY7Qb0eWAepUc0rNJr/Mvn5ZiXfJPxDb2xmcg8
-# aRD652/nr+Ork2UBP0E43iJdI4LF7Vs29R3SGRLYZOxM15DI4QebsKRl0KDlf4Om
-# YGCKc7umTxibkZtN1C1KWgnf9jadU/JwnySaYEBgx6/v+FVC6SGONziY7TcvI9MV
-# +qYxHUPlOm6AaQP2dS4bjWXnm86ldCbUkxtOACumSfT97077JNiVa7PZ1IBkd/2P
-# E1AC8gs7U+/Yk1BN9XRPIi15k/uA1xF9oeee5KGjyiGKkqIT7W8QkgUT5zeCinFK
-# kcKafZMcROSVYpXtmtQqGGR2g4uPYqJ0K1hms6gJXrHt/34p8M9PrV8oNWe0Zl1E
-# rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
-# fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
-# 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlQwggJQAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
-# czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
-# JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
-# AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIzOVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBkb
-# bjiMOgLOWKxVv2LB6WVP0fX5DvolZcYD/4NCJiYvMIHIBgsqhkiG9w0BCRACLzGB
-# uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
-# dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
-# c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
-# YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERTBDAh9aD/veYRcI7Std50zrhGYi0Jytfw+YhR3m65cKQtQeAiA1iC9f
-# dLUGfxIUytudWHZAIH6hl8w5bqo2z585c4DCOw==
-# SIG # End signature block

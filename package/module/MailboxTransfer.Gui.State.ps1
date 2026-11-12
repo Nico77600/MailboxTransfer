@@ -4,7 +4,7 @@
     Mailbox Transfer console - window, flow and state (dot-sourced by Start-MailboxTransferConsole.ps1).
 
 .DESCRIPTION
-    The window of the console: header, the stepper (Task > From > To > Plan > Run > Done), the page, the action bar, the dialog layer.
+    The window of the console: header, the stepper (Setup > Task > Verify > Run > Next steps; Task has the pages What, From, To), the page, the action bar, the dialog layer.
     The state machine is the one of the mockup: a task chooses a flow; only the steps already passed are clickable; while a job runs nothing is.
     Pages are functions (MailboxTransfer.Gui.Pages.ps1) that return the element of the page and set the action bar; the page is built again
     when the state changes, except the browse cards, which live as long as the window.
@@ -15,21 +15,23 @@
 Set-StrictMode -Version Latest
 
 $script:Flows = @{
-    export = @('start', 'exFrom', 'exTo', 'exPlan', 'run', 'done')
-    import = @('start', 'imFrom', 'imTo', 'imPlan', 'run', 'done')
-    repair = @('start', 'rpFrom', 'rpTo', 'rpPlan', 'run', 'done')
-    open   = @('start', 'opFrom')
-    copy   = @('start', 'opFrom', 'cpTo', 'cpPlan', 'run', 'done')
+    export = @('setup', 'start', 'exFrom', 'exTo', 'exPlan', 'run', 'done')
+    import = @('setup', 'start', 'imFrom', 'imTo', 'imPlan', 'run', 'done')
+    repair = @('setup', 'start', 'rpFrom', 'rpTo', 'rpPlan', 'run', 'done')
+    open   = @('setup', 'start', 'opFrom')
+    copy   = @('setup', 'start', 'opFrom', 'cpTo', 'cpPlan', 'run', 'done')
 }
-$script:StepLabels = @{ start = 'Task'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To'; exPlan = 'Plan'; imPlan = 'Plan'; rpPlan = 'Plan'; cpPlan = 'Plan'; run = 'Run'; done = 'Done' }
+# The five steps of the stepper, and the sub-steps shown under Task.
+$script:StepGroups = @{ setup = 'Setup'; start = 'Task'; exFrom = 'Task'; imFrom = 'Task'; rpFrom = 'Task'; opFrom = 'Task'; exTo = 'Task'; imTo = 'Task'; rpTo = 'Task'; cpTo = 'Task'; exPlan = 'Verify'; imPlan = 'Verify'; rpPlan = 'Verify'; cpPlan = 'Verify'; run = 'Run'; done = 'Next steps' }
+$script:SubStepLabels = @{ start = 'What'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To' }
 $script:Tasks = [ordered]@{
     export = @{ Title = 'Browse and export'; Eyebrow = 'BROWSE ' + [char]0x00B7 + ' EXPORT'; Icon = 'down'; Context = 'Browse and export'
         Text = 'Look inside a mailbox, tick what to keep, and save it on this computer as PST files or as an export store. Nothing is changed in the mailbox.'
-        Will = @('Sign in and pick the mailbox.', 'Browse it like a mailbox and tick what to keep.', 'Choose where to save it.', 'Read the plan, then press Start.')
+        Will = @('Sign in and pick the mailbox.', 'Browse it like a mailbox and tick what to keep.', 'Choose where to save it.', 'Read the checks and the plan, then press Start.')
         Safe = 'Nothing is changed in the mailbox.' }
     import = @{ Title = 'Import'; Eyebrow = 'IMPORT'; Icon = 'up'; Context = 'Import'
         Text = 'Put a PST file or an export into a mailbox. Items are added. Nothing is deleted and nothing is overwritten.'
-        Will = @('Pick the PST file or the export.', 'Pick the mailbox (and where in it).', 'Read the plan, type IMPORT, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
+        Will = @('Pick the PST file or the export.', 'Pick the mailbox (and where in it).', 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
         Safe = 'This task adds items to a mailbox. It never deletes or overwrites.' }
     repair = @{ Title = 'Check and repair a PST'; Eyebrow = 'PST'; Icon = 'wrench'; Context = 'Check and repair a PST'
         Text = 'Test a PST file for damage. If it is damaged, write a repaired copy. Your original file is never changed.'
@@ -53,7 +55,8 @@ function New-MbtGuiState {
         Locations = @(); LocationChecked = @{}; Reading = $false; LocationsFile = ''; RecoverableItems = $false
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
         Conc = 4; Retry = 2; Tries = 6; Reconcile = 5; Awake = $true; WorkFolder = $WorkFolder; Changed = @{}
-        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirm = ''
+        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirmed = $false; ConfirmKey = ''
+        SetupReturn = -1; AuthEdit = $false; ConfigPath = ''
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
         PlanState = 'idle'; PlanMsg = ''; PlanKey = ''; PlanTotals = $null; CpFor = ''
@@ -151,6 +154,7 @@ function New-MbtGuiWindow {
 
 function Get-MbtGuiScreen {
     $s = $script:Gui.S
+    if ($s.Step -le 0) { return 'setup' }
     if (-not $s.Task) { return 'start' }
     return $script:Flows[$s.Task][$s.Step]
 }
@@ -169,46 +173,90 @@ function Show-MbtGuiPage {
 }
 
 function Update-MbtGuiStepper {
+    <# Five steps (Setup, Task, Verify, Run, Next steps); the pages of the task (What, From, To) are shown under the Task step. #>
     $g = $script:Gui; $s = $g.S; $panel = $g.C.Stepper
     $panel.Children.Clear()
     $flow = if ($s.Task) { $script:Flows[$s.Task] } else { $script:Flows.export }
     $screen = Get-MbtGuiScreen
     $locked = ($screen -eq 'run' -and $g.Run -and -not $g.Run.Result)
+    $groups = [Collections.Generic.List[object]]::new()
     for ($i = 0; $i -lt $flow.Count; $i++) {
-        if ($i -gt 0) { $panel.Children.Add((New-GuiIcon 'chev' 10 'TextFillColorTertiaryBrush')) | Out-Null; $panel.Children[$panel.Children.Count - 1].Margin = [Windows.Thickness]::new(4, 0, 4, 0) }
-        $cur = $i -eq $s.Step; $done = $i -lt $s.Step
+        $name = $script:StepGroups[$flow[$i]]
+        $last = if ($groups.Count) { $groups[$groups.Count - 1] } else { $null }
+        if ($last -and $last.Name -eq $name) { $last.Members.Add($i) } else { $groups.Add(@{ Name = $name; Members = [Collections.Generic.List[int]]::new([int[]]@($i)) }) }
+    }
+    $n = 0
+    foreach ($grp in $groups) {
+        $n++
+        if ($n -gt 1) {
+            $chev = New-GuiIcon 'chev' 10 'TextFillColorTertiaryBrush'
+            $chev.Margin = [Windows.Thickness]::new(4, 11, 4, 0); $chev.VerticalAlignment = 'Top'
+            $panel.Children.Add($chev) | Out-Null
+        }
+        $first = $grp.Members[0]; $lastIdx = $grp.Members[$grp.Members.Count - 1]
+        $cur = ($s.Step -ge $first -and $s.Step -le $lastIdx); $done = $s.Step -gt $lastIdx
         $btn = [Windows.Controls.Button]::new()
         $btn.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtStepButton')
-        $btn.IsEnabled = ($i -lt $s.Step) -and -not $locked
-        $btn.Tag = $i
+        $btn.VerticalAlignment = 'Top'
+        $btn.IsEnabled = $done -and -not $locked
+        $btn.Tag = $first
         $sp = [Windows.Controls.StackPanel]::new(); $sp.Orientation = 'Horizontal'
         $circle = [Windows.Controls.Border]::new(); $circle.Width = 24; $circle.Height = 24; $circle.CornerRadius = [Windows.CornerRadius]::new(12)
         $bgKey = if ($cur) { 'AccentFillColorDefaultBrush' } elseif ($done) { 'MbtSuccessBackground' } else { 'MbtInfoBackground' }
         Set-MbtGuiResource $circle ([Windows.Controls.Border]::BackgroundProperty) $bgKey
         if ($done) { $num = New-GuiIcon 'check' 12 'MbtSuccessInk'; $num.HorizontalAlignment = 'Center' }
         else {
-            $num = New-GuiText ([string]($i + 1)) 'Small' -NoWrap; $num.FontWeight = [Windows.FontWeights]::SemiBold; $num.HorizontalAlignment = 'Center'; $num.VerticalAlignment = 'Center'
+            $num = New-GuiText ([string]$n) 'Small' -NoWrap; $num.FontWeight = [Windows.FontWeights]::SemiBold; $num.HorizontalAlignment = 'Center'; $num.VerticalAlignment = 'Center'
             Set-MbtGuiResource $num ([Windows.Controls.TextBlock]::ForegroundProperty) $(if ($cur) { 'TextOnAccentFillColorPrimaryBrush' } else { 'TextFillColorSecondaryBrush' })
         }
         $circle.Child = $num
-        $lbl = New-GuiText $script:StepLabels[$flow[$i]] 'Body' -NoWrap
+        $lbl = New-GuiText $grp.Name 'Body' -NoWrap
         $lbl.Margin = [Windows.Thickness]::new(8, 0, 0, 0); $lbl.VerticalAlignment = 'Center'
         if ($cur) { $lbl.FontWeight = [Windows.FontWeights]::SemiBold } else { Set-MbtGuiResource $lbl ([Windows.Controls.TextBlock]::ForegroundProperty) 'TextFillColorSecondaryBrush' }
         $sp.Children.Add($circle) | Out-Null; $sp.Children.Add($lbl) | Out-Null
         $btn.Content = $sp
         if ($cur) { Set-MbtGuiResource $btn ([Windows.Controls.Control]::BackgroundProperty) 'MbtAccentSoft' }
         $btn.Add_Click({ param($b, $e) Set-MbtGuiStep ([int]$b.Tag) })
-        $panel.Children.Add($btn) | Out-Null
+        $cell = [Windows.Controls.StackPanel]::new(); $cell.VerticalAlignment = 'Top'
+        $cell.Children.Add($btn) | Out-Null
+        if ($grp.Name -eq 'Task') { $cell.Children.Add((New-MbtGuiSubSteps -Members $grp.Members -Flow $flow -Locked $locked)) | Out-Null }
+        $panel.Children.Add($cell) | Out-Null
     }
-    $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } else { 'Start' }
+    $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } elseif ($screen -eq 'setup') { 'Setup' } else { 'Choose a task' }
     if ($s.Task -in 'export', 'import' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
     $g.C.StepperContext.Text = $ctx
 }
 
+function New-MbtGuiSubSteps {
+    <# What, From, To under the Task step: the pages already passed are clickable, the current one is in the accent colour. #>
+    param([Parameter(Mandatory)]$Members, [Parameter(Mandatory)]$Flow, [bool]$Locked)
+    $s = $script:Gui.S
+    $row = [Windows.Controls.StackPanel]::new(); $row.Orientation = 'Horizontal'; $row.Margin = [Windows.Thickness]::new(32, 0, 0, 0)
+    $k = 0
+    foreach ($i in $Members) {
+        if ($k -gt 0) { $dot = New-GuiIcon 'chev' 8 'TextFillColorTertiaryBrush'; $dot.Margin = [Windows.Thickness]::new(1, 0, 1, 0); $row.Children.Add($dot) | Out-Null }
+        $k++
+        $cur = ($i -eq $s.Step); $passed = ($i -lt $s.Step)
+        $b = [Windows.Controls.Button]::new()
+        $b.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtStepButton')
+        $b.Padding = [Windows.Thickness]::new(6, 0, 6, 1)
+        $b.IsEnabled = $passed -and -not $Locked
+        $b.Tag = $i
+        $t = New-GuiText $script:SubStepLabels[$Flow[$i]] 'Small' -NoWrap
+        if ($cur) { $t.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText' }
+        elseif (-not $passed) { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'TextFillColorTertiaryBrush' }
+        $b.Content = $t
+        $b.Add_Click({ param($x, $e) Set-MbtGuiStep ([int]$x.Tag) })
+        $row.Children.Add($b) | Out-Null
+    }
+    return $row
+}
+
 function Set-MbtGuiActions {
     <# The action bar: Back at the left, optional left and extra elements, the footer, the primary button (grey until the page can continue). #>
-    param([bool]$Back = $true, [string]$Footer = '', $Left, $Extra, [string]$Label, [string]$Icon, [bool]$Enabled = $true, [scriptblock]$OnClick)
+    param([bool]$Back = $true, [string]$Footer = '', $Left, $Extra, [string]$Label, [string]$Icon, [bool]$Enabled = $true, [scriptblock]$OnClick, [switch]$Secondary)
     $c = $script:Gui.C
+    if ($Secondary) { $c.Primary.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'DefaultButtonStyle') } else { $c.Primary.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'AccentButtonStyle') }
     $c.BackButton.Visibility = $(if ($Back) { 'Visible' } else { 'Collapsed' })
     $c.ActionsLeft.Content = $Left
     $c.ActionsExtra.Content = $Extra
@@ -236,14 +284,14 @@ function Set-MbtGuiStep {
     $s = $script:Gui.S
     if ($Index -lt 0) { $Index = 0 }
     $s.Step = $Index
-    if ($Index -eq 0) { $s.Task = $null; $s.Sel = $null }
+    if ($Index -le 1) { $s.Task = $null }
     Show-MbtGuiPage
 }
 
 function Move-MbtGuiStep {
     param([int]$Delta)
     $s = $script:Gui.S
-    $max = $script:Flows[$s.Task].Count - 1
+    $max = $(if ($s.Task) { $script:Flows[$s.Task].Count } else { $script:Flows.export.Count }) - 1
     Set-MbtGuiStep ([math]::Max(0, [math]::Min($max, $s.Step + $Delta)))
 }
 
@@ -337,209 +385,3 @@ function Step-MbtGuiTick {
 
 #endregion
 
-# SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
-# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDFwIwqz76OgbqC
-# 71FyNjmpR5pLtK/KYE3Il3yeO1neEqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
-# CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
-# EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
-# A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
-# Fw0xNjA2MjQyMDQ0MzBaFw0zMTA2MjQyMDQ0MzBaMHgxCzAJBgNVBAYTAlVTMQ4w
-# DAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENv
-# cnAxNDAyBgNVBAMMK1NTTC5jb20gQ29kZSBTaWduaW5nIEludGVybWVkaWF0ZSBD
-# QSBSU0EgUjEwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCfgxNzqrDG
-# bSHL24t6h3TQcdyOl3Ka5LuINLTdgAPGL0WkdJq/Hg9Q6p5tePOf+lEmqT2d0bKU
-# Vz77OYkbkStW72fL5gvjDjmMxjX0jD3dJekBrBdCfVgWQNz51ShEHZVkMGE6ZPKX
-# 13NMfXsjAm3zdetVPW+qLcSvvnSsXf5qtvzqXHnpD0OctVIFD+8+sbGP0EmtpuNC
-# GVQ/8y8Ooct8/hP5IznaJRy4PgBKOm8yMDdkHseudQfYVdIYyQ6KvKNc8HwKp4WB
-# wg6vj5lc02AlvINaaRwlE81y9eucgJvcLGfE3ckJmNVz68Qho+Uyjj4vUpjGYDdk
-# jLJvSlRyGMwnh/rNdaJjIUy1PWT9K6abVa8mTGC0uVz+q0O9rdATZlAfC9KJpv/X
-# gAbxwxECMzNhF/dWH44vO2jnFfF3VkopngPawismYTJboFblSSmNNqf1x1KiVgMg
-# Lzh4gL32Bq5BNMuURb2bx4kYHwu6/6muakCZE93vUN8BuvIE1tAx3zQ4XldbyDge
-# VtSsSKbt//m4wTvtwiS+RGCnd83VPZhZtEPqqmB9zcLlL/Hr9dQg1Zc0bl0EawUR
-# 0tOSjAknRO1PNTFGfnQZBWLsiePqI3CY5NEv1IoTGEaTZeVYc9NMPSd6Ij/D+KNV
-# t/nmh4LsRR7Fbjp8sU65q2j3m2PVkUG8qQIDAQABo4H7MIH4MA8GA1UdEwEB/wQF
-# MAMBAf8wHwYDVR0jBBgwFoAU3QQJB6L1en1SUxKSle44gCUNplkwMAYIKwYBBQUH
-# AQEEJDAiMCAGCCsGAQUFBzABhhRodHRwOi8vb2NzcHMuc3NsLmNvbTARBgNVHSAE
-# CjAIMAYGBFUdIAAwEwYDVR0lBAwwCgYIKwYBBQUHAwMwOwYDVR0fBDQwMjAwoC6g
-# LIYqaHR0cDovL2NybHMuc3NsLmNvbS9zc2wuY29tLXJzYS1Sb290Q0EuY3JsMB0G
-# A1UdDgQWBBRUwv4QlQCTzWr158DX2bJLuI8M4zAOBgNVHQ8BAf8EBAMCAYYwDQYJ
-# KoZIhvcNAQELBQADggIBAPUPJodwr5miyvXWyfCNZj05gtOII9iCv49UhCe204MH
-# 154niU2EjlTRIO5gQ9tXQjzHsJX2vszqoz2OTwbGK1mGf+tzG8rlQCbgPW/M9r1x
-# xs19DiBAOdYF0q+UCL9/wlG3K7V7gyHwY9rlnOFpLnUdTsthHvWlM98CnRXZ7WmT
-# V7pGRS6AvGW+5xI+3kf/kJwQrfZWsqTU+tb8LryXIbN2g9KR+gZQ0bGAKID+260P
-# Z+34fdzZcFt6umi1s0pmF4/n8OdX3Wn+vF7h1YyfE7uVmhX7eSuF1W0+Z0duGwdc
-# +1RFDxYRLhHDsLy1bhwzV5Qe/kI0Ro4xUE7bM1eV+jjk5hLbq1guRbfZIsr0WkdJ
-# LCjoT4xCPGRo6eZDrBmRqccTgl/8cQo3t51Qezxd96JSgjXktefTCm9r/o35pNfV
-# HUvnfWII+NnXrJlJ27WEQRQu9i5gl1NLmv7xiHp0up516eDap8nMLDt7TAp4z5T3
-# NmC2gzyKVMtODWgqlBF1JhTqIDfM63kXdlV4cW3iSTgzN9vkbFnHI2LmvM4uVEv9
-# XgMqyN0eS3FE0HU+MWJliymm7STheh2ENH+kF3y0rH0/NVjLw78a3Z9UVm1F5VPz
-# iIorMaPKPlDRADTsJwjDZ8Zc6Gi/zy4WZbg8Zv87spWrmo2dzJTw7XhQf+xkR6Od
-# MIIG9TCCBN2gAwIBAgIQBof4ljXihJpmCqqt2mhAWzANBgkqhkiG9w0BAQsFADB4
-# MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24x
-# ETAPBgNVBAoMCFNTTCBDb3JwMTQwMgYDVQQDDCtTU0wuY29tIENvZGUgU2lnbmlu
-# ZyBJbnRlcm1lZGlhdGUgQ0EgUlNBIFIxMB4XDTI2MTAxMzAyNDgwMloXDTI3MTAx
-# MzAyNDgwMlowXDELMAkGA1UEBhMCRlIxGzAZBgNVBAcMEkNoYW50ZWxvdXAtRW4t
-# QnJpZTEXMBUGA1UECgwOTmljb2xhcyBGYWJlcnQxFzAVBgNVBAMMDk5pY29sYXMg
-# RmFiZXJ0MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAsg6CT0mFQ4jB
-# V2plIS4uWFSoVqRHd82Y7XYZ4CUTe/7nPBRUlXXdKTZMMHzGgiG8dEXNE8K1Xe90
-# Dgl/FnorzAFlrNWSwf6t27UAUw9xkqtRDVVpVgpixpWkAwjcQeLG+YMqBkGbFi35
-# TGvS23lPFWvLp4DxARrv15MtZ/NjNTCAAGUlMP2hFVBknEmrnYjEGyeJ93sl20RS
-# WXQQLNqlenBdkGCrQW4XjHtRjJAEqAC68hN6nWevopSQ8CLUV7A1RFfHFarDrzrL
-# zr0/NjIdSyIfM9hShln31NDrktB6Ups2XIyrtPDNB7fjkW4jpLlOqQGfYKsU9ErE
-# 4SnFsh0yOOjitegyh1RvZ9wH++3DF4CmJfTli5l/gEIm8xCCryxI+K5EogW3wu1y
-# u8NT2hcvHjdh7OpRyPyFAuLZ8MfX7kPAJpnuCeOuktzY/20eVD8bDglj+4zgqzsn
-# cR/t6T/7w1/HxpRyrVoKvEyRx+mphYh5jMdEa0BjxOL0vAJpdGZSfXGmPm/yPqRn
-# 5STTkMtzkVQXPbcvgKM0luzFcQKPHk3qdHLEXa8gf93ktYDbLE5Wd2UHrXz3SZxN
-# URHPdIXCr1qgrqQve7041kMpzrkDI5DnG2lvRG4108gp02bHG0muKyZlDdCOra7h
-# Zonu2nO79sFallruzzNi0o994PoWksUCAwEAAaOCAZUwggGRMAwGA1UdEwEB/wQC
-# MAAwHwYDVR0jBBgwFoAUVML+EJUAk81q9efA19myS7iPDOMwegYIKwYBBQUHAQEE
-# bjBsMEgGCCsGAQUFBzAChjxodHRwOi8vY2VydC5zc2wuY29tL1NTTGNvbS1TdWJD
-# QS1Db2RlU2lnbmluZy1SU0EtNDA5Ni1SMS5jZXIwIAYIKwYBBQUHMAGGFGh0dHA6
-# Ly9vY3Nwcy5zc2wuY29tMFEGA1UdIARKMEgwCAYGZ4EMAQQBMDwGDCsGAQQBgqkw
-# AQMDATAsMCoGCCsGAQUFBwIBFh5odHRwczovL3d3dy5zc2wuY29tL3JlcG9zaXRv
-# cnkwEwYDVR0lBAwwCgYIKwYBBQUHAwMwTQYDVR0fBEYwRDBCoECgPoY8aHR0cDov
-# L2NybHMuc3NsLmNvbS9TU0xjb20tU3ViQ0EtQ29kZVNpZ25pbmctUlNBLTQwOTYt
-# UjEuY3JsMB0GA1UdDgQWBBRoUx3630l9wA1fUpkKkw2GUIxl/jAOBgNVHQ8BAf8E
-# BAMCB4AwDQYJKoZIhvcNAQELBQADggIBAE3oj6cNuwlDToi1BwjgsA5djfRN4DIi
-# BYDFZIRYaIRe/rEdnItz3aqQQdFuwXnJA/MQEmi2WAGek8GeZF+R41s8FbcDxBUE
-# BoSt98TuBE+0xgxQWDiPhhXaX1Aw9V0GF4ZnlfCSw1eu2KiASaKn7Bo0PLbEAXff
-# vftRXof/kyqtw8iID6I4Rhrf5DI3WVZQodakUUmWnbnziWvEZOWbNOfzwP+7BwEt
-# 7jQANfbmEfb4p75rfy5dQVwniTDSvdo6xkrbe1Cr93GS7cJta18IG5CoIVUmdK+s
-# W38B1sLuy8Mi0MstMXV3004yaRuzLdNaAM0f9WAFerxemiQC0kdmA44/lWV3lVkM
-# WJSwkHBkkSg8Eh0hxcGzTH2xmtDhLJHNNLRwkI9u2Ur+HbLCt50oBgSV8BcCs/1i
-# qi884iC/yuX+HIv9YgTUNZ8c4lLaq4VuliJpXLu2buHIsTkO0v0+5oCM91zjTVZm
-# ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
-# eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
-# Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
-# BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
-# A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
-# MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
-# AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAgJyVKjNbA
-# waoPkS0GmSJClwopNNxv60tt77OuOcL+1jANBgkqhkiG9w0BAQEFAASCAgBCopFO
-# mvuAaU4vTwqiJTClPdIzARnjqBA8WhBxfB9SkfO2AY4lRTdZhRMHO5hBd2YDAVuG
-# DLuzHaI3clQTmVExOtUyYb2Va77ytvhhmIRzORpt0DOUQPWE96lf9UNgW3mShMX1
-# LwYCNAMVVJRWo0cSUfaLto1lu0t3tLii5FzvTSLrMsWrVg/CINLGilUa/8sWaDxZ
-# 7GSYsmi5REO1cR2xt7er3fR86jsmYv9MFLFyhN9mSZQpxyIOrFFyxQEW2FpCmV7S
-# bfLFfcZNNxhgeL2IdRaHin2WN4uw2pP69o5P73RqeWMlJrv8/nsWejOLuLlH/T5s
-# c6TmGuTe7Z0kpjBfIA9+JmclMV1p28zVRBJSsrgvyMI2y7r+AEAIwZIbVDbTtr5R
-# +mxb0xYwXxGNRhsNBGt0PTcGW9TyLJct7II+V3grOBu9Xhiap0j5NPPoXv8Z+6+G
-# LOt8MrbtuS+k3/AGWEzlE4/mGZspShYeGfcCSEGwWyECkaKGhoo3CMk7suxI8cjg
-# Flf4zWqGXMTjWxuxtSm0WT7bfVdCApbl7BaTnKa78rn4oNx7Xn8EQp0ozOZNYk+3
-# tTzPGgiqvIn0SvJceuetrDK3eGDilKP7SLfndr4WPJ+UWqqabsxCrhLca4tJqJKL
-# 3sEpLEpR13jReGJ6CfeGlh7QSEtS1Jpti+JgYKGCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
-# BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEINXD5NH7fwwBpjbiDIfX7abxRibGDjIg0uQlxCO7lYTmAgh6gyLWtOqq
-# QxgPMjAyNjExMTAxNDA5MTFaMAMCAQECEDmqg0RvjcppT13/7Vl0WcOgghGnMIIE
-# 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
-# CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
-# BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
-# c3N1aW5nIFJTQSBDQSAyMB4XDTI2MDYxMjE3MjI0NloXDTM2MDYwOTE3MjI0NVow
-# bjELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRleGFzMRAwDgYDVQQHDAdIb3VzdG9u
-# MREwDwYDVQQKDAhTU0wgQ29ycDEqMCgGA1UEAwwhU1NMLmNvbSBUaW1lc3RhbXBp
-# bmcgVW5pdCAyMDI2IEUxMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6CWLuGYT
-# LkiSOPMLNskOBthXsIhRSA46feOQwvSLcDaNh6vxUzBKEx1KdFBRFs7OHrnH/K0V
-# A6MbDQIFpUg0PaOCAVIwggFOMB8GA1UdIwQYMBaAFHCaZcFDgKP86bFkiW7xMJwJ
-# Icl8ME0GCCsGAQUFBwEBBEEwPzA9BggrBgEFBQcwAoYxaHR0cDovL2NlcnQuc3Ns
-# LmNvbS9TU0wuY29tLXRpbWVTdGFtcGluZy1JLVIyLmNlcjBRBgNVHSAESjBIMDwG
-# DCsGAQQBgqkwAQMGATAsMCoGCCsGAQUFBwIBFh5odHRwczovL3d3dy5zc2wuY29t
-# L3JlcG9zaXRvcnkwCAYGZ4EMAQQCMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEIG
-# A1UdHwQ7MDkwN6A1oDOGMWh0dHA6Ly9jcmxzLnNzbC5jb20vU1NMLmNvbS10aW1l
-# U3RhbXBpbmctSS1SMi5jcmwwHQYDVR0OBBYEFCesA1a6KGq6FzuDPUB/eagk7MM8
-# MA4GA1UdDwEB/wQEAwIHgDANBgkqhkiG9w0BAQsFAAOCAgEAT3ZuzvwDnsIZTXBn
-# +hjmuBXgzB12fbYxT9uYe6ZvhvpbZWKcyDQgacETkPw8k6yeqnYCYyFZ063lMPEq
-# AhAD2nMG614Zh7PtHW9DWqfsgivxbPYBeN+t7UxgkYT3expbWMdPEqBtWVyHOvLc
-# KvMxgJWfJjANwVkwVDfky/j7cf28+iimN8PKc7S/u8/LenRRnV2W2YfncRnkz9Cf
-# s5nRDzaZguiHrrp2GxwgnNQSH4GBjHOl3PzLsnVbGoZKi4ZEjgXups4mGGOK7+GB
-# 2HAlQn+OS944cHqlkH0gElt2WezoCNRpELph9qaxuBnjSEqXWWfgE6yGBwO0uxKN
-# qpWVTHmAwr6SvBPofxubXIuEn9ivR4CLOuAxUSrJ41ZBg/qqG0oJjF6GkRKbxq7c
-# yWSkEZYJhmKCg2Hg5fXHagOxiwbmn5JPZ1vhWCrbk3v/dTx2gvTK5+erC5H9/rTc
-# ljUI776yd2rfhjfkpvyAsbtXs4D7nrnw8i9wor5+fdtRSJBVxqzLmykFftoL0Up2
-# Q++tyKCUdribdcnrB4HKS3s+t3AjdcbA06DCL8GifQi9fL0yRBRNlA4o6BP+Sr75
-# 5MaCNjURYZDvDyxJHBBT7cqjZIwsiR8s+6860noFbBBtdge2Iw7CPC/1Q31I27hV
-# olS7B0yao3v8X2MtWy3msZlXTcEwggXdMIIDxaADAgECAgh7LJvTFoAymTANBgkq
-# hkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNV
-# BAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8GA1UEAwwo
-# U1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAeFw0xNjAy
-# MTIxNzM5MzlaFw00MTAyMTIxNzM5MzlaMHwxCzAJBgNVBAYTAlVTMQ4wDAYDVQQI
-# DAVUZXhhczEQMA4GA1UEBwwHSG91c3RvbjEYMBYGA1UECgwPU1NMIENvcnBvcmF0
-# aW9uMTEwLwYDVQQDDChTU0wuY29tIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3Jp
-# dHkgUlNBMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA+Q/doyt9y9Aq
-# /uxnhabnLhu6d+Hj9a+k7PpKXZHEV0drGHdrdvL9k+Q9D8IWngtmw1aUnheDhc5W
-# 7/IW/QBi9SIJVOhlF05BueBPRpeqG8i4bmJeabFf2yoCfvxsyvNB2O3Q6Pw/YUjt
-# sAMUHRAOSxngu07shmX/NvNeZwILnYZVYf16OO3+4hkAt2+hUGJ1dDyg+sglkrRu
-# eiLH+B6h47LdkTGrKx0E/6VKBDfphaQzK/3i1lU0fBmkSmjHsqjTt8qhk4jrwZe8
-# jPkd2SKEJHTHBD1qqSmTzOu4W+H+XyWqNFjIwSNUnRuYEcM4nH49hmylD0CGfAL0
-# XAJPKMuucZ8POsgz/hElNer8usVgPdl8GNWyqdN1eANyIso6wx/vLOUuqfqeLLZR
-# Rv2vA9bqYGjqhRY2a4XpHsCz3cQk3IAqgUFtlD7I4MmBQQCeXr9/xQiYohgsQkCz
-# +W84J0tOgPQ9gUfgiHzqHM61dVxRLhwrfxpyKOcAtdF0xtfkn60Hk7ZTNTX8N+TD
-# 9l0WviFz3pIK+KBjaryWkmo++LxlVZve9Q2JJgT8JRqmJWnLwm3KfOJZX5es6+8u
-# yLzXG1k8K8zyGciTaydjGc/86Sb4ynGbf5P+NGeETpnr/LN4CTNwumamdu0bc+sa
-# pQ3EIhMglFYKTixsTrH9z5wJuqIz7YcCAwEAAaNjMGEwHQYDVR0OBBYEFN0ECQei
-# 9Xp9UlMSkpXuOIAlDaZZMA8GA1UdEwEB/wQFMAMBAf8wHwYDVR0jBBgwFoAU3QQJ
-# B6L1en1SUxKSle44gCUNplkwDgYDVR0PAQH/BAQDAgGGMA0GCSqGSIb3DQEBCwUA
-# A4ICAQAgGBGUKfsmnRweHnBh8ZVyk3EkrWiTWI4yrxuzcAP8JSt0hZA9eGr0uYul
-# lzu1GJG7Hqf5QFuR+VWZrx4R0Fwdp2bjsZQHDDI5puobsHnYHZxwROOK3cT5lR+K
-# OEM/AYWlR6c9RrK85SJo93uc2Cw+CiHILTOsv8WBmTF0wXVxxb6x8CNF9J1r/Blj
-# naO8BMYYCyW7U4kPs4BQ3kXuRH+rlHhkmNP2KN2H2HBldPsOuRPrpw9hqTKWzN67
-# 7WNMGLupQPegVG4giHF1GOp6tDRy4CMnd1y2kOqGJUCr7zMPy5+CvqIg+/a1LRrm
-# woWxdA/7yGUCpFIBR91JIsG/2OtrrH7e7GMzFbcjCI/GD41BWt2OxbmP5UU/eNu6
-# 0htAsf5xTT/ggaK6XrTsFeCT3QgffuFVmQsh3pOeCvvmo0m9NjD+53eyoHWXtS2B
-# iBdlIPfakACfyVLMMso1fPU9D9gr1/UmbMkGNJYW6nBZGjJ5eQu2iH8PUkg9v2zY
-# okQu0U63cljTiROV/kSr+NeLG26cvCygW9VqAK9fN+HV+hALmJyG5yaPzvDsbopX
-# C4DjTrLAoGNhkLpVaDd0araS25+hhiK2ZScO7LafQmDkZ8K12kELxNOLYRu8+h+R
-# K9dEB166KazZxenvU0ha64DxKFghzbAGVfsnP1OQcKkEHlcnuTCCBsswggSzoAMC
-# AQICEFKdu8K4iYf1g4DgsOuiBjYwDQYJKoZIhvcNAQELBQAwfDELMAkGA1UEBhMC
-# VVMxDjAMBgNVBAgMBVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMRgwFgYDVQQKDA9T
-# U0wgQ29ycG9yYXRpb24xMTAvBgNVBAMMKFNTTC5jb20gUm9vdCBDZXJ0aWZpY2F0
-# aW9uIEF1dGhvcml0eSBSU0EwHhcNMjYwNjEyMTY0MjE1WhcNNDEwMjEyMTczOTM5
-# WjByMQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0
-# b24xETAPBgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFt
-# cGluZyBJc3N1aW5nIFJTQSBDQSAyMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
-# CgKCAgEAny+r5nNNkLwxRps2B3laUGNU9y7vWiJ5013yf0iXz65bQdwa9bjj8l/S
-# keXqHGqfSh2Foae+80E8mDEf93oIwjsy2CX2cXmKxqtF8HJGYB4f6yRhKED50wkb
-# OysL02IXf+/EZna44jffhhVz4OU/k52xQ/PnIg/uFhc2Wk+Sc/CHqAr+lYVkPz7L
-# y5RqB9f1RKGr9JC37W1LgVdHC50dNIdsa3QXPhltYZubR3npE4Bbfi0joUW5n5O0
-# ayweN45R/YVLxA0YGlp1OHVfVnsqXq8bhnw1Lc4kjJ6XOgXlOlw/a8ze57TvbduZ
-# l3ehewTmvO0Aky/nqOWDS9IPPxdxdG6vprBbSuHlxNANBAbHTiFgkfZmf0dZYlT/
-# AnZIoFxAq0HILPolf4OgWgET76SiWSlm2XYRIXwVjpeqG0plvXwRIQBzSiEJj7Qe
-# QFnCvHx4gQMINvN3+yG/1rxhEbajGve0tTP3lX4PPOHVAE0QJp4ZzPI1YYJkhVRr
-# iVVxVRU4Fsg4BPwP6I+YLmHb1tZ4RLwOFNLh/gJYDgPlChCoxOogFxXgwPZZrDyE
-# RYB0aeOexW0OKacN4RRu9cqF2KKu/Ab5AL7eYDLVGUPrEEyYbIMApVKqpebc0/jD
-# QniC+3rkauRAjgVc8m1ip/CQgG1Dw4Z9ulVRAY9VR6Za26LsTbUCAwEAAaOCAVEw
-# ggFNMBIGA1UdEwEB/wQIMAYBAf8CAQAwHwYDVR0jBBgwFoAU3QQJB6L1en1SUxKS
-# le44gCUNplkwTQYIKwYBBQUHAQEEQTA/MD0GCCsGAQUFBzAChjFodHRwOi8vY2Vy
-# dC5zc2wuY29tL1NTTGNvbS1Sb290Q0EtUlNBLTQwOTYtUjEuY2VyMD8GA1UdIAQ4
-# MDYwNAYEVR0gADAsMCoGCCsGAQUFBwIBFh5odHRwczovL3d3dy5zc2wuY29tL3Jl
-# cG9zaXRvcnkwEwYDVR0lBAwwCgYIKwYBBQUHAwgwQgYDVR0fBDswOTA3oDWgM4Yx
-# aHR0cDovL2NybHMuc3NsLmNvbS9TU0xjb20tUm9vdENBLVJTQS00MDk2LVIxLmNy
-# bDAdBgNVHQ4EFgQUcJplwUOAo/zpsWSJbvEwnAkhyXwwDgYDVR0PAQH/BAQDAgGG
-# MA0GCSqGSIb3DQEBCwUAA4ICAQBlFFvNMemA6iBiBYo56IKQjWhWuQaYKuo4qpf0
-# KJNERAt1gz+HsA2SL3xA/V+EA8SRPNP9SvX0is+5mDsppYvpKyYGqYP36YFW0mbF
-# 1F0ZtXxumCUUO/ZV5mBNKDf5Q4PY7Qb0eWAepUc0rNJr/Mvn5ZiXfJPxDb2xmcg8
-# aRD652/nr+Ork2UBP0E43iJdI4LF7Vs29R3SGRLYZOxM15DI4QebsKRl0KDlf4Om
-# YGCKc7umTxibkZtN1C1KWgnf9jadU/JwnySaYEBgx6/v+FVC6SGONziY7TcvI9MV
-# +qYxHUPlOm6AaQP2dS4bjWXnm86ldCbUkxtOACumSfT97077JNiVa7PZ1IBkd/2P
-# E1AC8gs7U+/Yk1BN9XRPIi15k/uA1xF9oeee5KGjyiGKkqIT7W8QkgUT5zeCinFK
-# kcKafZMcROSVYpXtmtQqGGR2g4uPYqJ0K1hms6gJXrHt/34p8M9PrV8oNWe0Zl1E
-# rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
-# fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
-# 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
-# czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
-# JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
-# AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkxMVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIEDu
-# 6MlWL3PzIZG24hHu6zF/b2hVVQVFGCDLNuwohrQSMIHIBgsqhkiG9w0BCRACLzGB
-# uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
-# dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
-# c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
-# YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBqANGDfNnp/1AzjviGetg14jYVnytUwxz8rwPJ7YDn8QIgC7NB
-# 8yv7w2B81eOs39HWI1DFem2wjaLA9JNQW/BBYVY=
-# SIG # End signature block
