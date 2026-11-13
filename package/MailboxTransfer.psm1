@@ -2397,7 +2397,7 @@ function Export-MbtMailbox {
     $null = Wait-MbtTransferJob -Job $job -IntervalSeconds $IntervalSeconds
     $r = $job.Result
     if ($job.Error) { Write-MbtItem FAIL "export stopped: $($job.Error.Message)" }
-    Write-MbtItem $(if ($r.Failed -eq 0 -and $r.Completed) { 'OK' } else { 'WARN' }) ("export {0}: {1} items exported ({2}), {3} failed, {4} folders, {5} items listed, {6} previews with a warning" -f
+    Write-MbtItem $(if ($r.Failed -eq 0 -and $r.Completed) { 'OK' } else { 'WARN' }) ("export {0}: {1} items exported ({2}), {3} failed, {4} folders read, {5} items listed, {6} previews with a warning" -f
         $(if ($r.Completed) { 'finished' } else { 'NOT finished' }), $r.Exported, (Format-MbtBytes $r.Bytes), $r.Failed, $r.Folders, $r.Inventoried, $r.PreviewWarnings)
     if ($r.Final) { Write-MbtDetail $r.Final.ToString() }
     if ($r.RecoverableFolders -gt 0) { Write-MbtItem INFO ("Recoverable Items: {0} folder(s) recorded under '{1}'. An import puts them in a normal folder named '{2}', never back into Recoverable Items." -f $r.RecoverableFolders, [MailboxTransfer.RecoverableItems]::TopName, [MailboxTransfer.RecoverableItems]::RestoredName) }

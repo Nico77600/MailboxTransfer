@@ -476,6 +476,90 @@ namespace MailboxTransfer
                 .ToList();
         }
 
+        /// <summary>How many times only the folders of a selection were read, instead of the tree of the whole mailbox (see <see cref="GetFolderSubtrees"/>).</summary>
+        public int SubtreesRead { get { return Volatile.Read(ref _subtreesRead); } }
+        int _subtreesRead;
+
+        /// <summary>
+        /// The folders of a selection without the tree of the whole mailbox: the folders asked for, the folders below the ones in <paramref name="withSubfolders"/>, and the folders
+        /// above each of them up to the first level, as <see cref="GetFolderTree"/> would hold them (same ids, counts, paths and order). The first level is one listing; a folder
+        /// that is not in it is asked by its id, then its parent, until the chain meets a folder of the first level; the children come from childFolders, the folders of a level
+        /// asked at once. Returns null when this cannot be done as the whole tree would (a folder or a parent that cannot be read or is not the folder asked for, a folder that
+        /// moved to another mailbox, a chain that does not end at the first level, the whole tree already read and kept): the caller reads the whole tree then.
+        /// </summary>
+        public List<FolderInfo> GetFolderSubtrees(string mailboxId, IEnumerable<string> folderIds, ISet<string> withSubfolders, CancellationToken ct = default(CancellationToken), Action<int> progress = null, int concurrency = 0)
+        {
+            List<string> asked = folderIds == null ? new List<string>() : folderIds.Where(x => !string.IsNullOrEmpty(x)).Distinct(StringComparer.Ordinal).ToList();
+            if (asked.Count == 0) return null;
+            if (CacheFolderTrees) lock (_treeLock) if (_trees.ContainsKey(mailboxId)) return null;
+            Action<int> report = progress ?? TreeProgress;
+            int workers = Math.Max(1, Math.Min(concurrency > 0 ? concurrency : TreeConcurrency, TransferLimits.MaxConcurrency));
+            Interlocked.Increment(ref _subtreesRead);
+
+            var firstLevel = new Dictionary<string, FolderInfo>(StringComparer.Ordinal);
+            try { foreach (FolderInfo f in ListFolders(MailboxPath(mailboxId) + "/folders", ct)) if (f.Id != null && !firstLevel.ContainsKey(f.Id)) firstLevel[f.Id] = f; }
+            catch (GraphException ex) when (IsMailboxNotRoutable(ex)) { throw new MailboxNotReachableException(mailboxId, ex); }
+
+            var byId = new Dictionary<string, FolderInfo>(StringComparer.Ordinal);
+            if (report != null) report(firstLevel.Count);
+            Func<string, FolderInfo> read = id =>
+            {
+                FolderInfo f;
+                if (firstLevel.TryGetValue(id, out f)) return f;
+                try { f = GetFolder(mailboxId, id, ct); }
+                catch (GraphException ex) when (ex.StatusCode != 401) { return null; }
+                return string.Equals(f.Id, id, StringComparison.Ordinal) && f.MailboxId == null ? f : null;
+            };
+            foreach (string id in asked)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (byId.ContainsKey(id)) continue;
+                FolderInfo cursor = read(id);
+                if (cursor == null) return null;
+                byId[id] = cursor;
+                for (int hops = 0; ; hops++)
+                {
+                    string parentId = cursor.ParentFolderId;
+                    // a folder of the first level is where the tree starts: what is above it is the top of the store, which the whole tree does not hold
+                    if (firstLevel.ContainsKey(cursor.Id) && (parentId == null || !firstLevel.ContainsKey(parentId))) break;
+                    if (parentId == null || byId.ContainsKey(parentId)) break;
+                    if (hops >= 256) return null;
+                    FolderInfo parent = read(parentId);
+                    if (parent == null) return null;
+                    byId[parentId] = parent;
+                    cursor = parent;
+                }
+                if (!firstLevel.ContainsKey(cursor.Id) && !(cursor.ParentFolderId != null && byId.ContainsKey(cursor.ParentFolderId))) return null;
+                if (report != null) report(byId.Count);
+            }
+
+            var expanded = new HashSet<string>(StringComparer.Ordinal);
+            var level = new List<FolderInfo>();
+            foreach (string id in asked)
+                if (withSubfolders != null && withSubfolders.Contains(id) && expanded.Add(id)) level.Add(byId[id]);
+            while (true)
+            {
+                List<FolderInfo> parents = level.Where(f => f.ChildFolderCount > 0).ToList();
+                if (parents.Count == 0) break;
+                var answers = new List<FolderInfo>[parents.Count];
+                RunBounded(parents.Count, workers, ct, i => { answers[i] = GetChildFolders(mailboxId, parents[i].Id, ct); },
+                    () => { if (report != null) report(byId.Count); });
+                level = new List<FolderInfo>();
+                foreach (List<FolderInfo> children in answers)
+                    foreach (FolderInfo c in children)
+                    {
+                        if (c.Id == null) continue;
+                        FolderInfo known;
+                        if (!byId.TryGetValue(c.Id, out known)) { byId[c.Id] = c; known = c; }
+                        if (expanded.Add(known.Id)) level.Add(known);
+                    }
+                if (report != null) report(byId.Count);
+            }
+
+            foreach (FolderInfo f in byId.Values) SetPath(f, byId);
+            return byId.Values.OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         /// <summary>
         /// Runs work(0) .. work(count - 1) on at most <paramref name="workers"/> threads. With one worker it runs on the calling thread, in order. The first exception stops the others
         /// (the ones in flight finish their request) and is thrown as it is, not wrapped. <paramref name="tick"/> is called on the calling thread, after each item when there is one
