@@ -302,7 +302,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <ul>
 <li><strong>The stepper.</strong> Only the pages already passed can be clicked, and nothing can be clicked while a job runs.</li>
 <li><strong>The import confirmation.</strong> The <strong>Start</strong> button of an import is grey until a box is ticked. The box states what will be written, where and how much (<em>I checked: add 9,860 items to adele.vance@contoso.com · Archive · new folder Imported archive-2019 2026-11-12</em>). The tick is bound to the plan: it clears by itself when the mailbox, the source, the target folder or any setting that changes the plan changes (a change of case only in a typed address does not count, see <a href="#names-are-not-case-sensitive">Names are not case sensitive</a>). Nothing has to be typed.</li>
-<li><strong>Expert mode</strong> (a fold on the Verify page): requests in parallel (1, 2 or 4; default 4), the wait before a failed request is tried again (<code>-RetryWaitSeconds</code>), <strong>tries per item</strong> (<code>-MaxAttempts</code>, default 3, 1 to 20) and the wait before an uncertain item is looked for (<code>-ReconcileDelaySeconds</code>, in minutes in the window). Applies to this run only. Do not confuse the tries per item with <code>Graph.MaxAttempts</code> of the configuration (6): that one is the number of times a single HTTP request is repeated after a 429, 503 or 504.</li>
+<li><strong>Expert mode</strong> (a fold on the Verify page): requests in parallel (1, 2 or 4; default 4), the wait before a failed request is tried again (<code>-RetryWaitSeconds</code>), <strong>tries per item</strong> (<code>-MaxAttempts</code>, default 3, 1 to 20) and the wait before an uncertain item is looked for (<code>-ReconcileDelaySeconds</code>, in minutes in the window). Applies to this run only. Do not confuse the tries per item with <code>Graph.MaxAttempts</code> of the configuration (6): that one is the number of times a single HTTP request is repeated after a 429, 502, 503 or 504 (a 502 or 504 only for a request that creates nothing).</li>
 <li><strong>This run only.</strong> What is changed in the window (the work folder, the values of the sign-in, Expert mode) is passed to the command as parameters. No configuration file is written. The browse selections are kept in <code>&lt;work folder&gt;\selections\</code>, because the command line names those files.</li>
 </ul>
 </div></section><section class="section" id="concepts"><div class="section-head"><div class="section-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg></div><div><div class="section-eyebrow">Chapter 2</div><h2>Concepts</h2></div></div><div class="section-body">
@@ -1341,7 +1341,7 @@ D:\store\export.lock           held while the store is open for writing (one pro
 <tr>
 <td><code>Graph.MaxAttempts</code>, <code>BaseBackoffSeconds</code>, <code>MaxBackoffSeconds</code></td>
 <td>6, 2, 60</td>
-<td>retry of 429, 503, 504 within one HTTP request (not the tries per item, <code>-MaxAttempts</code>, default 3); <code>-RetryWaitSeconds</code> overrides <code>BaseBackoffSeconds</code> for one run</td>
+<td>retry of 429, 502, 503, 504 within one HTTP request (not the tries per item, <code>-MaxAttempts</code>, default 3); <code>-RetryWaitSeconds</code> overrides <code>BaseBackoffSeconds</code> for one run</td>
 </tr>
 <tr>
 <td><code>Graph.RequestTimeoutMinutes</code></td>
@@ -1555,7 +1555,7 @@ D:\store\export.lock           held while the store is open for writing (one pro
 <hr />
 <p><strong>Back to</strong> the <a href="MailboxTransfer-UserGuide.html">user guide</a>.</p>
 </div></section>
-<footer>Mailbox Transfer 1.1.0 · Nicolas Fabert · generated 2026-11-12 14:58 from MailboxTransfer-Guide.md</footer></main>
+<footer>Mailbox Transfer 1.1.0 · Nicolas Fabert · generated 2026-11-13 18:34 from MailboxTransfer-Guide.md</footer></main>
 <button type="button" id="to-top" title="Back to top"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
 <dialog id="zoom"><img alt=""></dialog>
 <script>

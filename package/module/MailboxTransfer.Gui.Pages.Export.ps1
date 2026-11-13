@@ -28,13 +28,17 @@ function ConvertTo-MbtGuiMessage {
         'AADSTS700027|certificate was refused|AADSTS700016|AADSTS90002|not found in the tenant' { 'Microsoft does not accept this application or this certificate. Check the tenant and the application id, and that the certificate was added to the application.'; break }
         'Cannot find the mailbox id|FullAccess|Full Access' { 'We cannot open this mailbox. Check the address, and that you have the Full Access right on it (a new right can take up to an hour to apply).'; break }
         'MailboxNotFound|mailbox.*not found|ResourceNotFound|ErrorNonExistentMailbox' { 'We cannot find this mailbox. Check the address. Mailboxes that are not in Exchange Online cannot be used.'; break }
+        '->\s*(500|502|503|504)\b|\b(BadGateway|ServiceUnavailable|GatewayTimeout)\b|HttpClient\.Timeout|timed out' { 'Microsoft did not answer correctly (a temporary problem). Try again in a moment.'; break }
         '403|ErrorAccessDenied|Access is denied|Forbidden' { 'This sign-in is not allowed to do this. Ask your administrator for the permission (MailboxItem.ImportExport for an import, MailboxItem.Read and MailboxFolder.Read to browse and export).'; break }
         'not enough space|disk.*full|IOException.*space' { 'The disk is full. Free some space and press Try again. What was downloaded is kept.'; break }
         'already exists' { 'This file already exists. The tool never overwrites a file. Choose another name.'; break }
         'cannot reach|NameResolution|No such host|network|SocketException' { 'We cannot reach Microsoft. Trying again every 30 seconds. Check your internet connection.'; break }
         default { 'Something went wrong. The technical message below says what.' }
     }
-    [pscustomobject]@{ Text = $text; Tech = $r }
+    $temporary = if ($r -match '->\s*(500|502|503|504)\b|\b(BadGateway|ServiceUnavailable|GatewayTimeout)\b|HttpClient\.Timeout|timed out') { 'service' }
+    elseif ($r -match 'cannot reach|NameResolution|No such host|network|SocketException') { 'network' }
+    else { '' }
+    [pscustomobject]@{ Text = $text; Tech = $r; Known = ($text -notlike 'Something went wrong*'); Temporary = $temporary }
 }
 
 #endregion
@@ -477,8 +481,39 @@ function Test-MbtGuiSelectionHasDeletedItems {
     return [bool]@($Selection.Entries | Where-Object { (Get-MbtGuiNodePath $_.Node) -match ' / Recoverable Items( / |$)' }).Count
 }
 
+function Get-MbtGuiPlanSelection {
+    <# The selection as the plan page shows it: once the service has counted the plan and every size is known, that size replaces the unknown ones of the browse view. #>
+    $g = $script:Gui; $s = $g.S; $sel = $g.ExportSelection
+    $t = $s.PlanTotals
+    if ($s.PlanState -ne 'ok' -or -not $t -or $sel.UnknownSize -le 0 -or $t.UnknownSize -gt 0) { return $sel }
+    return [pscustomobject]@{ Entries = $sel.Entries; Items = $sel.Items; Bytes = [long]$t.Bytes; Folders = $sel.Folders; UnknownSize = 0; SubtreeUnread = $sel.SubtreeUnread }
+}
+
+function Get-MbtGuiCountedSizes {
+    <# The size the service counted for each folder of the plan (by the path of the folder in its mailbox); a folder counted twice under one path, or counted without a complete size, is left out. #>
+    $g = $script:Gui
+    $sizes = @{}
+    if ($g.S.Task -ne 'export' -or $g.S.PlanState -ne 'ok' -or -not $g.ContainsKey('PlanRun') -or -not $g.PlanRun) { return $sizes }
+    $planned = @($g.PlanRun.Objects | Where-Object { $_.Step -eq 'plan' -and $_.State -ne 'refused' -and $_.Key -ne '(folders)' })
+    foreach ($group in ($planned | Group-Object { $_.Key })) {
+        if (@($group.Group).Count -eq 1 -and $group.Group[0].Bytes -ge 0) { $sizes[$group.Name] = [long]$group.Group[0].Bytes }
+    }
+    return $sizes
+}
+
+function Get-MbtGuiNodeMailboxPath {
+    <# The path of a folder in its mailbox ("Inbox/Projects"), as the engine names it. #>
+    param([MailboxTransferGui.FolderNode]$Node)
+    $names = [Collections.Generic.List[string]]::new()
+    $n = $Node
+    while ($n -and -not $n.IsRoot) { $names.Insert(0, $n.Name); $n = $n.Parent }
+    return ($names -join '/')
+}
+
 function New-MbtGuiPlanTable {
     param($Selection)
+    $counted = Get-MbtGuiCountedSizes
+    $anyUnknown = $false
     $rows = @(foreach ($e in $Selection.Entries) {
         $n = $e.Node; $root = Get-MbtGuiRootNode $n
         $note = switch ($e.Kind) {
@@ -493,6 +528,11 @@ function New-MbtGuiPlanTable {
             'own' { if ($n.SizeBytes -lt 0) { $unknown = $true } else { $bytes = $n.SizeBytes } }
             default { foreach ($v in $n.Picks.Values) { $bytes += $v } }
         }
+        if ($unknown -and $e.Kind -in 'tree', 'own') {
+            $key = Get-MbtGuiNodeMailboxPath $n
+            if ($counted.ContainsKey($key)) { $bytes = $counted[$key]; $unknown = $false }
+        }
+        if ($unknown) { $anyUnknown = $true }
         $cell = [Windows.Controls.StackPanel]::new()
         $cell.Children.Add((New-GuiText (Get-MbtGuiNodePath $n) 'Body')) | Out-Null
         if ($note) { $sm = New-GuiText $note 'Small'; $sm.Margin = [Windows.Thickness]::new(0); $cell.Children.Add($sm) | Out-Null }
@@ -500,7 +540,9 @@ function New-MbtGuiPlanTable {
     })
     $tbl = New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', '90', '110') -Right @(1, 2)
     if (-not @($rows).Count) { $tbl = New-GuiText 'Nothing ticked.' 'Muted' }
-    return (New-GuiStack @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint')))
+    $parts = @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint'))
+    if ($anyUnknown) { $parts += New-GuiText 'Microsoft does not give the size of calendar, contact and task folders in advance. The check reads the items of a small one to find it; the size of a larger one is known once the export runs.' 'Hint' }
+    return (New-GuiStack $parts)
 }
 
 function New-MbtGuiSleepInfo {
@@ -598,7 +640,7 @@ function New-MbtGuiVerifyBottom {
 
 function New-MbtGuiDiskCheckRow {
     $g = $script:Gui; $s = $g.S
-    $need = Get-MbtGuiDiskNeed $g.ExportSelection $s
+    $need = Get-MbtGuiDiskNeed (Get-MbtGuiPlanSelection) $s
     $free = $null; try { $free = [double](& $g.Engine.FreeSpace $s.OutFolder) } catch { $free = $null }
     $drive = if ($s.OutFolder -match '^([A-Za-z]:)') { $Matches[1].ToUpperInvariant() } else { 'the disk' }
     $enough = ($null -eq $free) -or ($need.Need -le $free)
@@ -616,9 +658,10 @@ function New-MbtGuiSignInCheckRow {
 
 #region Export: Plan -----------------------------------------------------------------------------------------
 
-function Build-MbtGuiExportPlanPage {
+function New-MbtGuiExportPlanWhat {
+    <# The card "What will be done": the steps, where it is saved, the size and the time, from the selection as the plan page shows it. #>
     $g = $script:Gui; $s = $g.S
-    $sel = $g.ExportSelection
+    $sel = Get-MbtGuiPlanSelection
     $pst = $s.Dest -eq 'pst'
     $steps = @('Read the folder tree and list the items you chose.', 'Download them into the export store, checking each one.')
     if ($pst) { $steps += "Write the PST files ($($s.SplitGB) GB at most each) with the real folder tree."; $steps += 'Check every PST file.' }
@@ -627,18 +670,35 @@ function Build-MbtGuiExportPlanPage {
     $ol = [Windows.Controls.StackPanel]::new(); $i = 1
     foreach ($t in $steps) { $r = New-GuiText ("$i.  $t") 'Body'; $r.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($r) | Out-Null; $i++ }
     $eta = Get-MbtGuiPlanEta -Task export -Bytes $sel.Bytes
-    $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated: Microsoft does not give the size of these folders. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
+    $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated yet: Microsoft does not give the size of calendar, contact and task folders in advance. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
     $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
     $facts = New-GuiFacts ($shared + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
         @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun) $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $etaText 'Body'))))
+    return (New-GuiCard -Title 'What will be done' -Content @($ol, $facts))
+}
+
+function Update-MbtGuiExportPlanSizes {
+    <# The service has counted the plan: the parts of the plan page that show a size are drawn again with it (the rest of the page, and what was typed in it, stays). #>
+    $g = $script:Gui
+    if ((Get-MbtGuiScreen) -ne 'exPlan') { return }
+    if ($g.ContainsKey('PlanWhatHolder') -and $g.PlanWhatHolder) { $g.PlanWhatHolder.Content = New-MbtGuiExportPlanWhat }
+    if ($g.ContainsKey('PlanDiskHolder') -and $g.PlanDiskHolder) { $g.PlanDiskHolder.Content = New-MbtGuiDiskCheckRow }
+    if ($g.ContainsKey('PlanTableHolder') -and $g.PlanTableHolder) { $g.PlanTableHolder.Content = New-MbtGuiPlanTable (Get-MbtGuiPlanSelection) }
+}
+
+function Build-MbtGuiExportPlanPage {
+    $g = $script:Gui; $s = $g.S
+    $pst = $s.Dest -eq 'pst'
+    $g.PlanWhatHolder = [Windows.Controls.ContentControl]::new(); $g.PlanWhatHolder.Content = New-MbtGuiExportPlanWhat
+    $g.PlanDiskHolder = [Windows.Controls.ContentControl]::new(); $g.PlanDiskHolder.Content = New-MbtGuiDiskCheckRow
+    $g.PlanTableHolder = [Windows.Controls.ContentControl]::new(); $g.PlanTableHolder.Content = New-MbtGuiPlanTable (Get-MbtGuiPlanSelection)
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
     $destRow = New-MbtGuiCheckRow -State $(if (Test-MbtGuiExportDestination $s) { 'bad' } else { 'ok' }) -Text 'Nothing is overwritten' -Detail $(if ($pst) { "$($s.OutName) does not exist yet" } else { 'the destination is free' })
-    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), (New-MbtGuiDiskCheckRow), $destRow)
-    $what = New-GuiCard -Title 'What will be done' -Content @($ol, $facts)
-    $left = New-GuiStack @($checks, $what)
+    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $g.PlanDiskHolder, $destRow)
+    $left = New-GuiStack @($checks, $g.PlanWhatHolder)
     $inItContent = [Collections.Generic.List[object]]::new()
-    $inItContent.Add((New-MbtGuiPlanTable $sel))
-    if (Test-MbtGuiSelectionHasDeletedItems $sel) {
+    $inItContent.Add($g.PlanTableHolder)
+    if (Test-MbtGuiSelectionHasDeletedItems $g.ExportSelection) {
         $inItContent.Add((New-GuiMessage -Kind info -Icon shield -Text '**Deleted items (Recoverable Items) are in this plan.** They are saved apart, under a folder named Recoverable Items, in the export and in the PST. If you import them later, they go into a normal folder named Restored deleted items, never back into Recoverable Items.'))
     }
     $inIt = New-GuiCard -Title 'What is in it' -Content $inItContent.ToArray()

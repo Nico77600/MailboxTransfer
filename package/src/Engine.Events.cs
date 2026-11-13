@@ -641,6 +641,7 @@ namespace MailboxTransfer
                     else Report(ProgressText.FoldersRead(p.Done));
                 }
                 else if (p.Stage == "plan" && p.Total > 1 && p.Done < p.Total) Report("Checking your selection: " + p.Done.ToString("N0", CultureInfo.InvariantCulture) + " of " + p.Total.ToString("N0", CultureInfo.InvariantCulture) + " entries");
+                else if (p.Stage == "sizes" && p.Total > 0) Report("Measuring " + p.Total.ToString("N0", CultureInfo.InvariantCulture) + (p.Total == 1 ? " folder" : " folders") + " the service gives no size for: " + p.Done.ToString("N0", CultureInfo.InvariantCulture) + " done");
                 else if (p.Stage == "plan") Report("Checking your selection");
             };
         }

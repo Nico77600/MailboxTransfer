@@ -66,7 +66,7 @@ Rules of the window:
 
 - **The stepper.** Only the pages already passed can be clicked, and nothing can be clicked while a job runs.
 - **The import confirmation.** The **Start** button of an import is grey until a box is ticked. The box states what will be written, where and how much (*I checked: add 9,860 items to adele.vance@contoso.com · Archive · new folder Imported archive-2019 2026-11-12*). The tick is bound to the plan: it clears by itself when the mailbox, the source, the target folder or any setting that changes the plan changes (a change of case only in a typed address does not count, see [Names are not case sensitive](#names-are-not-case-sensitive)). Nothing has to be typed.
-- **Expert mode** (a fold on the Verify page): requests in parallel (1, 2 or 4; default 4), the wait before a failed request is tried again (`-RetryWaitSeconds`), **tries per item** (`-MaxAttempts`, default 3, 1 to 20) and the wait before an uncertain item is looked for (`-ReconcileDelaySeconds`, in minutes in the window). Applies to this run only. Do not confuse the tries per item with `Graph.MaxAttempts` of the configuration (6): that one is the number of times a single HTTP request is repeated after a 429, 503 or 504.
+- **Expert mode** (a fold on the Verify page): requests in parallel (1, 2 or 4; default 4), the wait before a failed request is tried again (`-RetryWaitSeconds`), **tries per item** (`-MaxAttempts`, default 3, 1 to 20) and the wait before an uncertain item is looked for (`-ReconcileDelaySeconds`, in minutes in the window). Applies to this run only. Do not confuse the tries per item with `Graph.MaxAttempts` of the configuration (6): that one is the number of times a single HTTP request is repeated after a 429, 502, 503 or 504 (a 502 or 504 only for a request that creates nothing).
 - **This run only.** What is changed in the window (the work folder, the values of the sign-in, Expert mode) is passed to the command as parameters. No configuration file is written. The browse selections are kept in `<work folder>\selections\`, because the command line names those files.
 <!-- icon: lightbulb -->
 ## 2. Concepts
@@ -594,7 +594,7 @@ Memory does not depend on the size of an item, in both directions: the peak work
 | Section.Key | Default | Meaning |
 |---|---|---|
 | `Graph.BaseUrl` | `https://graph.microsoft.com/v1.0` | |
-| `Graph.MaxAttempts`, `BaseBackoffSeconds`, `MaxBackoffSeconds` | 6, 2, 60 | retry of 429, 503, 504 within one HTTP request (not the tries per item, `-MaxAttempts`, default 3); `-RetryWaitSeconds` overrides `BaseBackoffSeconds` for one run |
+| `Graph.MaxAttempts`, `BaseBackoffSeconds`, `MaxBackoffSeconds` | 6, 2, 60 | retry of 429, 502, 503, 504 within one HTTP request (not the tries per item, `-MaxAttempts`, default 3); `-RetryWaitSeconds` overrides `BaseBackoffSeconds` for one run |
 | `Graph.RequestTimeoutMinutes` | 15 | time allowed for the headers of one answer |
 | `Graph.ExportBatchSize` | 20 | 1 to 20 |
 | `Graph.ItemPageSize` | 0 | `$top` of item listings; 0 = the service chooses |

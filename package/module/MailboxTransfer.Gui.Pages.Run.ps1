@@ -77,7 +77,14 @@ function New-MbtGuiPlanStateMessage {
             $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
         }
-        'error' { return (New-MbtGuiCheckRow -State bad -Text 'The plan cannot be used' -Detail (($s.PlanMsg -replace '^\*\*[^*]+\*\*\s*', '') -replace '\*\*', '')) }
+        'error' {
+            $row = New-MbtGuiCheckRow -State bad -Text 'The plan cannot be used' -Detail (($s.PlanMsg -replace '^\*\*[^*]+\*\*\s*', '') -replace '\*\*', '')
+            $again = New-GuiButton -Text 'Check again' -Small -Icon refresh -OnClick { Start-MbtGuiPlanCheck }
+            $again.Margin = [Windows.Thickness]::new(26, 4, 0, 0); $again.HorizontalAlignment = 'Left'
+            $panel = [Windows.Controls.StackPanel]::new()
+            $panel.Children.Add($row) | Out-Null; $panel.Children.Add($again) | Out-Null
+            return $panel
+        }
         default { return (New-MbtGuiCheckRow -State wait -Text 'The plan is not checked yet') }
     }
 }
@@ -92,9 +99,22 @@ function Get-MbtGuiPlanFooter {
                 default { return 'Read the checks and the plan. Nothing starts before you press Start.' }
             }
         }
-        'error' { return 'The plan cannot be used. Go back and change your choice.' }
+        'error' { return 'The plan cannot be used. Press Check again, or go back and change your choice.' }
         default { return 'Start unlocks when the plan is checked.' }
     }
+}
+
+function Get-MbtGuiPlanFailureText {
+    <# One sentence for a plan check that failed: a temporary problem of the service or of the network says to press Check again; any other known cause is said in its own words; else the sentence the engine gave. #>
+    param([string]$Raw, [string]$Message = '')
+    $m = ConvertTo-MbtGuiMessage $Raw
+    switch ($m.Temporary) {
+        'service' { return 'Microsoft did not answer correctly (a temporary problem). Press Check again.' }
+        'network' { return 'We cannot reach Microsoft. Check your internet connection, then press Check again.' }
+    }
+    if ($m.Known) { return $m.Text }
+    if ($Message) { return $Message }
+    return 'The service did not accept the request.'
 }
 
 function Set-MbtGuiPlanState {
@@ -105,6 +125,7 @@ function Set-MbtGuiPlanState {
     if ($g.PlanHolder) { $g.PlanHolder.Content = New-MbtGuiPlanStateMessage }
     $ok = ($State -eq 'ok')
     if ((Get-MbtGuiScreen) -eq 'imPlan') { $ok = $ok -and $s.Confirmed }
+    if ($State -eq 'ok' -and (Get-MbtGuiScreen) -eq 'exPlan') { Update-MbtGuiExportPlanSizes }
     $footer = Get-MbtGuiPlanFooter
     Update-MbtGuiPrimary -Enabled $ok -Footer $footer
     $g.C.Footer.Tag = $footer
@@ -173,7 +194,7 @@ function Start-MbtGuiPlanCheck {
     Set-MbtGuiPlanState checking
     $req = New-MbtGuiRequest -Task $s.Task
     $base = Get-MbtGuiSelectionBase -WorkFolder $s.WorkFolder -Task $s.Task -Key (Get-MbtGuiSelectionKey)
-    $fail = { param($msg) $m = ConvertTo-MbtGuiMessage $msg; Set-MbtGuiPlanState error ("**The plan cannot be used.** $($m.Text)") }
+    $fail = { param($msg) Set-MbtGuiPlanState error ("**The plan cannot be used.** $(Get-MbtGuiPlanFailureText -Raw $msg -Message $msg)") }
     if ($g.Engine.Name -eq 'Fake') {
         & $g.Engine.Plan $req { param($r) if ($r.Ok) { if ($r.PSObject.Properties['Totals']) { $s.PlanTotals = $r.Totals }; Set-MbtGuiPlanState ok } else { & $fail $r.Message } }.GetNewClosure() $fail
         return
@@ -205,7 +226,8 @@ function Step-MbtGuiPlanJob {
         $r = $g.PlanRun.Result; $g.PlanJob = $null
         if ($r.Exit -eq 0) { $g.S.PlanTotals = Get-MbtGuiPlanTotals $g.PlanRun; Set-MbtGuiPlanState ok }
         else {
-            $msg = if ($g.PlanRun.Error) { (ConvertTo-MbtGuiMessage $g.PlanRun.Error.Msg).Text } elseif ($g.PlanRun.Warnings.Count) { $g.PlanRun.Warnings[0].Msg } else { 'The service did not accept the request.' }
+            $msg = if ($g.PlanRun.Error) { Get-MbtGuiPlanFailureText -Raw "$($g.PlanRun.Error.Code) $($g.PlanRun.Error.Msg) $($g.PlanRun.Error.Tech)" -Message $g.PlanRun.Error.Msg }
+                elseif ($g.PlanRun.Warnings.Count) { $g.PlanRun.Warnings[0].Msg } else { 'The service did not accept the request.' }
             Set-MbtGuiPlanState error "**The plan cannot be used.** $msg"
         }
     }

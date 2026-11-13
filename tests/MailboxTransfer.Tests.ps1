@@ -217,6 +217,29 @@ Describe 'Graph client: retry' {
         ($client.GetJson("$($script:Base)/x")).Dispose()
         ($client.Delays | ForEach-Object TotalSeconds) | Should -Be @(2, 4, 8)
     }
+    It 'retries a 502 of an idempotent request and counts it, as a 504' {
+        $h = [MailboxTransfer.Tests.FakeHandler]::new()
+        $h.Enqueue(502, '{"error":{"code":"UnknownError","message":"bad gateway"}}'); $h.Enqueue(504); $h.Enqueue(200, '{"ok":true}')
+        $client = New-TestClient $h
+        ($client.GetJson("$($script:Base)/x")).Dispose()
+        $h.Requests.Count | Should -Be 3
+        $client.BadGateway502 | Should -Be 1
+        $client.Timeout504 | Should -Be 1
+        ($client.Delays | ForEach-Object TotalSeconds) | Should -Be @(2, 4)
+    }
+    It 'gives up on a 502 that lasts and reports it; a 500 is not retried' {
+        $h = [MailboxTransfer.Tests.FakeHandler]::new()
+        1..3 | ForEach-Object { $h.Enqueue(502, '{"error":{"code":"UnknownError","message":"bad gateway"}}') }
+        $client = New-TestClient $h -MaxAttempts 3
+        try { $client.GetJson("$($script:Base)/x"); throw 'not reached' } catch { $ge = Get-MbtGraphException $_ }
+        $ge.StatusCode | Should -Be 502
+        $h.Requests.Count | Should -Be 3
+        $h2 = [MailboxTransfer.Tests.FakeHandler]::new()
+        $h2.Enqueue(500, '{}')
+        try { (New-TestClient $h2).GetJson("$($script:Base)/x"); throw 'not reached' } catch { $ge = Get-MbtGraphException $_ }
+        $ge.StatusCode | Should -Be 500
+        $h2.Requests.Count | Should -Be 1
+    }
     It 'gives up after MaxAttempts and reports the Graph error' {
         $h = [MailboxTransfer.Tests.FakeHandler]::new()
         1..3 | ForEach-Object { $h.Enqueue(503, '{"error":{"code":"ServiceUnavailable","message":"busy"}}') }

@@ -618,7 +618,7 @@ Describe 'The text beside Start on a Verify page' {
     }
     It 'says the plan cannot be used when the service refused it' {
         $script:Screen = 'exPlan'; $script:Gui.S.PlanState = 'error'
-        Get-MbtGuiPlanFooter | Should -Be 'The plan cannot be used. Go back and change your choice.'
+        Get-MbtGuiPlanFooter | Should -Be 'The plan cannot be used. Press Check again, or go back and change your choice.'
     }
     It 'asks for the tick of an import, then says it is ready' {
         $script:Screen = 'imPlan'; $script:Gui.S.PlanState = 'ok'
@@ -631,6 +631,78 @@ Describe 'The text beside Start on a Verify page' {
         Get-MbtGuiPlanFooter | Should -Be 'Read the checks and the plan. Nothing starts before you press Start.'
         $script:Screen = 'cpPlan'
         Get-MbtGuiPlanFooter | Should -Be 'Read the plan. Nothing starts before you press Start.'
+    }
+}
+
+Describe 'A plan check that fails' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Export.ps1')
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1')
+        $script:Tech = 'Exception calling "ResolvePlan" with "5" argument(s): "GET https://graph.microsoft.com/v1.0/admin/exchange/mailboxes/MBX:x@contoso.com/folders/AAMk%3D -> {0} UnknownError: "'
+    }
+    It 'says a 5xx of the service in plain words, with Check again, not the raw exception' -ForEach @(500, 502, 503, 504) {
+        $raw = 'error The task stopped because of an error. What was done is kept. ' + ($script:Tech -f $_)
+        $text = Get-MbtGuiPlanFailureText -Raw $raw -Message 'The task stopped because of an error. What was done is kept.'
+        $text | Should -Be 'Microsoft did not answer correctly (a temporary problem). Press Check again.'
+        (ConvertTo-MbtGuiMessage $raw).Temporary | Should -Be 'service'
+    }
+    It 'says a network failure in plain words, with Check again' {
+        $text = Get-MbtGuiPlanFailureText -Raw 'NetworkError GET https://graph.microsoft.com/v1.0/x failed: No such host is known.' -Message 'x'
+        $text | Should -Be 'We cannot reach Microsoft. Check your internet connection, then press Check again.'
+    }
+    It 'keeps the sentence of the engine when the cause is not known, and says a known cause in its own words' {
+        Get-MbtGuiPlanFailureText -Raw 'error stopped GET x -> 404 ErrorItemNotFound: gone' -Message 'The task stopped because of an error.' | Should -Be 'The task stopped because of an error.'
+        Get-MbtGuiPlanFailureText -Raw 'error stopped GET x -> 400 Bad' | Should -Be 'The service did not accept the request.'
+        Get-MbtGuiPlanFailureText -Raw 'ErrorAccessDenied: Access is denied' -Message 'stopped' | Should -BeLike 'This sign-in is not allowed*'
+    }
+    It 'does not take a number that is only inside an identifier for a status' {
+        (ConvertTo-MbtGuiMessage 'GET https://graph.microsoft.com/v1.0/x/folders/AAMk5025Yw -> 404 ErrorItemNotFound').Temporary | Should -Be ''
+    }
+}
+
+Describe 'The plan page once the service has counted the sizes' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Export.ps1')
+        function Get-Sel([long]$Bytes, [int]$Unknown) { [pscustomobject]@{ Entries = @(); Items = 12; Bytes = $Bytes; Folders = 3; UnknownSize = $Unknown; SubtreeUnread = $false } }
+        function Get-Obj([string]$Key, [long]$Bytes, [string]$State = 'planned', [string]$Step = 'plan') { @{ Key = $Key; Step = $Step; State = $State; Total = 2L; Bytes = $Bytes } }
+    }
+    BeforeEach { $script:Gui = @{ S = @{ Task = 'export'; PlanState = 'ok'; PlanTotals = [pscustomobject]@{ Items = 12; Bytes = 9000L; Folders = 3; UnknownSize = 0; FoldersToCreate = 0 } }; ExportSelection = (Get-Sel 5000 1) } }
+    It 'takes the size the service counted when the browse view knew none for some folder and the service knows every size' {
+        $sel = Get-MbtGuiPlanSelection
+        $sel.Bytes | Should -Be 9000
+        $sel.UnknownSize | Should -Be 0
+        $sel.Items | Should -Be 12
+    }
+    It 'keeps the selection of the browse view while the plan is not counted, when the service left a size out, and when none was unknown' {
+        $script:Gui.S.PlanState = 'checking'
+        (Get-MbtGuiPlanSelection).UnknownSize | Should -Be 1
+        $script:Gui.S.PlanState = 'ok'; $script:Gui.S.PlanTotals.UnknownSize = 1
+        (Get-MbtGuiPlanSelection).Bytes | Should -Be 5000
+        $script:Gui.S.PlanTotals.UnknownSize = 0; $script:Gui.ExportSelection = Get-Sel 5000 0
+        (Get-MbtGuiPlanSelection).Bytes | Should -Be 5000
+        $script:Gui.S.PlanTotals = $null; $script:Gui.ExportSelection = Get-Sel 5000 1
+        (Get-MbtGuiPlanSelection).UnknownSize | Should -Be 1
+    }
+    It 'knows the size counted for a folder by its path in the mailbox, never for a path counted twice or without a size' {
+        $script:Gui.PlanRun = @{ Objects = @((Get-Obj 'Calendar' 73597), (Get-Obj 'Inbox' -1), (Get-Obj 'Archive/Same' 10), (Get-Obj 'Archive/Same' 20), (Get-Obj 'Refused' 5 'refused'), (Get-Obj '(folders)' 3), (Get-Obj 'Other' 7 'planned' 'download')) }
+        $sizes = Get-MbtGuiCountedSizes
+        $sizes['Calendar'] | Should -Be 73597
+        $sizes['calendar'] | Should -Be 73597 -Because 'a path is not case sensitive'
+        $sizes.ContainsKey('Inbox') | Should -BeFalse
+        $sizes.ContainsKey('Archive/Same') | Should -BeFalse
+        $sizes.ContainsKey('Refused') | Should -BeFalse
+        $sizes.ContainsKey('(folders)') | Should -BeFalse
+        $sizes.ContainsKey('Other') | Should -BeFalse
+        $sizes.Count | Should -Be 1
+    }
+    It 'counts nothing before the check is done, for an import, or without a run' {
+        $script:Gui.PlanRun = @{ Objects = @((Get-Obj 'Calendar' 100)) }
+        $script:Gui.S.PlanState = 'checking'
+        (Get-MbtGuiCountedSizes).Count | Should -Be 0
+        $script:Gui.S.PlanState = 'ok'; $script:Gui.S.Task = 'import'
+        (Get-MbtGuiCountedSizes).Count | Should -Be 0
+        $script:Gui.S.Task = 'export'; $script:Gui.Remove('PlanRun')
+        (Get-MbtGuiCountedSizes).Count | Should -Be 0
     }
 }
 

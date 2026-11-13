@@ -996,7 +996,8 @@ Describe 'Browse: the folder trees of one export are read once, at once, and the
         $null = $wide.AddFolder($tree.Find('Inbox'), $true)
         $planWide = $b.ResolvePlan($wide)
         $planWide.Folders[0].FolderCount | Should -BeGreaterThan 1
-        $w.Mail.RequestsOf('mailFolders/delta') | Should -BeGreaterThan $deltaBefore -Because 'Inbox has subfolders: the tree is read to count them'
+        $planWide.Folders[0].FolderCount | Should -Be 3
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be $deltaBefore -Because 'the folders below Inbox are read from Inbox down, not the tree of the mailbox'
     }
 
     It 'the reading of the selection reports the folders read, to the callback it is given' {
@@ -1012,6 +1013,136 @@ Describe 'Browse: the folder trees of one export are read once, at once, and the
         $plan.IsComplete | Should -BeTrue
         @($seen | Where-Object Stage -EQ 'folders').Count | Should -BeGreaterThan 0
         @($seen | Where-Object Stage -EQ 'plan').Count | Should -BeGreaterThan 0
+    }
+}
+
+Describe 'Browse: the plan counts below the chosen folder, and sizes the folders the service gives no size for' {
+    BeforeAll {
+        function Add-Entry($Selection, [string]$Id, [string]$Path, [bool]$Subfolders = $false) {
+            $Selection.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = $Id; FolderPath = $Path; IncludeSubfolders = $Subfolders })
+        }
+    }
+    It 'the folders below a folder are read from it down and add up as the tree of the mailbox does' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $covered = @($tree.Folders | Where-Object { $_.Path -eq 'Inbox' -or $_.Path -like 'Inbox/*' })
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+        $deltaBefore = $w.Mail.RequestsOf('mailFolders/delta')
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be $deltaBefore
+        $expected = [MailboxTransfer.BrowseTotals]::Of([MailboxTransfer.BrowseFolder[]]$covered)
+        $plan.Folders[0].FolderCount | Should -Be $expected.Folders
+        $plan.Folders[0].Items | Should -Be $expected.Items
+        $plan.Notes.Count | Should -Be 0
+    }
+    It 'a non-mail folder with a subfolder is counted with it, below the folder chosen' {
+        $w = New-World
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL2', 'Holidays', 'F-CAL', 'IPF.Appointment')
+        $null = $w.Ie.AddItem($script:Src, 'F-CAL2', 'C3', [byte[]]::new(1000), 'ck-C3', (Get-Day 14))
+        $b = New-Browser $w
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar' $true
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $plan.Folders[0].FolderCount | Should -Be 2
+        $plan.Folders[0].Items | Should -Be 3
+        $plan.Folders[0].Bytes | Should -Be 7100
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be 0
+    }
+    It 'the tree of the mailbox keeps the folders below a non-mail folder, in any depth' {
+        $w = New-World
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL2', 'Holidays', 'F-CAL', 'IPF.Appointment')
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL3', 'National', 'F-CAL2', 'IPF.Appointment')
+        $b = New-Browser $w
+        $tree = $b.GetFolderTree((Get-Loc Primary))
+        $tree.Find('Calendar/Holidays') | Should -Not -BeNullOrEmpty
+        $tree.Find('Calendar/Holidays/National') | Should -Not -BeNullOrEmpty
+        $tree.Find('Inbox/Inbox Notes') | Should -Not -BeNullOrEmpty
+    }
+    It 'a folder with no size from the service is sized from its items' {
+        $w = New-World
+        $b = New-Browser $w
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $seen = [System.Collections.Generic.List[object]]::new()
+        $cb = [Action[MailboxTransfer.BrowseProgress]] { param($p) $seen.Add($p) }
+        $plan = $b.ResolvePlan($sel, $true, [Threading.CancellationToken]::None, $cb)
+        $plan.IsComplete | Should -BeTrue
+        $plan.Folders[0].Items | Should -Be 2
+        $plan.Folders[0].Bytes | Should -Be 6100
+        $plan.Folders[0].FoldersUnknownSize | Should -Be 0
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $plan.Totals().SizeComplete | Should -BeTrue
+        $w.Ie.RequestsOf('/folders/F-CAL/items') | Should -Be 1
+        @($seen | Where-Object Stage -EQ 'sizes').Count | Should -BeGreaterThan 0
+    }
+    It 'an empty folder is 0 bytes without a listing, and the folders below a folder with a size add to it' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+        $plan = $b.ResolvePlan($sel)
+        $plan.Folders[0].FolderCount | Should -Be 3
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $w.Ie.RequestsOf('/folders/F-NOTES/items') | Should -Be 0 -Because 'Inbox Notes announces no item'
+        $mailSize = (@($tree.Folders | Where-Object { $_.Path -like 'Inbox*' -and $_.SizeBytes -ge 0 }) | Measure-Object SizeBytes -Sum).Sum
+        $plan.Folders[0].Bytes | Should -Be $mailSize
+    }
+    It 'the folders past the cap of items stay unknown and the plan is still valid' {
+        $w = New-World
+        $b = New-Browser $w
+        $b.SizeListingItemCap = 1
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue
+        $plan.Folders[0].Bytes | Should -Be -1
+        $plan.Folders[0].FoldersUnknownSize | Should -Be 1
+        $plan.Folders[0].SizeComplete | Should -BeFalse
+        $w.Ie.RequestsOf('/folders/F-CAL/items') | Should -Be 0
+    }
+    It 'the cap is shared by the folders of the plan, in the order of the plan' {
+        $w = New-World
+        $b = New-Browser $w
+        $b.SizeListingItemCap = 2
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL2', 'Holidays', $null, 'IPF.Appointment')
+        $null = $w.Ie.AddItem($script:Src, 'F-CAL2', 'C3', [byte[]]::new(1000), 'ck-C3', (Get-Day 14))
+        Add-Entry $sel 'F-CAL2' 'Holidays'
+        $plan = $b.ResolvePlan($sel)
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $plan.Folders[1].SizeComplete | Should -BeFalse
+        $plan.Totals().FoldersWithUnknownSize | Should -Be 1
+    }
+    It 'a listing that fails leaves the folder unknown and does not refuse the plan' {
+        $w = New-World
+        $w.Ie.ListingFailures["$($script:Src)|F-CAL"] = [MailboxTransfer.Tests.FakeListingFailure]@{ Status = 403; Code = 'ErrorAccessDenied'; Message = 'no' }
+        $b = New-Browser $w
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue
+        $plan.Folders[0].Items | Should -Be 2
+        $plan.Folders[0].SizeComplete | Should -BeFalse
+    }
+    It 'a folder of the mail API that gives its size is not listed' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Sent Items'), $false)
+        $plan = $b.ResolvePlan($sel)
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $w.Ie.RequestsOf('/folders/F-SENT/items') | Should -Be 0
     }
 }
 

@@ -340,9 +340,9 @@ Click **Continue to Verify**.
 
 ![The Verify page of an export. 1: the checks. 2: what will be done, with the time as a range. 3: what is in it. 4: the same from the command line. 5: the Start button](images/console-verify-export-light.png)
 
-**While it waits:** the first check, *Checking the plan with the service*, says what it is doing (for example *1,240 folders read, 34 s*), and the line at the bottom says *Start unlocks when the plan is checked.* On a big mailbox this takes a minute or two. After you click **Start**, the button reads *Starting...* and the Run page opens with *Preparing* and the same progress until the first item is counted.
+**While it waits:** the first check, *Checking the plan with the service*, says what it is doing (for example *1,240 folders read, 34 s*), and the line at the bottom says *Start unlocks when the plan is checked.* On a big mailbox this takes a few seconds to a minute. Microsoft gives no size for calendar, contact and task folders in advance: the check reads the items of a small one to find it, and the size of a larger one shows as *size unknown* until the export runs. After you click **Start**, the button reads *Starting...* and the Run page opens with *Preparing* and the same progress until the first item is counted.
 
-**If not:** an amber line is a warning to read, not a stop. A red line means something does not fit: go **Back**.
+**If not:** an amber line is a warning to read, not a stop. A red line means something does not fit: go **Back**. If the plan check says *Microsoft did not answer correctly (a temporary problem)*, click **Check again**: it is a hiccup of the service, not a problem with your choice.
 
 > [!NOTE]
 > **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 8.
