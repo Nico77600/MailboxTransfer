@@ -18,7 +18,7 @@ function Get-MbtGuiScenarioName {
     @('Start', 'StartImport', 'ExportFromSignedOut', 'ExportFromCode', 'ExportFrom', 'ExportTo', 'ExportPlan', 'RunExport', 'RunImport', 'RunImportSleep', 'RunImportDecision', 'RunImportStopped', 'RunRepair',
         'DoneExportComplete', 'DoneExportPartial', 'DoneExportError', 'ImportFrom', 'ImportTo', 'ImportPlan', 'DoneImportComplete', 'DoneImportPartial', 'DoneImportDecision', 'DoneImportError',
         'RepairFromDamaged', 'RepairFromClean', 'RepairTo', 'RepairPlan', 'DoneRepair', 'Open',
-        'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged')
+        'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing')
 }
 
 function Get-MbtGuiEdgeScenarioName {
@@ -97,6 +97,18 @@ function New-MbtGuiScenarioRun {
         'decision' { & $ev 'decision' 372 @{ key = '7114'; title = 'Signed contract (final)'; msg = '"Signed contract (final)" was sent, but Microsoft did not answer, and **two items in the folder could be it** (both 4 MiB, both created after the attempt). We do not guess.'; candidates = @('A', 'B') } }
         'stopped' { $run.StopRequested = $true; & $ev 'result' 372 @{ exit = 2; complete = $false; next = 'continue'; reason = 'stopped'; counts = @{ done = 5120; pending = 4738 } } }
     }
+    return $run
+}
+
+function New-MbtGuiScenarioPreparingRun {
+    <# An export that has not counted an item yet: it reads the folders of the mailbox, and says how far it is. #>
+    $run = New-MbtGuiRun -Task export -Title ('Export ' + [char]0x00B7 + ' adele.vance@contoso.com')
+    $t0 = [datetime]::UtcNow.AddSeconds(-34)
+    $ev = { param($k, $sec, $f) $null = Add-MbtGuiEvent -Run $run -Event (New-MbtGuiEvt $k $t0.AddSeconds($sec) $f) }
+    & $ev 'plan' 0 @{ steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }, @{ id = 'verify'; title = 'Check the downloads' }, @{ id = 'pst'; title = 'Write the PST files' }, @{ id = 'pstcheck'; title = 'Check every PST file' }) }
+    & $ev 'step' 0.5 @{ id = 'tree'; state = 'running'; msg = 'Signing in to Microsoft' }
+    & $ev 'step' 3 @{ id = 'tree'; state = 'running'; msg = 'Reading your selection' }
+    & $ev 'step' 33 @{ id = 'tree'; state = 'running'; msg = '1,240 folders read' }
     return $run
 }
 
@@ -230,6 +242,8 @@ function Set-MbtGuiScenario {
         'ExportTo' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exTo'); Show-MbtGuiPage }
         'ExportPlan' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
         'RunExport' { Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioRun -Task export) }
+        'RunExportPreparing' { Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioPreparingRun) }
+        'ExportPlanChecking' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage; $g.PlanRun = New-MbtGuiScenarioPreparingRun; $g.PlanStarted = [datetime]::UtcNow.AddSeconds(-34); $g.PlanShown = ''; Set-MbtGuiPlanState checking }
         'RunImport' { Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioRun -Task import) }
         'RunImportSleep' { Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioRun -Task import -State sleep) }
         'RunImportDecision' { Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioRun -Task import -State decision) }

@@ -916,6 +916,105 @@ Describe 'Browse: a selection drives the export (ExportOptions.Plan)' {
     }
 }
 
+Describe 'Browse: the folder trees of one export are read once, at once, and the reading says how far it is' {
+    It 'a selection that needs the import-export tree and the export that follows share one read of it' {
+        $w = New-World -Divergent
+        $client = New-FakeClient -Handler $w.Mail
+        $api = [MailboxTransfer.MailboxApi]::new($client)
+        $api.CacheFolderTrees = $true
+        $b = [MailboxTransfer.MailboxBrowser]::new($api)
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        $sel.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = 'F-PROJ'; FolderPath = 'Inbox/Projects' })
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $api.TreesRead | Should -Be 1 -Because 'the id of the browse view is not known to the import-export API: the path is looked up in its whole tree'
+        $o = [MailboxTransfer.ExportOptions]::new()
+        $o.MailboxId = $script:Src; $o.Kind = 'Primary'; $o.Upn = 'adele@contoso.test'; $o.Concurrency = 2; $o.Plan = $plan
+        $o.TempPath = Join-Path $script:Tmp ('tmp-' + [guid]::NewGuid().ToString('N'))
+        $store = New-TestStoreAt 'tree-once'
+        try {
+            $job = [MailboxTransfer.ExportJob]::Start($api, $store, $o)
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            while (-not $job.Wait(100)) { if ([DateTime]::UtcNow -gt $deadline) { $job.Cancel(); throw 'the export job did not finish in time' } }
+            $job.Error | Should -BeNullOrEmpty
+            $job.Result.Exported | Should -Be 3
+            $api.TreesRead | Should -Be 1 -Because 'the export takes the tree the selection read'
+            $job.Snapshot().Detail | Should -BeNullOrEmpty -Because 'the phase is over'
+        } finally { $store.Dispose() }
+    }
+
+    It 'a job that does not share the trees reads the tree of the mailbox again for the export' {
+        $w = New-World -Divergent
+        $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $w.Mail))
+        $b = [MailboxTransfer.MailboxBrowser]::new($api)
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        $sel.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = 'F-PROJ'; FolderPath = 'Inbox/Projects' })
+        $null = $b.ResolvePlan($sel)
+        $null = $api.GetFolderTree($script:Src)
+        $api.TreesRead | Should -Be 2
+    }
+
+    It 'the export reports the folders read while it reads the tree' {
+        $w = New-World
+        $w.Ie.LatencyMs = 300
+        $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $w.Mail))
+        $o = [MailboxTransfer.ExportOptions]::new()
+        $o.MailboxId = $script:Src; $o.Kind = 'Primary'; $o.Upn = 'adele@contoso.test'; $o.Concurrency = 2
+        $o.TempPath = Join-Path $script:Tmp ('tmp-' + [guid]::NewGuid().ToString('N'))
+        $store = New-TestStoreAt 'tree-detail'
+        try {
+            $job = [MailboxTransfer.ExportJob]::Start($api, $store, $o)
+            $details = [System.Collections.Generic.List[string]]::new()
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            while (-not $job.Wait(50)) {
+                $d = $job.Metrics.Detail
+                if ($d -and -not $details.Contains($d)) { $details.Add($d) }
+                if ([DateTime]::UtcNow -gt $deadline) { $job.Cancel(); throw 'the export job did not finish in time' }
+            }
+            $job.Error | Should -BeNullOrEmpty
+            $details.Count | Should -BeGreaterThan 0
+            $details | ForEach-Object { $_ | Should -Match '^[\d,]+ folders? read$' }
+            $job.Snapshot().Detail | Should -BeNullOrEmpty
+        } finally { $store.Dispose() }
+    }
+
+    It 'a folder that has no subfolder is counted as it is: the tree of the mailbox is not read for it' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $deltaBefore = $w.Mail.RequestsOf('mailFolders/delta')
+        $leaf = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $leaf.AddFolder($tree.Find('Inbox/Projects'), $true)
+        $plan = $b.ResolvePlan($leaf)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $plan.Folders[0].Items | Should -Be 3
+        $plan.Folders[0].FolderCount | Should -Be 1
+        $plan.Folders[0].IncludeSubfolders | Should -BeTrue
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be $deltaBefore -Because 'Projects has no subfolder'
+        $wide = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $wide.AddFolder($tree.Find('Inbox'), $true)
+        $planWide = $b.ResolvePlan($wide)
+        $planWide.Folders[0].FolderCount | Should -BeGreaterThan 1
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -BeGreaterThan $deltaBefore -Because 'Inbox has subfolders: the tree is read to count them'
+    }
+
+    It 'the reading of the selection reports the folders read, to the callback it is given' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+        $seen = [System.Collections.Generic.List[object]]::new()
+        $cb = [Action[MailboxTransfer.BrowseProgress]] { param($p) $seen.Add($p) }
+        $plan = $b.ResolvePlan($sel, $true, [Threading.CancellationToken]::None, $cb)
+        $plan.IsComplete | Should -BeTrue
+        @($seen | Where-Object Stage -EQ 'folders').Count | Should -BeGreaterThan 0
+        @($seen | Where-Object Stage -EQ 'plan').Count | Should -BeGreaterThan 0
+    }
+}
+
 Describe 'Browse: module functions and the entry script' {
     BeforeAll {
         $script:Entry = Join-Path $script:Root 'Invoke-MailboxTransfer.ps1'
@@ -1143,6 +1242,36 @@ Describe 'Browse: module functions and the entry script' {
         } finally { $s.Dispose() }
         $again = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $sel; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-tmp'); SkipInventory = $true }
         $again | Should -Match 'export finished: 0 items exported'
+    }
+
+    It 'Export -SelectionFile writes events from the start: the first step is under way while the job signs in, reads the selection and the tree' {
+        $w = New-World
+        $sel = Join-Path $script:Tmp 'cli-ev-sel.json'
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; PrimaryMailboxId = $script:Src; Folder = 'Inbox'; IncludeSubfolders = $true; SaveSelection = $sel; StorePath = (Join-Path $script:Tmp 'cli-ev-none') }
+        $events = Join-Path $script:Tmp 'cli-ev\events.jsonl'
+        $read = { @(Get-Content -LiteralPath $events | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json }) }
+        $dry = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $sel; StorePath = (Join-Path $script:Tmp 'cli-ev-store'); TempPath = (Join-Path $script:Tmp 'cli-ev-tmp'); WhatIf = $true; EventsFile = $events; JobId = 'plan-1' }
+        $dry | Should -Match 'WhatIf: the selection is valid'
+        $ev = & $read
+        $ev[0].e | Should -Be 'plan'
+        $steps = @($ev | Where-Object { $_.e -eq 'step' })
+        $steps[0].id | Should -Be 'tree'
+        $steps[0].state | Should -Be 'running'
+        $steps[0].msg | Should -Be 'Signing in to Microsoft'
+        @($steps | Where-Object { $_.msg -eq 'Reading your selection' }).Count | Should -BeGreaterThan 0
+        $steps[-1].id | Should -Be 'tree'
+        $steps[-1].state | Should -Be 'done' -Because 'the plan check ends with its only step'
+        Remove-Item -LiteralPath (Split-Path $events -Parent) -Recurse -Force
+        $go = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $sel; StorePath = (Join-Path $script:Tmp 'cli-ev-store'); TempPath = (Join-Path $script:Tmp 'cli-ev-tmp'); Concurrency = 2; EventsFile = $events; JobId = 'run-1' }
+        $go | Should -Match 'export finished: 8 items exported'
+        $ev = & $read
+        $steps = @($ev | Where-Object { $_.e -eq 'step' })
+        $steps[0].id | Should -Be 'tree'
+        $steps[0].msg | Should -Be 'Signing in to Microsoft'
+        $treeDone = [array]::IndexOf(@($steps | ForEach-Object { "$($_.id)/$($_.state)" }), 'tree/done')
+        $laterStep = @($steps | ForEach-Object { $_.id }).IndexOf('download')
+        $treeDone | Should -BeGreaterOrEqual 0
+        $laterStep | Should -BeGreaterThan $treeDone -Because 'the tree is done before the first event of a later step'
     }
 
     It 'Browse -SaveSelection with -ItemId selects those items (by row number), the plan says how they were matched' {

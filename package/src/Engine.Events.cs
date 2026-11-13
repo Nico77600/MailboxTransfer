@@ -563,4 +563,93 @@ namespace MailboxTransfer
             lock (_lock) Flush();
         }
     }
+
+    /// <summary>The words of the progress messages of a long phase (the console shows them as they are).</summary>
+    public static class ProgressText
+    {
+        /// <summary>"1 folder read", "1,240 folders read".</summary>
+        public static string FoldersRead(long count)
+        {
+            return count.ToString("N0", CultureInfo.InvariantCulture) + (count == 1 ? " folder read" : " folders read");
+        }
+    }
+
+    /// <summary>
+    /// Writes the "step" events (state running, with a message) of a phase that has no job of its own to poll: the reading of the selection and of the folder trees before an export
+    /// starts. Thread-safe: the folder trees are read by several threads. The first text is written at once; then the latest text is written at most every period, and only when it
+    /// changed, so that a long phase says what it does at least every couple of seconds without flooding the file.
+    /// </summary>
+    public sealed class PhaseProgress : IDisposable
+    {
+        readonly EventLog _log;
+        readonly string _step;
+        readonly object _lock = new object();
+        readonly Timer _timer;
+        string _latest, _written;
+        bool _disposed;
+
+        /// <param name="periodMs">How often the latest text is written when it changed; 0: no timer, call <see cref="Flush"/> yourself.</param>
+        public PhaseProgress(EventLog log, string step, int periodMs = 1000)
+        {
+            if (string.IsNullOrEmpty(step)) throw new ArgumentException("No step.");
+            _log = log; _step = step;
+            if (periodMs > 0) _timer = new Timer(_ => { try { Flush(); } catch (Exception) { } }, null, periodMs, periodMs);
+        }
+
+        /// <summary>Remembers what the phase is doing; the first text of the phase is written at once.</summary>
+        public void Report(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            lock (_lock)
+            {
+                if (_disposed) return;
+                _latest = text;
+                if (_written == null) Write();
+            }
+        }
+
+        /// <summary>Writes the latest text when it is not written yet. Returns true when an event was written.</summary>
+        public bool Flush()
+        {
+            lock (_lock)
+            {
+                if (_disposed || _latest == null || _latest == _written) return false;
+                Write();
+                return true;
+            }
+        }
+
+        void Write()
+        {
+            _written = _latest;
+            if (_log != null) _log.Step(_step, "running", -1, -1, -1, -1, _latest);
+        }
+
+        /// <summary>For MailboxApi.TreeProgress: the number of folders read so far.</summary>
+        public Action<int> FolderCount() { return n => Report(ProgressText.FoldersRead(n)); }
+
+        /// <summary>For MailboxBrowser.ResolvePlan: what the reading of the selection reports (folders read, entries checked).</summary>
+        public Action<BrowseProgress> Browse()
+        {
+            return p =>
+            {
+                if (p == null) return;
+                if (p.Stage == "folders")
+                {
+                    if (p.Total >= 0 && p.Total != p.Done && p.Message != null && p.Message.StartsWith("non-mail", StringComparison.Ordinal))
+                        Report("Reading the other folders: " + p.Done.ToString("N0", CultureInfo.InvariantCulture) + " of " + p.Total.ToString("N0", CultureInfo.InvariantCulture));
+                    else Report(ProgressText.FoldersRead(p.Done));
+                }
+                else if (p.Stage == "plan" && p.Total > 1 && p.Done < p.Total) Report("Checking your selection: " + p.Done.ToString("N0", CultureInfo.InvariantCulture) + " of " + p.Total.ToString("N0", CultureInfo.InvariantCulture) + " entries");
+                else if (p.Stage == "plan") Report("Checking your selection");
+            };
+        }
+
+        public void Dispose()
+        {
+            lock (_lock) { if (_disposed) return; }
+            if (_timer != null) _timer.Dispose();
+            lock (_lock) { Flush(); _disposed = true; }
+        }
+    }
 }

@@ -455,7 +455,7 @@ namespace MailboxTransfer
                     if (Json.TryGet(root, "@odata.nextLink", out link) && link.ValueKind == JsonValueKind.String)
                         next = link.GetString();
                 }
-                PagesRead++;
+                lock (_lock) { PagesRead++; }
                 if (next != null && !IsGraphUrl(next))
                     throw new GraphException(0, "UnexpectedNextLink", "@odata.nextLink is not https on graph.microsoft.com: " + Redact(next), Redact(url));
                 if (pageUrl != null) pageUrl(answered);

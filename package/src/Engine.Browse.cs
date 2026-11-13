@@ -806,15 +806,19 @@ namespace MailboxTransfer
                     return f.Source == MailApi && !f.Recoverable && f.ChildFolderCount > n && !seen.Contains(f.Id);
                 }).ToList();
                 if (incomplete.Count == 0) break;
+                foreach (BrowseFolder parent in incomplete) seen.Add(parent.Id);
+                // the children are asked at once and merged in the order of the list: the tree is the same as when they are asked one after the other
+                var answers = new List<FolderInfo>[incomplete.Count];
                 int done = 0;
-                foreach (BrowseFolder parent in incomplete)
+                MailboxApi.RunBounded(incomplete.Count, Api.TreeConcurrency, ct, i =>
                 {
-                    ct.ThrowIfCancellationRequested();
-                    seen.Add(parent.Id);
-                    Report(progress, "folders", done++, incomplete.Count, "non-mail children of " + parent.DisplayName);
-                    foreach (FolderInfo c in Api.GetChildFolders(location.MailboxId, parent.ExportFolderId ?? parent.Id, ct))
-                        MergeExportFolder(location.MailboxId, c, parent, tree, known, ct);
-                }
+                    BrowseFolder parent = incomplete[i];
+                    answers[i] = Api.GetChildFolders(location.MailboxId, parent.ExportFolderId ?? parent.Id, ct);
+                    Interlocked.Increment(ref done);
+                }, () => Report(progress, "folders", Volatile.Read(ref done), incomplete.Count, "non-mail children of the folders"));
+                for (int i = 0; i < incomplete.Count; i++)
+                    foreach (FolderInfo c in answers[i])
+                        MergeExportFolder(location.MailboxId, c, incomplete[i], tree, known, ct);
             }
         }
 
@@ -1446,7 +1450,7 @@ namespace MailboxTransfer
                 }
             }
             Report(progress, "plan", selection.Entries.Count, selection.Entries.Count, "done");
-            if (verify) CountPlan(plan, selection, ct);
+            if (verify) CountPlan(plan, selection, ct, progress);
             return plan;
         }
 
@@ -1455,7 +1459,7 @@ namespace MailboxTransfer
         /// listing: auxiliary archives and moved folders), with the size the Mail API announced when the selection was made; a folder with its subfolders is added up over the tree of
         /// the mailbox (the Mail API for Primary and Archive: counts and sizes; the import-export API for the others: counts, no size). A tree that cannot be read leaves the counts of the folder itself.
         /// </summary>
-        void CountPlan(ExportPlan plan, BrowseSelection selection, CancellationToken ct)
+        void CountPlan(ExportPlan plan, BrowseSelection selection, CancellationToken ct, Action<BrowseProgress> progress)
         {
             BrowseTree own = null;
             bool ownTried = false;
@@ -1476,6 +1480,8 @@ namespace MailboxTransfer
                 pf.Bytes = inOwn && e != null && e.SizeBytes >= 0 ? e.SizeBytes : -1;
                 pf.FoldersUnknownSize = pf.Bytes >= 0 ? 0 : 1;
                 if (!pf.IncludeSubfolders) continue;
+                // a folder the service says has no subfolder is counted as it is: the tree of the mailbox would add nothing to it
+                if (inOwn && pf.Info != null && pf.Info.ChildFolderCount == 0) continue;
                 try
                 {
                     if (inOwn)
@@ -1484,7 +1490,7 @@ namespace MailboxTransfer
                         {
                             ownTried = true;
                             // Recoverable Items are in the tree when the plan names one (they are not in the top-level listing of the service)
-                            own = GetFolderTree(new BrowseLocation { Kind = selection.Kind, MailboxId = selection.MailboxId }, plan.Folders.Any(x => RecoverableItems.IsPath(x.Path)), ct, null);
+                            own = GetFolderTree(new BrowseLocation { Kind = selection.Kind, MailboxId = selection.MailboxId }, plan.Folders.Any(x => RecoverableItems.IsPath(x.Path)), ct, progress);
                         }
                         BrowseFolder root = own == null ? null : own.Folders.FirstOrDefault(f => f.Id == pf.SourceFolderId || (pf.ExportFolderId != null && f.Id == pf.ExportFolderId))
                             ?? own.Folders.FirstOrDefault(f => string.Equals(f.Path, pf.Path, StringComparison.OrdinalIgnoreCase));

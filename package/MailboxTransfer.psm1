@@ -1677,7 +1677,8 @@ function Resolve-MbtBrowsePlan {
     $b = Get-MbtBrowser -RecoverableItemsFolders ([MailboxTransfer.RecoverableItems]::Chosen([string[]]@($RecoverableItemsFolders | Where-Object { $_ })))
     $others = [System.Collections.Generic.List[MailboxTransfer.BrowseLocation]]::new()
     foreach ($l in @($AlsoSearch | Where-Object { $_ })) { $others.Add($l) }
-    return $b.ResolvePlan($Selection, -not $NoVerify, $CancellationToken, $null, $others)
+    $progress = if ($script:PhaseProgress) { $script:PhaseProgress.Browse() }
+    return $b.ResolvePlan($Selection, -not $NoVerify, $CancellationToken, $progress, $others)
 }
 
 function Add-MbtBrowseMoveInfo {
@@ -2302,6 +2303,7 @@ function Wait-MbtTransferJob {
     param([Parameter(Mandatory)]$Job, [int]$IntervalSeconds = 5)
     $next = [DateTime]::UtcNow.AddSeconds($IntervalSeconds)
     $lastPhase = ''
+    $nextDetail = [DateTime]::MinValue
     $stopSaid = $false
     try {
         # a stop request made before the job began (the file was there at the start) is honoured at once
@@ -2324,6 +2326,7 @@ function Wait-MbtTransferJob {
                 Write-MbtDetail ($Job.Snapshot().ToString())
                 Update-MbtJobProgress -Job $Job -Messages $messages
             } elseif ($messages.Count) { Update-MbtJobProgress -Job $Job -Messages $messages }
+            elseif ($Job.PSObject.Properties['Metrics'] -and $Job.Metrics.Detail -and [DateTime]::UtcNow -ge $nextDetail) { $nextDetail = [DateTime]::UtcNow.AddSeconds(1); Update-MbtJobProgress -Job $Job -Messages @() }
         }
     } finally {
         if (-not $Job.IsCompleted) { Write-MbtItem WARN 'stopping: the requests in flight finish first, run the command again to resume'; $Job.Cancel(); [void]$Job.Wait(120000) }
@@ -3325,6 +3328,6 @@ Export-ModuleMember -Function @(
     'Test-MbtPst', 'Repair-MbtPst', 'Export-MbtPst', 'Copy-MbtPst', 'Get-MbtPstPreview', 'Show-MbtPstExportPlan', 'Resolve-MbtPstDestination', 'Show-MbtLiveExportPlan',
     'Export-MbtEml', 'Import-MbtEml', 'Resolve-MbtEmlUnknown', 'Compare-MbtEml',
     'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
-    'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
+    'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
 )

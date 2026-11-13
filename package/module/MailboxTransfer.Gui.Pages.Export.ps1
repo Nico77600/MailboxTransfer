@@ -451,7 +451,7 @@ function Refresh-MbtGuiExportTo {
     $needText = if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { "about **$(Format-MbtGuiBytes $need.Need)**" + $(if ($s.Dest -eq 'pst' -and $s.KeepStore) { ' (store + PST)' } else { '' }) }
     $facts = New-GuiFacts @(@('Selection', $(if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { Format-MbtGuiBytes $need.Size })), @('Needed on disk', (New-GuiText $needText 'Body')), @("Free on $drive", $(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' })))
     $facts.Margin = [Windows.Thickness]::new(0)
-    $msg = if ($enough) { New-GuiMessage -Kind ok -Icon check -Text 'There is enough room.' } else { New-GuiMessage -Kind bad -Icon x -Text "**Not enough room on $drive.** Free about $(Format-MbtGuiBytes ($need.Need - $free)) or choose another folder." }
+    $msg = if ($enough) { New-GuiMessage -Kind ok -Icon check -Text 'There is enough disk space.' } else { New-GuiMessage -Kind bad -Icon x -Text "**Not enough disk space on $drive.** Free about $(Format-MbtGuiBytes ($need.Need - $free)) or choose another folder." }
     $g.ExportDiskHolder.Content = New-GuiCard -Title 'Disk space' -Content @($facts, $msg, (New-GuiText 'If the disk fills up, the run stops by itself and can be continued once you free some space.' 'Hint'))
     if ((Get-MbtGuiScreen) -eq 'exTo') { $g.C.Primary.IsEnabled = (-not $problem) -and $enough }
 }
@@ -646,7 +646,7 @@ function Build-MbtGuiExportPlanPage {
     $right = New-GuiStack @($inIt, $before)
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
-    Set-MbtGuiActions -Footer 'Read the checks and the plan. Nothing starts before you press Start.' -Label 'Start the export' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
+    Set-MbtGuiActions -Footer (Get-MbtGuiPlanFooter) -Label 'Start the export' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
     return (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task export -Include @('conc', 'retry', 'tries', 'awake'))
 }
 

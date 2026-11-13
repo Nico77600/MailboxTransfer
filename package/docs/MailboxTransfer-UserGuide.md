@@ -318,7 +318,7 @@ When you are ready, click **Continue to destination**.
 
 **Do:** pick **PST files** (Outlook opens them), **Export store only** (our format, quick to import later), or **EML files** (one `.eml` file per message). Pick a **folder on this computer** and a **file name**.
 
-**You should see:** a box **Disk space** on the right: the size of your selection, the space needed, and the free space. A green line says *There is enough room.*
+**You should see:** a box **Disk space** on the right: the size of your selection, the space needed, and the free space. A green line says *There is enough disk space.*
 
 ![Where to save. 1: the choice of format, the folder and the file name. 2: the disk space. 3: Continue to Verify](images/console-to-pst-light.png)
 
@@ -339,6 +339,8 @@ Click **Continue to Verify**.
 **You should see:** on the left, **Checks** (every folder matched, the sign-in, the disk space, nothing overwritten) with a green tick each, then **What will be done** in numbered steps, with where it is saved, the size and the **time**. On the right, **What is in it**: the folders, the items and the sizes. Further down, **The same from the command line**, with a **Copy** button. At the very bottom, a fold named **Expert mode**.
 
 ![The Verify page of an export. 1: the checks. 2: what will be done, with the time as a range. 3: what is in it. 4: the same from the command line. 5: the Start button](images/console-verify-export-light.png)
+
+**While it waits:** the first check, *Checking the plan with the service*, says what it is doing (for example *1,240 folders read, 34 s*), and the line at the bottom says *Start unlocks when the plan is checked.* On a big mailbox this takes a minute or two. After you click **Start**, the button reads *Starting...* and the Run page opens with *Preparing* and the same progress until the first item is counted.
 
 **If not:** an amber line is a warning to read, not a stop. A red line means something does not fit: go **Back**.
 

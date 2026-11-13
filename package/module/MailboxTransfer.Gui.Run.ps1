@@ -63,6 +63,34 @@ function Find-MbtGuiStep {
     return $null
 }
 
+function Get-MbtGuiRunningNote {
+    <# What the engine says it is doing right now: the message of the step that runs ("1,240 folders read"), or '' when it says nothing. #>
+    param($Run)
+    if (-not $Run) { return '' }
+    $note = ''
+    foreach ($s in $Run.Steps) { if ($s.State -eq 'running' -and $s.Msg) { $note = [string]$s.Msg } }
+    return $note
+}
+
+function Get-MbtGuiPlanProgressText {
+    <# The line of the plan check while it runs: what the service is being asked, then how long it has been going ("1,240 folders read, 34 s"). #>
+    param($Run, $Started, [datetime]$Now = [datetime]::UtcNow)
+    $note = Get-MbtGuiRunningNote $Run
+    if (-not $note) { $note = 'nothing is changed' }
+    if (-not $Started) { return $note }
+    return ('{0}, {1}' -f $note, (Format-MbtGuiDuration (($Now - [datetime]$Started).TotalSeconds) -WithSeconds))
+}
+
+function Get-MbtGuiPreparingText {
+    <# Before the first item the job connects and reads the folders: what it does then, or '' when it is past that (items are counted, the job ended). #>
+    param($Run)
+    if (-not $Run -or $Run.Result -or $Run.Total -gt 0 -or $Run.State -ne 'running') { return '' }
+    $note = Get-MbtGuiRunningNote $Run
+    if ($note) { return "**Preparing.** $note." }
+    foreach ($s in $Run.Steps) { if ($s.State -eq 'running' -and $s.Title) { return "**Preparing.** $($s.Title)." } }
+    return '**Preparing.** Connecting to Microsoft and reading what you chose.'
+}
+
 function Update-MbtGuiRunTotals {
     <# The overall bar follows the step that works on items (bytes when known). #>
     param($Run)

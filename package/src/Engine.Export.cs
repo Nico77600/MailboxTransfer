@@ -174,8 +174,9 @@ namespace MailboxTransfer
             string mailbox = _o.MailboxId;
 
             Metrics.Phase = "tree";
-            List<FolderInfo> tree = _api.GetFolderTree(mailbox, ct);
+            List<FolderInfo> tree = _api.GetFolderTree(mailbox, ct, n => Metrics.Detail = ProgressText.FoldersRead(n), _o.Concurrency);
             tree = AddRecoverableItems(tree, ct);
+            Metrics.Detail = null;
             _tree = tree;
             _store.UpsertMailbox(new StoreMailbox { Id = mailbox, Kind = _kind, Upn = _o.Upn, DisplayName = _kind + " mailbox" });
             _store.RecordLocation(new StoreMailboxLocation { MailboxId = mailbox, Kind = _kind, Upn = _o.Upn, Source = "ExportTarget", Detail = "mailbox exported", Rank = StoreMailboxLocation.RankGiven });

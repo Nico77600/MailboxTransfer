@@ -67,7 +67,12 @@ function New-MbtGuiPlanStateMessage {
     $s = $script:Gui.S
     $name = if ($s.Task -eq 'import') { 'The plan is valid' } else { 'Every folder matched' }
     switch ($s.PlanState) {
-        'checking' { return (New-MbtGuiCheckRow -State wait -Text 'Checking the plan with the service' -Detail 'nothing is changed') }
+        'checking' {
+            $g = $script:Gui
+            $run = if ($g.ContainsKey('PlanRun')) { $g.PlanRun } else { $null }
+            $started = if ($g.ContainsKey('PlanStarted')) { $g.PlanStarted } else { $null }
+            return (New-MbtGuiCheckRow -State wait -Text 'Checking the plan with the service' -Detail (Get-MbtGuiPlanProgressText -Run $run -Started $started))
+        }
         'ok' {
             $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
@@ -76,6 +81,22 @@ function New-MbtGuiPlanStateMessage {
         default { return (New-MbtGuiCheckRow -State wait -Text 'The plan is not checked yet') }
     }
 }
+function Get-MbtGuiPlanFooter {
+    <# The text beside Start on a Verify page: why Start waits while the plan is checked, why it stays grey when the plan is refused, else what the page asks. #>
+    $g = $script:Gui; $s = $g.S
+    switch ($s.PlanState) {
+        'ok' {
+            switch (Get-MbtGuiScreen) {
+                'imPlan' { return $(if ($s.Confirmed) { 'Ready. Nothing is written before you press Start.' } else { 'Tick the box to unlock Start.' }) }
+                'cpPlan' { return 'Read the plan. Nothing starts before you press Start.' }
+                default { return 'Read the checks and the plan. Nothing starts before you press Start.' }
+            }
+        }
+        'error' { return 'The plan cannot be used. Go back and change your choice.' }
+        default { return 'Start unlocks when the plan is checked.' }
+    }
+}
+
 function Set-MbtGuiPlanState {
     param([ValidateSet('idle', 'checking', 'ok', 'error')][string]$State, [string]$Message = '')
     $g = $script:Gui; $s = $g.S
@@ -84,7 +105,21 @@ function Set-MbtGuiPlanState {
     if ($g.PlanHolder) { $g.PlanHolder.Content = New-MbtGuiPlanStateMessage }
     $ok = ($State -eq 'ok')
     if ((Get-MbtGuiScreen) -eq 'imPlan') { $ok = $ok -and $s.Confirmed }
-    $g.C.Primary.IsEnabled = $ok
+    $footer = Get-MbtGuiPlanFooter
+    Update-MbtGuiPrimary -Enabled $ok -Footer $footer
+    $g.C.Footer.Tag = $footer
+}
+
+function Set-MbtGuiPrimaryBusy {
+    <# The primary button says at once that its action is under way (disabled, with the text), and is painted before the handler goes on with the work. #>
+    param([Parameter(Mandatory)][string]$Text, [string]$Footer = '')
+    $g = $script:Gui; $c = $g.C
+    $c.Primary.IsEnabled = $false
+    $c.PrimaryLabel.Text = $Text
+    $c.PrimaryIcon.Visibility = 'Collapsed'
+    ConvertTo-MbtGuiRuns $c.Footer $Footer
+    $c.Footer.Tag = $Footer
+    try { $g.Window.Dispatcher.Invoke([Action] { }, [Windows.Threading.DispatcherPriority]::Render) } catch { Write-Verbose "not painted: $($_.Exception.Message)" }
 }
 
 function New-MbtGuiRequest {
@@ -134,6 +169,7 @@ function Start-MbtGuiPlanCheck {
     <# Plan page: the read-only run of the engine (-WhatIf) of exactly this request. Start unlocks only when it is valid. #>
     $g = $script:Gui; $s = $g.S
     $s.PlanTotals = $null; $s.JobName = ''
+    $g.PlanRun = $null; $g.PlanShown = ''; $g.PlanStarted = [datetime]::UtcNow
     Set-MbtGuiPlanState checking
     $req = New-MbtGuiRequest -Task $s.Task
     $base = Get-MbtGuiSelectionBase -WorkFolder $s.WorkFolder -Task $s.Task -Key (Get-MbtGuiSelectionKey)
@@ -160,6 +196,11 @@ function Step-MbtGuiPlanJob {
     $g = $script:Gui
     if (-not $g.ContainsKey('PlanJob') -or -not $g.PlanJob) { return }
     $null = Step-MbtGuiJob -Job $g.PlanJob -Run $g.PlanRun
+    # while the check runs the line says what it does and for how long (it is drawn again about once a second)
+    if (-not $g.PlanRun.Result -and $g.S.PlanState -eq 'checking' -and $g.PlanHolder -and ((Get-MbtGuiScreen) -in 'exPlan', 'imPlan', 'cpPlan')) {
+        $text = Get-MbtGuiPlanProgressText -Run $g.PlanRun -Started $g.PlanStarted
+        if ($text -ne $g.PlanShown) { $g.PlanShown = $text; $g.PlanHolder.Content = New-MbtGuiPlanStateMessage }
+    }
     if ($g.PlanRun.Result) {
         $r = $g.PlanRun.Result; $g.PlanJob = $null
         if ($r.Exit -eq 0) { $g.S.PlanTotals = Get-MbtGuiPlanTotals $g.PlanRun; Set-MbtGuiPlanState ok }
@@ -171,8 +212,9 @@ function Step-MbtGuiPlanJob {
 }
 
 function Start-MbtGuiRun {
-    <# Start: the job folder, the command(s), the child process; the Run page opens. #>
+    <# Start: the job folder, the command(s), the child process; the Run page opens. The button says at once that it is starting. #>
     $g = $script:Gui; $s = $g.S
+    Set-MbtGuiPrimaryBusy -Text 'Starting...' -Footer 'Starting the task. This takes a few seconds.'
     $req = New-MbtGuiRequest -Task $s.Task
     $base = Get-MbtGuiSelectionBase -WorkFolder $s.WorkFolder -Task $s.Task -Key (Get-MbtGuiSelectionKey)
     $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath $req.StorePath -JobName (Get-MbtGuiJobName) -SelectionBase $base
@@ -191,7 +233,7 @@ function Start-MbtGuiRun {
     $sel = Get-MbtGuiTaskSelection
     # ticks choose folders of a mailbox (export) or of an export store (import); the folders ticked in a PST or in .eml files go to the engine as a list of folders (Write-MbtGuiChoiceFiles)
     $needsSel = $s.Task -eq 'export' -or ($s.Task -eq 'import' -and $s.ImSrc -eq 'store' -and $sel -and $sel.Entries.Count)
-    if ($needsSel) { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError { param($m) Set-MbtGuiPlanState error ((ConvertTo-MbtGuiMessage $m).Text) } }
+    if ($needsSel) { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError { param($m) Set-MbtGuiPlanState error ((ConvertTo-MbtGuiMessage $m).Text); Show-MbtGuiPage } }
     else { & $begin @() }
 }
 
@@ -274,6 +316,7 @@ function Get-MbtGuiStepSub {
 function Get-MbtGuiStepHelp {
     param([string]$Task, [string]$Id, [string]$Title)
     switch -Regex ("$Id $Title") {
+        '^tree|Read the folder tree' { return 'Reads the folders of the mailbox, 4 requests at a time. A mailbox with thousands of folders takes a minute or two. Nothing is changed.' }
         'send|Send the items' { return 'Reads each message and sends it to the mailbox. Only creates; never deletes or replaces.' }
         'reconcile|uncertain' { return 'When Microsoft did not answer, we cannot know if an item arrived. We look in the folder and decide for each one.' }
         'download|Download' { return 'Downloads the items, 20 at a time, and checks each against its fingerprint. An item that fails is tried again.' }
@@ -293,7 +336,8 @@ function New-MbtGuiRunHead {
     $title = New-GuiText $run.Title 'Big' -NoWrap; $title.TextTrimming = 'CharacterEllipsis'; $dock.Children.Add($title) | Out-Null
     $kp = [Windows.Controls.WrapPanel]::new(); $kp.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
     $kpi = { param($text) $t = New-GuiText $text 'Muted' -NoWrap; $t.FontSize = 13; $t.Margin = [Windows.Thickness]::new(0, 0, 22, 2); $kp.Children.Add($t) | Out-Null }
-    & $kpi ("**$(Format-MbtGuiCount $run.Done)** of $(Format-MbtGuiQuantity $run.Total $run.Unit)")
+    $preparing = Get-MbtGuiPreparingText $run
+    if ($preparing) { & $kpi **Preparing** } else { & $kpi ("**$(Format-MbtGuiCount $run.Done)** of $(Format-MbtGuiQuantity $run.Total $run.Unit)") }
     if ($run.BytesTotal -gt 0) { & $kpi ("**$(Format-MbtGuiBytes $run.Bytes)** of $(Format-MbtGuiBytes $run.BytesTotal)") }
     $elapsed = if ($run.Started) { Format-MbtGuiDuration (([datetime]::UtcNow - $run.Started).TotalSeconds) } else { '0 s' }
     if ($run.LastEvent -and $run.Started -and $run.State -in 'stopped') { $elapsed = Format-MbtGuiDuration (($run.LastEvent - $run.Started).TotalSeconds) }
@@ -305,6 +349,7 @@ function New-MbtGuiRunHead {
     if ($run.Waits.Active -and $run.Waits.Active.Reason -eq 'throttle') {
         $items.Add((New-GuiMessage -Kind info -Icon info -Text "Microsoft asks us to slow down. Waiting $(Format-MbtGuiQuantity ([math]::Round($run.Waits.Active.Seconds)) 'second'). This is normal."))
     }
+    if ($preparing) { $items.Add((New-GuiMessage -Kind info -Icon info -Text $preparing)) }
     switch ($st) {
         'sleep' {
             $from = if ($run.Sleep.From) { $run.Sleep.From.ToLocalTime().ToString('HH:mm') } else { '?' }; $to = if ($run.Sleep.To) { $run.Sleep.To.ToLocalTime().ToString('HH:mm') } else { '?' }
@@ -369,6 +414,11 @@ function New-MbtGuiStepsColumn {
     $sel = Get-MbtGuiSelectedStep $run $s
     $stack = [Windows.Controls.StackPanel]::new()
     $i = 0
+    if (-not $run.Steps.Count -and -not $run.Result) {
+        $first = New-GuiStack @((New-GuiIcon play 13 'MbtBrandText'), (New-GuiText 'Starting the task...' 'Body')) -Orientation Horizontal
+        $first.Children[0].Margin = [Windows.Thickness]::new(0, 2, 8, 0)
+        $stack.Children.Add($first) | Out-Null
+    }
     foreach ($step in $run.Steps) {
         $tone = Get-MbtGuiStepTone $step $run.State
         $btn = [Windows.Controls.Primitives.ToggleButton]::new(); $btn.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtPick')

@@ -630,6 +630,8 @@ if ($EventsFile) {
         default { @(@{ Id = 'run'; Title = $title }) }
     }
     Write-MbtJobPlan -Steps $steps
+    # the first step is under way from the start: the sign-in and the reading of the selection are part of it, so the console never shows a job that waits
+    if ($Mode -eq 'Export') { Write-MbtJobStep -Id tree -State running -Msg 'Signing in to Microsoft' }
 }
 $storeExists = Test-Path -LiteralPath (Join-Path $StorePath 'catalog.db')
 $store = $null
@@ -821,6 +823,9 @@ try {
         }
         'Export' {
             $null = Connect-ForTransfer
+            # read-only: the folder trees are read once for the whole run, and the reading says how far it is
+            Write-MbtJobStep -Id tree -State running -Msg $(if ($SelectionFile) { 'Reading your selection' } else { 'Reading the folder tree' })
+            Start-MbtPhaseProgress -Step tree
             $plan = $null
             # what the run exports: everything asked by -Mailbox / -MailboxId / -Folder (one unit without a plan), or one unit per mailbox of -SelectionFile
             $units = @([pscustomobject]@{ Plan = $null; Kind = $null; Id = $null })
@@ -840,12 +845,14 @@ try {
                     if (-not $selectionPlan.IsComplete) { throw "-SelectionFile: $($selectionPlan.Problems.Count) problem(s), nothing was exported. Remove those entries from the selection (or select them again) and run again." }
                     $units += [pscustomobject]@{ Plan = $selectionPlan; Kind = [string]$selection.Kind; Id = $selectedId }
                 }
+                Stop-MbtPhaseProgress
                 if ($dryRun) {
                     # the counts of the plan (the service now, folders below included), not the ones the browse view wrote in the file
                     foreach ($unit in $units) {
                         $selTotals = $unit.Plan.Totals()
                         Write-MbtItem INFO ("selection ({0} mailbox): {1}{2}" -f $unit.Kind, (Format-MbtBrowseTotals $selTotals), $(if (-not $selTotals.SizeUnknown) { "; about {0} PST file(s) of at most {1} if converted (-OutputPst)" -f [math]::Max(1, [math]::Ceiling($selTotals.KnownSizeBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes) }))
                     }
+                    Write-MbtJobStep -Id tree -State done
                     Write-MbtItem WARN 'WhatIf: the selection is valid, nothing was exported and no store was created.'
                     break
                 }
@@ -886,6 +893,7 @@ try {
                 Write-MbtItem INFO ("total: {0} item(s), {1}{2}; about {3} PST file(s) of at most {4} if converted ({5})" -f $sumItems, (Format-MbtBytes $sumBytes), $(if ($sumUnknown) { ' announced (some folders give no size)' } else { ' announced' }),
                     [math]::Max(1, [math]::Ceiling($sumBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes), $(if ($OutputPst) { $OutputPst } else { 'give -OutputPst to convert' }))
                 if ($OutputPst) { Write-MbtDetail "after the export the store would be converted: $OutputPst, then -002.pst... and a manifest" }
+                Stop-MbtPhaseProgress; Write-MbtJobStep -Id tree -State done
                 if (-not $PSCmdlet.ShouldProcess($StorePath, "Export $($targets.Count) location(s) into the store")) { Write-MbtItem WARN 'WhatIf: nothing was exported and no store was created.' }
                 break
             }
@@ -899,6 +907,7 @@ try {
             $exported = @{}
             $script:resumable = $false
             function Invoke-OneExport([string]$Kind, [string]$Id) {
+                Stop-MbtPhaseProgress
                 # a plan names folders of several mailboxes when a folder moved to an auxiliary archive: each mailbox exports its own part
                 $subPlan = if ($plan) { $plan.ForMailbox($Id) }
                 if ($plan -and $subPlan.Folders.Count -eq 0) { Write-MbtItem INFO "nothing of the selection is in the $Kind mailbox $Id"; return }
@@ -1290,6 +1299,7 @@ try {
     if ($needsSignIn) { Write-MbtItem FAIL $failure.Message } elseif ($hint) { throw ($_.Exception.Message + $hint) } else { throw }
 } finally {
     if ($store) { $store.Dispose() }
+    Stop-MbtPhaseProgress
     Disconnect-MbtGraph
     Stop-MbtStopWatch
     Stop-MbtKeepAwake

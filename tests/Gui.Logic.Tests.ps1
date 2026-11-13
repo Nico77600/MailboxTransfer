@@ -556,3 +556,98 @@ $i = @($list | ForEach-Object { , @($_, 2) })
         @($found) | Should -BeNullOrEmpty -Because 'a loop that runs once would hand New-GuiTable its one row as three cells'
     }
 }
+
+Describe 'What a job that has not counted an item yet shows' {
+    It 'the plan check says what the engine does and for how long' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }, [pscustomobject]@{ id = 'list'; title = 'List the items' }) }
+        $t0 = [datetime]::UtcNow.AddSeconds(-34)
+        Get-MbtGuiPlanProgressText -Run $r -Started $t0 | Should -Be 'nothing is changed, 34 s' -Because 'before the first word of the engine'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = 'Signing in to Microsoft' }
+        Get-MbtGuiPlanProgressText -Run $r -Started $t0 -Now $t0.AddSeconds(3) | Should -Be 'Signing in to Microsoft, 3 s'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = '1,240 folders read' }
+        Get-MbtGuiPlanProgressText -Run $r -Started $t0 -Now $t0.AddSeconds(95) | Should -Be '1,240 folders read, 1 min 35 s'
+        Get-MbtGuiPlanProgressText -Run $null -Started $null | Should -Be 'nothing is changed'
+    }
+    It 'says nothing about a step that is not running' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }) }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'done'; msg = '4,443 folders read' }
+        Get-MbtGuiRunningNote $r | Should -Be ''
+    }
+    It 'the head of the Run page says Preparing, with what is read, until the first item is counted' {
+        $r = New-MbtGuiRun -Task export
+        Get-MbtGuiPreparingText $r | Should -Be '**Preparing.** Connecting to Microsoft and reading what you chose.' -Because 'no event yet'
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }, [pscustomobject]@{ id = 'list'; title = 'List the items you chose' }) }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running' }
+        Get-MbtGuiPreparingText $r | Should -Be '**Preparing.** Read the folder tree.'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = '1,240 folders read' }
+        Get-MbtGuiPreparingText $r | Should -Be '**Preparing.** 1,240 folders read.'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'done'; msg = '4,443 folders read' }
+        Add-Evt $r step -Fields @{ id = 'list'; state = 'running'; total = 15; done = 0 }
+        Get-MbtGuiPreparingText $r | Should -Be '' -Because 'the items are counted'
+    }
+    It 'no Preparing hint once the job ended or was stopped' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r result -Fields @{ exit = 1 }
+        Get-MbtGuiPreparingText $r | Should -Be ''
+        $s = New-MbtGuiRun -Task export
+        Add-Evt $s slept -Fields @{ from = [datetime]::UtcNow.AddHours(-1).ToString('o'); to = [datetime]::UtcNow.ToString('o'); seconds = 3600 }
+        Get-MbtGuiPreparingText $s | Should -Be ''
+    }
+    It 'a step that runs is drawn with the play icon and one that waits with the clock' {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1')
+        (Get-MbtGuiStepTone @{ State = 'running' } 'running')[1] | Should -Be 'play'
+        (Get-MbtGuiStepTone @{ State = 'waiting' } 'running')[1] | Should -Be 'clock'
+        (Get-MbtGuiStepTone @{ State = 'done' } 'running')[1] | Should -Be 'check'
+    }
+}
+
+Describe 'The text beside Start on a Verify page' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1')
+        function Get-MbtGuiScreen { return $script:Screen }
+    }
+    BeforeEach { $script:Gui = @{ S = @{ PlanState = 'idle'; Confirmed = $false } } }
+    It 'says why Start waits while the plan is being checked, and before the check begins' -ForEach @('exPlan', 'imPlan', 'cpPlan') {
+        $script:Screen = $_
+        foreach ($state in 'idle', 'checking') {
+            $script:Gui.S.PlanState = $state
+            Get-MbtGuiPlanFooter | Should -Be 'Start unlocks when the plan is checked.'
+        }
+    }
+    It 'says the plan cannot be used when the service refused it' {
+        $script:Screen = 'exPlan'; $script:Gui.S.PlanState = 'error'
+        Get-MbtGuiPlanFooter | Should -Be 'The plan cannot be used. Go back and change your choice.'
+    }
+    It 'asks for the tick of an import, then says it is ready' {
+        $script:Screen = 'imPlan'; $script:Gui.S.PlanState = 'ok'
+        Get-MbtGuiPlanFooter | Should -Be 'Tick the box to unlock Start.'
+        $script:Gui.S.Confirmed = $true
+        Get-MbtGuiPlanFooter | Should -Be 'Ready. Nothing is written before you press Start.'
+    }
+    It 'keeps the sentence of the page once the plan is valid' {
+        $script:Screen = 'exPlan'; $script:Gui.S.PlanState = 'ok'
+        Get-MbtGuiPlanFooter | Should -Be 'Read the checks and the plan. Nothing starts before you press Start.'
+        $script:Screen = 'cpPlan'
+        Get-MbtGuiPlanFooter | Should -Be 'Read the plan. Nothing starts before you press Start.'
+    }
+}
+
+Describe 'Disk space wording' {
+    It 'says disk space, not room, in every text of the console, the guides and the tests' {
+        $root = Split-Path $script:Package -Parent
+        $hits = foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.ps1', '*.psm1', '*.md', '*.html', '*.cs', '*.txt' | Where-Object { $_.FullName -notmatch '[\\/](\.git|out)[\\/]' -and $_.Name -ne 'Gui.Logic.Tests.ps1' }) {
+            Select-String -LiteralPath $file.FullName -Pattern 'enough room' -SimpleMatch | ForEach-Object { "$($file.Name):$($_.LineNumber)" }
+        }
+        @($hits) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Disk check sentences of the To page' {
+    It 'the check says there is enough disk space, or that there is not enough disk space on the drive' {
+        $text = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Export.ps1') -Raw
+        $text | Should -Match 'There is enough disk space\.'
+        $text | Should -Match 'Not enough disk space on \$drive\.'
+    }
+}

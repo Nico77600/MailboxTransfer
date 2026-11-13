@@ -42,6 +42,8 @@ namespace MailboxTransfer
     public sealed class TransferSnapshot
     {
         public string Phase;
+        /// <summary>What the phase is doing right now ("1,240 folders read"), null when it has nothing to say.</summary>
+        public string Detail;
         public double Seconds;
         public long Bytes, Items, Failed, TotalItems, TotalBytes;
         /// <summary>Since the start of the transfer phase, and over the last 30 seconds or so.</summary>
@@ -60,6 +62,7 @@ namespace MailboxTransfer
         {
             var sb = new StringBuilder();
             sb.Append(Phase).Append("  ").Append(TimeSpan.FromSeconds(Math.Round(Seconds)).ToString("hh\\:mm\\:ss"));
+            if (!string.IsNullOrEmpty(Detail)) sb.Append("  ").Append(Detail);
             sb.Append("  items ").Append(Items).Append(TotalItems > 0 ? "/" + TotalItems : "");
             if (Failed > 0) sb.Append(" (").Append(Failed).Append(" failed)");
             sb.Append("  ").Append(Size(Bytes)).Append(TotalBytes > 0 ? "/" + Size(TotalBytes) : "");
@@ -80,6 +83,8 @@ namespace MailboxTransfer
         long _bytes, _items, _failed;
         long _transferStartedMs = -1;
         public volatile string Phase = "starting";
+        /// <summary>What the phase is doing right now, for the poll of the caller (for instance how many folders of the tree were read); null: nothing.</summary>
+        public volatile string Detail;
         public long TotalItems, TotalBytes;
         /// <summary>Progress per folder (the console lists the folders of a running job from it).</summary>
         public readonly FolderTracker Folders = new FolderTracker();
@@ -113,7 +118,7 @@ namespace MailboxTransfer
 
         public TransferSnapshot Snapshot(GraphClient graph)
         {
-            var s = new TransferSnapshot { Phase = Phase, Seconds = _watch.Elapsed.TotalSeconds, TotalItems = TotalItems, TotalBytes = TotalBytes };
+            var s = new TransferSnapshot { Phase = Phase, Detail = Detail, Seconds = _watch.Elapsed.TotalSeconds, TotalItems = TotalItems, TotalBytes = TotalBytes };
             s.Bytes = Interlocked.Read(ref _bytes); s.Items = Interlocked.Read(ref _items); s.Failed = Interlocked.Read(ref _failed);
             s.Active = Volatile.Read(ref _active);
             if (graph != null) { s.Requests = graph.RequestCount; s.Retries = graph.RetryCount; s.Throttled429 = graph.Throttled429; }

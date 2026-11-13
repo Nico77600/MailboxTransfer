@@ -12,6 +12,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 - The configuration section an operator fills in is now **`Tenant`**; a file that still says `Lab` keeps working.
 - **Sign-in in a Windows window (no browser tab)**: a Microsoft sign-in window opens over the console and you type the account. The code stays as the alternative. Your administrator adds one redirect address to the application (user guide, chapter 2).
 - **Keep this PC awake** is off by default and moved to the Expert mode of the Verify pages; Setup no longer has it.
+- **An export prepares faster and says what it does**: the folder tree of a large mailbox is read by up to 4 requests at once, 1,000 folders to the page, and once per run. The Verify page shows what it is doing ("1,240 folders read", with the time), Start says why it waits, then shows "Starting...", and the Run page shows "Preparing" with the same progress before the first item. The disk check says "There is enough disk space."
 
 ### Added
 - **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.

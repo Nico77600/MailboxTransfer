@@ -22,6 +22,7 @@ $script:StopWatcher = $null
 $script:KeepAwake = $null
 $script:JobInfo = $null
 $script:JobProgress = $null
+$script:PhaseProgress = $null
 
 #region Event log ------------------------------------------------------------------------------
 
@@ -47,7 +48,7 @@ function Open-MbtEventLog {
     $script:EventLog = [MailboxTransfer.EventLog]::new($full, $null, $HeartbeatMs, 120)
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
     $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false }
-    $script:JobProgress = @{ Step = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
+    $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
     Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store
 }
 
@@ -55,6 +56,37 @@ function Close-MbtEventLog {
     [CmdletBinding()]
     param()
     if ($script:EventLog) { $script:EventLog.Dispose(); $script:EventLog = $null }
+}
+
+function Start-MbtPhaseProgress {
+    <#
+    .SYNOPSIS
+        A read-only job that reads the folder trees before it transfers anything: the trees are read once for the whole run (the reading of the selection and the export share them),
+        and the reading says how far it is, as step events of -Step (the first one at once, then every second at most): "1,240 folders read".
+    .DESCRIPTION
+        Needs Connect-MbtGraph first. Without an event log (no -EventsFile) only the sharing of the trees is switched on. Call Stop-MbtPhaseProgress when the phase is over.
+    #>
+    [CmdletBinding()]
+    param([string]$Step = 'tree')
+    Initialize-MbtEngine
+    Stop-MbtPhaseProgress
+    $session = Get-MbtSession
+    $session.Api.CacheFolderTrees = $true
+    if ($script:EventLog) {
+        $script:PhaseProgress = [MailboxTransfer.PhaseProgress]::new($script:EventLog, $Step)
+        $session.Api.TreeProgress = $script:PhaseProgress.FolderCount()
+    }
+}
+
+function Stop-MbtPhaseProgress {
+    <# Writes the last progress text and stops the reports. The trees already read stay shared. #>
+    [CmdletBinding()]
+    param()
+    if ($script:PhaseProgress) {
+        $script:PhaseProgress.Dispose()
+        $script:PhaseProgress = $null
+        if ($script:Session) { $script:Session.Api.TreeProgress = $null }
+    }
 }
 
 function Write-MbtEvent {
@@ -381,6 +413,12 @@ function Update-MbtJobProgress {
         if ($current -ne 'reconcile' -and $i -gt 0) { foreach ($s in @($order[0..($i - 1)])) { if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') { Write-MbtJobStep -Id $s -State done } } }
         Write-MbtJobStep -Id $current -State running
         $p.Step = $current
+    }
+    # what the step says it does now ("1,240 folders read"): written when it changes
+    $detail = if ($snap.PSObject.Properties['Detail']) { [string]$snap.Detail } else { '' }
+    if ($p.Step -and $detail -and $detail -ne $p.Detail -and $script:JobInfo.Steps[$p.Step] -eq 'running') {
+        $p.Detail = $detail
+        Write-MbtJobStep -Id $p.Step -State running -Msg $detail
     }
     $counting = if ($export) { 'download' } else { 'send' }
     # the folders that changed since the last poll (the Run page lists them)
