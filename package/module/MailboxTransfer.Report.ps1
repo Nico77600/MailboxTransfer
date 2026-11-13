@@ -80,6 +80,45 @@ function Format-MbtReportNumber {
     return ([long]$Value).ToString('N0', [Globalization.CultureInfo]::GetCultureInfo('en-US'))
 }
 
+function Format-MbtReportQuantity {
+    <# A count and its noun: "1 time", "3 times". #>
+    param($Count, [string]$Singular, [string]$Plural = '')
+    $n = ConvertTo-MbtReportLong $Count
+    $word = if ($n -eq 1) { $Singular } elseif ($Plural) { $Plural } else { $Singular + 's' }
+    return (Format-MbtReportNumber $n) + ' ' + $word
+}
+
+function Format-MbtReportProgress {
+    <#
+        What a step, a folder or a total has done, in words. -Finished: only what was really done, never "8.2 MiB of 7.9 MiB". Not finished: "x of y", and "x of about y"
+        for -About (the sizes that Microsoft announces are only about right); more than the total says: x alone. Nothing done and no total: ''.
+    #>
+    param([double]$Done, [double]$Total, [switch]$Bytes, [switch]$About, [switch]$Finished)
+    $say = { param([double]$n) if ($Bytes) { Format-MbtReportBytes $n } else { Format-MbtReportNumber $n } }
+    if ($Finished) {
+        $real = if ($Done -gt 0) { $Done } else { $Total }
+        return $(if ($real -gt 0) { & $say $real } else { '' })
+    }
+    if ($Total -gt 0 -and $Done -le $Total) { return ((& $say $Done) + ' of ' + $(if ($About) { 'about ' } else { '' }) + (& $say $Total)) }
+    if ($Done -gt 0) { return (& $say $Done) }
+    return ''
+}
+
+function Get-MbtReportTaskName {
+    <# The task alone, never the title: "Export", "Import (PST)", "Copy (EML files)". #>
+    param([string]$Task, [string]$Mode)
+    $name = ($Task -replace '-plan$', '').Trim()
+    if (-not $name) {
+        $name = switch -Regex ($Mode) { '^Export' { 'export' } '^Import' { 'import' } '^Check' { 'check' } '^Repair' { 'repair' } default { '' } }
+    }
+    if (-not $name) { return '' }
+    $text = $name.Substring(0, 1).ToUpperInvariant() + $name.Substring(1).ToLowerInvariant()
+    $where = switch -Regex ($Mode) { '^(Export|Import)Pst$' { ' (PST)' } '^(Export|Import)Eml$' { ' (EML files)' } default { '' } }
+    if ($name -notin 'export', 'import', 'copy') { $where = '' }
+    if ($Task -match '-plan$') { $where += ' (plan check)' }
+    return $text + $where
+}
+
 function Get-MbtReportValue {
     <# One field of a parsed JSON object (hashtable or object), or $Default. Safe under strict mode. #>
     param($Object, [string]$Name, $Default = $null)
@@ -143,11 +182,11 @@ function Get-MbtReportVerdict {
     switch ($exit) {
         0 {
             $text = switch ($reason) { 'clean' { 'Clean' } default { 'Complete' } }
-            return @{ Text = $text; Tone = 'ok'; Sentence = 'The job finished and nothing is left to do.'; Next = 'Nothing is left to do.'; NextTone = 'ok' }
+            return @{ Text = $text; Tone = 'ok'; Sentence = 'The job finished and nothing is left to do.'; Next = ''; NextTone = 'ok' }
         }
         1 {
             if ($reason -eq 'refused-items') {
-                return @{ Text = 'Finished, items refused'; Tone = 'warn'; Sentence = 'The job finished, but some items were refused for good: trying again cannot change the answer of the service.'; Next = 'Nothing can be run again. The items that were refused are listed below and in the list of items not imported.'; NextTone = 'warn' }
+                return @{ Text = 'Finished, items refused'; Tone = 'warn'; Sentence = 'The job finished, but some items were refused for good.'; Next = 'Nothing can be run again: trying again cannot change the answer of the service. The items that were refused are listed below and in the list of items not imported.'; NextTone = 'warn' }
             }
             if ($reason -eq 'errors') {
                 return @{ Text = 'Errors found'; Tone = 'fail'; Sentence = 'The job found errors in the file.'; Next = 'Repair the file (console: Repair a PST file; command line: -Mode RepairPst), then check the new file.'; NextTone = 'warn' }
@@ -166,7 +205,7 @@ function Get-MbtReportVerdict {
             $nextText = switch ($next) {
                 'signin' { 'Sign in again, then continue the job: it does only what is left.' }
                 'repair' { 'Repair the file (console: Repair a PST file; command line: -Mode RepairPst).' }
-                'done' { 'Nothing is left to do.' }
+                'done' { '' }
                 default { 'Continue the job (console: Continue; command line: run the same command again). It does only what is left.' }
             }
             return @{ Text = $text; Tone = 'warn'; Sentence = $sentence; Next = $nextText; NextTone = $(if ($next -eq 'done') { 'ok' } else { 'warn' }) }
@@ -256,6 +295,7 @@ function Get-MbtJobReportModel {
                     $chrono.Add(@{ T = $at; Kind = 'step'; Tone = $(if ($state -eq 'done') { 'ok' } else { 'fail' }); Step = $s.Title; Text = $text; Until = $null; Count = 0 })
                 }
                 $s.State = $state
+                if ($state -eq 'done') { $s.Msg = '' }
                 $s.Done = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'done' $s.Done)
                 $s.Total = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'total' $s.Total)
                 $s.Bytes = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'bytes' $s.Bytes)
@@ -332,7 +372,7 @@ function Get-MbtJobReportModel {
         }
     }
     foreach ($id in @($phase.Keys)) { if ($phase[$id].Row -and $null -eq $phase[$id].Row.Until) { $phase[$id].Row.Until = $last } }
-    foreach ($row in $chrono) { if ($row.Kind -eq 'wait') { $row.Text = if ($row.Reason -eq 'network') { "Microsoft could not be reached; the job tried again ($($row.Count) times, $(Format-MbtReportDuration $row.Seconds) in all)." } elseif ($row.Count -gt 1) { "Microsoft asked to wait because of too many requests: $($row.Count) waits, $(Format-MbtReportDuration $row.Seconds) in all." } else { "Microsoft asked to wait $(Format-MbtReportDuration $row.Seconds) because of too many requests." } } }
+    foreach ($row in $chrono) { if ($row.Kind -eq 'wait') { $row.Text = if ($row.Reason -eq 'network') { "Microsoft could not be reached; the job tried again ($(Format-MbtReportQuantity $row.Count 'time'), $(Format-MbtReportDuration $row.Seconds) in all)." } elseif ($row.Count -gt 1) { "Microsoft asked to wait because of too many requests: $($row.Count) waits, $(Format-MbtReportDuration $row.Seconds) in all." } else { "Microsoft asked to wait $(Format-MbtReportDuration $row.Seconds) because of too many requests." } } }
 
     $interrupted = $null -eq $result
     if ($null -eq $first) { $first = ConvertTo-MbtReportTime (Get-MbtReportValue $status 'started') }
@@ -378,7 +418,7 @@ function Get-MbtJobReportModel {
     }
 
     $model = [ordered]@{
-        Title = $title; Task = $task; Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store
+        Title = $title; Task = $task; TaskName = (Get-MbtReportTaskName -Task $task -Mode $mode); Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store
         Started = $first; Finished = $finished; Seconds = $seconds; Interrupted = $interrupted
         Result = $(if ($result) { @{ Exit = $result.Exit; Complete = $result.Complete; Next = $result.Next; Reason = $result.Reason } } else { $null })
         Verdict = $verdict
@@ -510,7 +550,7 @@ function ConvertTo-MbtJobReportHtml {
     # header
     $meta = [Text.StringBuilder]::new()
     $metaItems = [ordered]@{
-        'Task' = $Model.Title; 'Source' = $Model.Source; 'Destination' = $Model.Destination
+        'Task' = $Model.TaskName; 'Source' = $Model.Source; 'Destination' = $Model.Destination
         'Store' = $(if ($Model.Store -and $Model.Store -ne $Model.Source -and $Model.Store -ne $Model.Destination) { $Model.Store } else { '' })
         'Started' = (Format-MbtReportTime $started); 'Finished' = $(if ($Model.Interrupted) { 'not written (last event ' + (Format-MbtReportTime $finished) + ')' } else { Format-MbtReportTime $finished })
         'Duration' = (Format-MbtReportDuration $Model.Seconds)
@@ -547,7 +587,9 @@ function ConvertTo-MbtJobReportHtml {
     & $addTile 'Duration' (Format-MbtReportDuration $Model.Seconds) 'info'
 
     # next step and errors
-    $next = '<section class="card next ' + $verdict.NextTone + '"><h2>What to do next</h2><p>' + (& $enc $verdict.Sentence) + '</p><p><strong>' + (& $enc $verdict.Next) + '</strong></p></section>'
+    $nextBody = '<p>' + (& $enc $verdict.Sentence) + '</p>'
+    if ($verdict.Next -and $verdict.Next -ne $verdict.Sentence) { $nextBody += '<p><strong>' + (& $enc $verdict.Next) + '</strong></p>' }
+    $next = '<section class="card next ' + $verdict.NextTone + '"><h2>What to do next</h2>' + $nextBody + '</section>'
     $errorHtml = ''
     if ($Model.Errors.Count) {
         $sb = [Text.StringBuilder]::new()
@@ -574,8 +616,9 @@ function ConvertTo-MbtJobReportHtml {
         [void]$sb.Append('<div class="scroll"><table><thead><tr><th>Step</th><th>State</th><th>Started</th><th>Finished</th><th class="num">Duration</th><th class="num">Items</th><th class="num">Data</th><th>Message</th></tr></thead><tbody>')
         foreach ($s in $Model.Steps) {
             $dur = if ($s.Started -and $s.Finished) { Format-MbtReportDuration (([datetime]$s.Finished) - ([datetime]$s.Started)).TotalSeconds } elseif ($s.Started) { 'not finished' } else { '' }
-            $itemsText = if ($s.Total -gt 0) { (Format-MbtReportNumber $s.Done) + ' of ' + (Format-MbtReportNumber $s.Total) } elseif ($s.Done -gt 0) { Format-MbtReportNumber $s.Done } else { '' }
-            $dataText = if ($s.BytesTotal -gt 0) { (Format-MbtReportBytes $s.Bytes) + ' of ' + (Format-MbtReportBytes $s.BytesTotal) } elseif ($s.Bytes -gt 0) { Format-MbtReportBytes $s.Bytes } else { '' }
+            $finishedStep = $s.State -eq 'done'
+            $itemsText = Format-MbtReportProgress $s.Done $s.Total -Finished:$finishedStep
+            $dataText = Format-MbtReportProgress $s.Bytes $s.BytesTotal -Bytes -About -Finished:$finishedStep
             [void]$sb.Append('<tr><td>' + (& $enc $s.Title) + '</td><td>' + (Get-MbtReportBadge $s.State) + '</td><td class="when">' + (& $enc $(if ($s.Started) { Format-MbtReportTime $s.Started -Short } else { '' })) + '</td><td class="when">' + (& $enc $(if ($s.Finished) { Format-MbtReportTime $s.Finished -Short } else { '' })) + '</td><td class="num">' + (& $enc $dur) + '</td><td class="num">' + (& $enc $itemsText) + '</td><td class="num">' + (& $enc $dataText) + '</td><td>' + (& $enc $s.Msg) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
@@ -598,7 +641,7 @@ function ConvertTo-MbtJobReportHtml {
             [void]$sb.Append('<tr class="' + $cls + '" data-kind="' + (& $enc $row.Kind) + '"><td class="when">' + (& $enc $when) + '</td><td class="num">' + (& $enc $since) + '</td><td>' + (& $enc $row.Step) + '</td><td>' + (& $enc $text) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftChronology -gt 0) { [void]$sb.Append('<p class="caption">' + (Format-MbtReportNumber $Model.LeftChronology) + ' more events are in events.jsonl.</p>') }
+        if ($Model.LeftChronology -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftChronology -eq 1) { '1 more event is' } else { (Format-MbtReportNumber $Model.LeftChronology) + ' more events are' }) + ' in events.jsonl.</p>') }
     } else { [void]$sb.Append('<p class="empty">The job wrote no event.</p>') }
     $chronoHtml = $sb.ToString()
 
@@ -612,11 +655,12 @@ function ConvertTo-MbtJobReportHtml {
         foreach ($f in $Model.Folders) {
             $titleOfStep = $Model.Steps | Where-Object { $_.Id -eq $f.Step } | Select-Object -First 1
             $stepText = if ($titleOfStep) { $titleOfStep.Title } elseif ($f.Step -eq 'plan') { 'Plan' } else { $f.Step }
-            $itemsText = if ($f.Total -gt 0) { (Format-MbtReportNumber $f.Done) + ' of ' + (Format-MbtReportNumber $f.Total) } elseif ($f.Done -gt 0) { Format-MbtReportNumber $f.Done } else { '0' }
+            $itemsText = Format-MbtReportProgress $f.Done $f.Total -Finished:($f.State -in 'done', 'ok', 'complete')
+            if (-not $itemsText) { $itemsText = '0' }
             [void]$sb.Append('<tr><td>' + (& $enc $f.Key) + '</td><td>' + (& $enc $stepText) + '</td><td>' + (Get-MbtReportBadge $f.State) + '</td><td class="num">' + (& $enc $itemsText) + '</td><td class="num">' + (& $enc $(if ($f.Bytes -ge 0) { Format-MbtReportBytes $f.Bytes } else { '' })) + '</td><td>' + (& $enc $f.Msg) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftFolders -gt 0) { [void]$sb.Append('<p class="caption">' + (Format-MbtReportNumber $Model.LeftFolders) + ' more folders are in events.jsonl.</p>') }
+        if ($Model.LeftFolders -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftFolders -eq 1) { '1 more folder is' } else { (Format-MbtReportNumber $Model.LeftFolders) + ' more folders are' }) + ' in events.jsonl.</p>') }
         [void]$sb.Append('</section>')
         $foldersHtml = $sb.ToString()
     }
@@ -630,7 +674,7 @@ function ConvertTo-MbtJobReportHtml {
             [void]$sb.Append('<tr><td>' + (& $enc $i.Key) + '</td><td>' + (Get-MbtReportBadge $i.State) + '</td><td>' + (& $enc $i.Msg) + '</td><td>' + (& $enc $i.Detail) + '</td><td class="num">' + (& $enc $(if ($i.Count -gt 0) { Format-MbtReportNumber $i.Count } else { '' })) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftItems -gt 0) { [void]$sb.Append('<p class="caption">' + (Format-MbtReportNumber $Model.LeftItems) + ' more are in the CSV report.</p>') }
+        if ($Model.LeftItems -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftItems -eq 1) { '1 more is' } else { (Format-MbtReportNumber $Model.LeftItems) + ' more are' }) + ' in the CSV report.</p>') }
         [void]$sb.Append('</section>')
         $itemsHtml = $sb.ToString()
     }
@@ -645,7 +689,7 @@ function ConvertTo-MbtJobReportHtml {
             [void]$sb.Append('<tr><td class="when">' + (& $enc (Format-MbtReportTime $w.T -Short)) + '</td><td>' + (& $enc $(if ($titleOfStep) { $titleOfStep.Title } else { $w.Step })) + '</td><td class="mono">' + (& $enc $w.Code) + '</td><td>' + (& $enc $w.Key) + '</td><td>' + (& $enc $w.Msg) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftWarnings -gt 0) { [void]$sb.Append('<p class="caption">' + (Format-MbtReportNumber $Model.LeftWarnings) + ' more warnings are in events.jsonl.</p>') }
+        if ($Model.LeftWarnings -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftWarnings -eq 1) { '1 more warning is' } else { (Format-MbtReportNumber $Model.LeftWarnings) + ' more warnings are' }) + ' in events.jsonl.</p>') }
         [void]$sb.Append('</section>')
         $warningsHtml = $sb.ToString()
     }
@@ -680,7 +724,7 @@ function ConvertTo-MbtJobReportHtml {
     $dataHtml = '<script type="application/json" id="mbt-report-data">' + $json + '</script>'
 
     $generated = 'Written ' + (Format-MbtReportTime ([datetime]::UtcNow)) + ' from events.jsonl and status.json of the job' + $(if ($Version) { ' by Mailbox Transfer ' + $Version } else { '' }) + '. Times are in the time zone of the PC that wrote this page (' + $zone + '). The page needs no network.'
-    $subtitle = $verdict.Sentence + ' ' + (Format-MbtReportTime $started)
+    $subtitle = 'Started ' + (Format-MbtReportTime $started) + ' ' + [char]0x00B7 + ' ' + (Format-MbtReportDuration $Model.Seconds)
     $values = @{
         TITLE = (& $enc $Model.Title); VERSION = (& $enc $Version); SUBTITLE = (& $enc $subtitle); META = $meta.ToString(); TILES = $tiles.ToString(); NEXT = $next; ERRORS = $errorHtml; DECISIONS = $decisionHtml
         TIMELINE = (New-MbtReportTimeline -Model $Model); STEPS = $stepsHtml; CHRONOLOGY = $chronoHtml; FOLDERS = $foldersHtml; ITEMS = $itemsHtml; WARNINGS = $warningsHtml

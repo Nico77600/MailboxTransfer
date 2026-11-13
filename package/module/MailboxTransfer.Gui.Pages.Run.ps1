@@ -329,9 +329,9 @@ function Get-MbtGuiStepTone {
 function Get-MbtGuiStepSub {
     param($Step)
     if ($Step.State -eq 'waiting') { return $Step.Msg }
-    if ($Step.Total -gt 0 -and $Step.State -eq 'running') { return ('{0} / {1}' -f (Format-MbtGuiCount $Step.Done), (Format-MbtGuiQuantity $Step.Total 'item')) }
+    if ($Step.Total -gt 0 -and $Step.State -eq 'running') { return (Format-MbtGuiFraction $Step.Done $Step.Total -Unit 'item') }
     if ($Step.Msg) { return $Step.Msg }
-    if ($Step.Total -gt 0) { return (Format-MbtGuiQuantity $Step.Total 'item') }
+    if ($Step.Total -gt 0) { return (Format-MbtGuiFraction $Step.Done $Step.Total -Unit 'item' -Finished) }
     return ''
 }
 
@@ -359,8 +359,8 @@ function New-MbtGuiRunHead {
     $kp = [Windows.Controls.WrapPanel]::new(); $kp.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
     $kpi = { param($text) $t = New-GuiText $text 'Muted' -NoWrap; $t.FontSize = 13; $t.Margin = [Windows.Thickness]::new(0, 0, 22, 2); $kp.Children.Add($t) | Out-Null }
     $preparing = Get-MbtGuiPreparingText $run
-    if ($preparing) { & $kpi **Preparing** } else { & $kpi ("**$(Format-MbtGuiCount $run.Done)** of $(Format-MbtGuiQuantity $run.Total $run.Unit)") }
-    if ($run.BytesTotal -gt 0) { & $kpi ("**$(Format-MbtGuiBytes $run.Bytes)** of $(Format-MbtGuiBytes $run.BytesTotal)") }
+    if ($preparing) { & $kpi **Preparing** } else { & $kpi ((Format-MbtGuiProgressOf $run.Done $run.Total $run.Unit) -replace '^([\d,]+)', '**$1**') }
+    if ($run.BytesTotal -gt 0) { & $kpi ((Format-MbtGuiBytesOf $run.Bytes $run.BytesTotal) -replace '^(\S+ \S+)', '**$1**') }
     $elapsed = if ($run.Started) { Format-MbtGuiDuration (([datetime]::UtcNow - $run.Started).TotalSeconds) } else { '0 s' }
     if ($run.LastEvent -and $run.Started -and $run.State -in 'stopped') { $elapsed = Format-MbtGuiDuration (($run.LastEvent - $run.Started).TotalSeconds) }
     & $kpi ("Elapsed **$elapsed**")
@@ -378,7 +378,7 @@ function New-MbtGuiRunHead {
             $items.Add((New-GuiMessage -Kind warn -Icon moon -Text "**This PC slept from $from to $to.** The job paused and has now started again. The time left is being measured again; it shows after about 10 minutes."))
         }
         'stopped' {
-            $items.Add((New-GuiMessage -Kind info -Icon pause -Text "**Stopped by you.** $(Format-MbtGuiProgressOf $run.Done $run.Total $run.Unit) $(Get-MbtGuiPlural $run.Total 'is' 'are') done. Press **Continue** to do only what is left."))
+            $items.Add((New-GuiMessage -Kind info -Icon pause -Text "**Stopped by you.** $(Format-MbtGuiProgressOf $run.Done $run.Total $run.Unit) $(Get-MbtGuiPlural $(if ($run.Done -gt $run.Total) { $run.Done } else { $run.Total }) 'is' 'are') done. Press **Continue** to do only what is left."))
         }
         default {
             $eta = Get-MbtGuiEta -Run $run -Task $s.Task
@@ -485,7 +485,7 @@ function New-MbtGuiObjectRows {
         $brush = switch ($o.Tone) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } 'bad' { 'MbtCritical' } 'run' { 'MbtBrandText' } default { 'TextFillColorTertiaryBrush' } }
         $ic = New-GuiIcon $gl 12 $brush
         $name = New-GuiText $o.Key 'Body' -NoWrap; $name.FontSize = 13; $name.TextTrimming = 'CharacterEllipsis'; [Windows.Controls.Grid]::SetColumn($name, 1)
-        $right = if ($o.Msg) { $o.Msg } elseif ($o.Total -gt 0) { '{0} / {1}' -f (Format-MbtGuiCount $o.Done), (Format-MbtGuiCount $o.Total) } else { '' }
+        $right = if ($o.Msg) { $o.Msg } elseif ($o.Total -gt 0) { Format-MbtGuiFraction $o.Done $o.Total -Finished:($o.Tone -eq 'ok') } else { '' }
         $rt = New-GuiText $right 'Small' -NoWrap; $rt.Margin = [Windows.Thickness]::new(8, 0, 0, 0); [Windows.Controls.Grid]::SetColumn($rt, 2)
         $grid.Children.Add($ic) | Out-Null; $grid.Children.Add($name) | Out-Null; $grid.Children.Add($rt) | Out-Null
         $btn.Content = $grid
@@ -555,7 +555,7 @@ function New-MbtGuiObjectDetailsColumn {
         $items.Add((New-GuiTable -Headers @('Item', 'State') -Rows @($rows) -Widths @('*', 'Auto')))
     } else {
         $stateWord = switch ($o.Tone) { 'ok' { 'Done' } 'run' { 'Running' } 'warn' { 'Needs attention' } default { 'Waiting' } }
-        $items.Add((New-GuiFacts @(@('Progress', $(if ($o.Msg) { $o.Msg } else { '{0} / {1}' -f (Format-MbtGuiCount $o.Done), (Format-MbtGuiCount $o.Total) })), @('State', $stateWord))))
+        $items.Add((New-GuiFacts @(@('Progress', $(if ($o.Msg) { $o.Msg } else { Format-MbtGuiFraction $o.Done $o.Total -Finished:($o.Tone -eq 'ok') })), @('State', $stateWord))))
         if ($o.Msg -and $o.Tone -eq 'warn') { $items.Add((New-GuiMessage -Kind warn -Icon warn -Text $o.Msg)) }
     }
     return (New-GuiCard -Title 'Details' -Content $items.ToArray())
@@ -793,7 +793,8 @@ function New-MbtGuiExportDone {
     $parts = Get-MbtGuiCount $run 'parts' 0
     switch ($Outcome) {
         'complete' {
-            $size = if ($run.BytesTotal -gt 0) { Format-MbtGuiBytes $run.BytesTotal } else { Format-MbtGuiBytes (Get-MbtGuiCount $run 'bytes' 0) }
+            $real = [double](Get-MbtGuiCount $run 'bytes' 0); if ($real -le 0) { $real = [double]$run.Bytes }; if ($real -le 0) { $real = [double]$run.BytesTotal }
+            $size = Format-MbtGuiBytes $real
             $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @($(if ($pst -and $parts) { "$size in $(Format-MbtGuiQuantity $parts 'PST file')" } else { $size }), $(if ($pst) { 'written' } else { 'in the store' }), 'ok'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
             $facts = New-GuiFacts @(@('Saved to', $s.OutFolder), @('Files', $(if ($pst) { "$($s.OutName) and its parts + manifest" } else { 'the export store' })), @('Checked', $(if ($pst -and -not $s.CheckEach) { 'not checked (you turned it off)' } else { 'every file checked: clean' })))
             return @($t, $facts)

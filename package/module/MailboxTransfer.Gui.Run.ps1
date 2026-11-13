@@ -135,7 +135,7 @@ function Add-MbtGuiEvent {
             $s.Total = [long](Get-MbtGuiProp $Event 'total' $s.Total)
             $s.Bytes = [long](Get-MbtGuiProp $Event 'bytes' $s.Bytes)
             $s.BytesTotal = [long](Get-MbtGuiProp $Event 'bytesTotal' $s.BytesTotal)
-            $s.Msg = [string](Get-MbtGuiProp $Event 'msg' $s.Msg)
+            $s.Msg = if ($state -eq 'done') { [string](Get-MbtGuiProp $Event 'msg' '') } else { [string](Get-MbtGuiProp $Event 'msg' $s.Msg) }
             if ($state -eq 'done') { Add-MbtGuiLog $Run 'ok' "$($s.Title) done." $at }
             elseif ($state -eq 'failed') { Add-MbtGuiLog $Run 'bad' "$($s.Title) failed. $($s.Msg)" $at }
             elseif ($state -eq 'running' -and $s.Done -eq 0 -and $Run.Log.Count -lt 400) { Add-MbtGuiLog $Run 'run' "$($s.Title) started." $at }
@@ -292,9 +292,27 @@ function Format-MbtGuiStillToDo {
 }
 
 function Format-MbtGuiProgressOf {
-    <# "5 of 1 item", "5 of 1,208 items": the noun agrees with the total. #>
-    param([long]$Done, [long]$Total, [string]$Unit = 'item')
+    <# "5 of 1 item", "5 of 1,208 items": the noun agrees with the total. More done than announced, or -Finished: only what was really done ("1,210 items"). #>
+    param([long]$Done, [long]$Total, [string]$Unit = 'item', [switch]$Finished)
+    if ($Finished) { return (Format-MbtGuiQuantity $(if ($Done -gt 0) { $Done } else { $Total }) $Unit) }
+    if ($Total -le 0 -or $Done -gt $Total) { return (Format-MbtGuiQuantity $Done $Unit) }
     return ('{0} of {1}' -f (Format-MbtGuiCount $Done), (Format-MbtGuiQuantity $Total $Unit))
+}
+
+function Format-MbtGuiFraction {
+    <# "5 / 8", "5 / 8 items" (with -Unit): never more done than the total ("9"); a finished one says only what was done. #>
+    param([long]$Done, [long]$Total, [string]$Unit, [switch]$Finished)
+    $say = { param($n) if ($Unit) { Format-MbtGuiQuantity $n $Unit } else { Format-MbtGuiCount $n } }
+    if ($Finished) { return (& $say $(if ($Done -gt 0) { $Done } else { $Total })) }
+    if ($Total -le 0 -or $Done -gt $Total) { return (& $say $Done) }
+    return ('{0} / {1}' -f (Format-MbtGuiCount $Done), (& $say $Total))
+}
+
+function Format-MbtGuiBytesOf {
+    <# "1.2 GiB of about 3 GiB": the total that Microsoft announces is only about right, so it is never shown as a limit. More than announced, or -Finished: only the real amount. #>
+    param([double]$Bytes, [double]$Total, [switch]$Finished)
+    if ($Finished -or $Total -le 0 -or $Bytes -gt $Total) { return (Format-MbtGuiBytes $Bytes) }
+    return ('{0} of about {1}' -f (Format-MbtGuiBytes $Bytes), (Format-MbtGuiBytes $Total))
 }
 
 function Read-MbtGuiEventTail {

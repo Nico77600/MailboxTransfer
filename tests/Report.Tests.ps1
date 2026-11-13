@@ -119,7 +119,7 @@ Describe 'The HTML report of a job' {
         Set-Content -LiteralPath (Join-Path $dir 'report.csv') -Value 'Kind' -Encoding utf8
         $html = Get-Content -LiteralPath (Write-MbtJobHtmlReport -Folder $dir) -Raw
         $html | Should -Match '<td>Inbox/Projects</td><td>Send the items</td><td><span class="badge warn">partial</span></td><td class="num">30 of 40</td><td class="num">1.1 MiB</td><td>10 items failed</td>'
-        $html | Should -Match '<td>Inbox</td><td>Send the items</td><td><span class="badge ok">done</span></td><td class="num">60 of 60</td>'
+        $html | Should -Match '<td>Inbox</td><td>Send the items</td><td><span class="badge ok">done</span></td><td class="num">60</td>' -Because 'a folder that is done says what was done, not "60 of 60"'
         $html | Should -Match '<td class="mono">engine</td><td>Quarterly report</td><td>The item was refused: too large.</td>'
         $html | Should -Match '<a href="report.csv">Report \(CSV\)</a>'
         $html | Should -Match '<a href="events.jsonl">'
@@ -150,7 +150,7 @@ Describe 'The HTML report of a job' {
     It 'a job that finished clean, one that refused items, one that needs a decision, one that was never ended' {
         $cases = @(
             @{ Name = 'ok'; Result = @{ exit = 0; complete = $true; counts = @{ done = 5; failed = 0 }; next = 'done' }; Text = 'Complete'; Next = 'Nothing is left to do.' }
-            @{ Name = 'refused'; Result = @{ exit = 1; complete = $true; counts = @{ done = 5; refused = 2; failed = 0; report = 'D:\work\not-imported.csv' }; next = 'done'; reason = 'refused-items' }; Text = 'Finished, items refused'; Next = 'Nothing can be run again.' }
+            @{ Name = 'refused'; Result = @{ exit = 1; complete = $true; counts = @{ done = 5; refused = 2; failed = 0; report = 'D:\work\not-imported.csv' }; next = 'done'; reason = 'refused-items' }; Text = 'Finished, items refused'; Next = 'Nothing can be run again' }
             @{ Name = 'decide'; Result = @{ exit = 3; complete = $false; counts = @{ done = 5; unknown = 1 }; next = 'decide' }; Text = 'Needs your decision'; Next = 'Settle the uncertain items' }
             @{ Name = 'signin'; Result = @{ exit = 2; complete = $false; counts = @{ done = 5 }; next = 'signin'; reason = 'signin-required' }; Text = 'Sign-in needed'; Next = 'Sign in again' }
             @{ Name = 'noend'; Result = $null; Text = 'Interrupted'; Next = 'Run the same job again' }
@@ -261,6 +261,143 @@ Describe 'The HTML report of a job' {
             (Get-Content -LiteralPath $path -Raw) | Should -Match '<!doctype html>'
             @(Get-ChildItem -LiteralPath $dir -Filter '*.tmp').Count | Should -Be 0
         } finally { $stream.Dispose() }
+    }
+}
+
+Describe 'The wording of the report' {
+    BeforeAll {
+        function New-ReportOf([string]$Name, [object[]]$Events, [hashtable]$Status = @{}) {
+            $dir = New-JobFolder $Name
+            Write-Status $dir $Status
+            Write-Events $dir $Events
+            return (Get-Content -LiteralPath (Write-MbtJobHtmlReport -Folder $dir) -Raw)
+        }
+        function Get-Cell([string]$Html, [string]$Step, [int]$Column) {
+            $row = [regex]::Match($Html, '<tr><td>' + [regex]::Escape($Step) + '</td>(.*?)</tr>').Groups[1].Value
+            return ([regex]::Matches($row, '<td[^>]*>(.*?)</td>') | ForEach-Object { $_.Groups[1].Value })[$Column]
+        }
+    }
+
+    It 'the card of what to do next says one sentence when there is nothing more to do, and a second one only when it is another sentence' {
+        $cases = @(
+            @{ Name = 'ok'; Result = @{ exit = 0; complete = $true; counts = @{ done = 5 }; next = 'done' }; Paragraphs = 1 }
+            @{ Name = 'warnings-done'; Result = @{ exit = 2; complete = $true; counts = @{ done = 5 }; next = 'done'; reason = 'warnings' }; Paragraphs = 1 }
+            @{ Name = 'refused'; Result = @{ exit = 1; complete = $true; counts = @{ done = 5; refused = 2 }; next = 'done'; reason = 'refused-items' }; Paragraphs = 2 }
+            @{ Name = 'failed'; Result = @{ exit = 1; complete = $false; counts = @{ done = 1 }; next = 'retry' }; Paragraphs = 2 }
+            @{ Name = 'errors'; Result = @{ exit = 1; complete = $false; counts = @{ done = 1 }; next = 'repair'; reason = 'errors' }; Paragraphs = 2 }
+            @{ Name = 'stopped'; Result = @{ exit = 2; complete = $false; counts = @{ done = 1 }; next = 'continue'; reason = 'stopped' }; Paragraphs = 2 }
+            @{ Name = 'signin'; Result = @{ exit = 2; complete = $false; counts = @{ done = 1 }; next = 'signin'; reason = 'signin-required' }; Paragraphs = 2 }
+            @{ Name = 'partial'; Result = @{ exit = 2; complete = $false; counts = @{ done = 1 }; next = 'continue' }; Paragraphs = 2 }
+            @{ Name = 'decide'; Result = @{ exit = 3; complete = $false; counts = @{ done = 1; unknown = 1 }; next = 'decide' }; Paragraphs = 2 }
+            @{ Name = 'other'; Result = @{ exit = 9; complete = $false; counts = @{ done = 1 }; next = 'retry' }; Paragraphs = 2 }
+            @{ Name = 'noend'; Result = $null; Paragraphs = 2 }
+        )
+        foreach ($c in $cases) {
+            $events = @(@{ at = 0; e = 'plan'; steps = @(@{ id = 'send'; title = 'Send the items' }) }, @{ at = 2; e = 'step'; id = 'send'; state = 'running'; done = 1; total = 5 })
+            if ($c.Result) { $r = @{ at = 9; e = 'result' }; foreach ($k in $c.Result.Keys) { $r[$k] = $c.Result[$k] }; $events += $r }
+            $html = New-ReportOf "next-$($c.Name)" $events
+            $card = [regex]::Match($html, '<section class="card next[^"]*"><h2>What to do next</h2>(.*?)</section>').Groups[1].Value
+            $paragraphs = @([regex]::Matches($card, '<p>(?:<strong>)?(.*?)(?:</strong>)?</p>') | ForEach-Object { $_.Groups[1].Value })
+            $paragraphs.Count | Should -Be $c.Paragraphs -Because $c.Name
+            @($paragraphs | Select-Object -Unique).Count | Should -Be $paragraphs.Count -Because "no sentence of '$($c.Name)' is said twice"
+            $card | Should -Not -Match 'Nothing is left to do\.[\s\S]*nothing is left to do' -Because $c.Name
+        }
+    }
+
+    It 'the header says the task, never the title again' {
+        $html = New-ReportOf 'task-export' @(@{ at = 0; e = 'result'; exit = 0; complete = $true; counts = @{ done = 0 }; next = 'done' }) @{ task = 'export'; mode = 'Export'; title = 'Export - adele@contoso.com' }
+        $html | Should -Match '<span>Task</span>Export</div>'
+        $html | Should -Not -Match '<span>Task</span>Export -'
+        $html | Should -Match '<title>Export - adele@contoso.com</title>' -Because 'the title stays the title'
+        Get-MbtReportTaskName -Task 'export' -Mode 'Export' | Should -Be 'Export'
+        Get-MbtReportTaskName -Task 'export' -Mode 'ExportPst' | Should -Be 'Export (PST)'
+        Get-MbtReportTaskName -Task 'import' -Mode 'ImportEml' | Should -Be 'Import (EML files)'
+        Get-MbtReportTaskName -Task 'copy' -Mode 'ExportPst' | Should -Be 'Copy (PST)'
+        Get-MbtReportTaskName -Task 'repair' -Mode 'RepairPst' | Should -Be 'Repair'
+        Get-MbtReportTaskName -Task 'IMPORT' -Mode 'Import' | Should -Be 'Import'
+        Get-MbtReportTaskName -Task 'export-plan' -Mode 'Export' | Should -Be 'Export (plan check)'
+        Get-MbtReportTaskName -Task '' -Mode 'ImportPst' | Should -Be 'Import (PST)'
+        Get-MbtReportTaskName -Task '' -Mode '' | Should -BeNullOrEmpty
+    }
+
+    It 'a step that is done says only what it really did, never more than the total that was announced' {
+        $events = @(
+            @{ at = 0; e = 'plan'; steps = @(@{ id = 'download'; title = 'Download the items' }) }
+            @{ at = 1; e = 'step'; id = 'download'; state = 'running'; done = 0; total = 53; bytes = 0; bytesTotal = 8320848 }
+            @{ at = 3; e = 'step'; id = 'download'; state = 'running'; done = 40; total = 53; bytes = 5242880; bytesTotal = 8320848 }
+            @{ at = 5; e = 'step'; id = 'download'; state = 'done'; done = 53; total = 53; bytes = 8620875; bytesTotal = 8320848 }
+            @{ at = 5; e = 'result'; exit = 0; complete = $true; counts = @{ done = 53; bytes = 8620875 }; next = 'done' }
+        )
+        $html = New-ReportOf 'bytes-done' $events
+        Get-Cell $html 'Download the items' 4 | Should -Be '53'
+        Get-Cell $html 'Download the items' 5 | Should -Be '8.2 MiB'
+        $html | Should -Not -Match '8\.2 MiB of'
+        $html | Should -Not -Match '53 of 53'
+
+        $open = New-ReportOf 'bytes-open' ($events[0..2])
+        Get-Cell $open 'Download the items' 4 | Should -Be '40 of 53'
+        Get-Cell $open 'Download the items' 5 | Should -Be '5.0 MiB of about 7.9 MiB'
+
+        $over = New-ReportOf 'bytes-over' @($events[0], @{ at = 3; e = 'step'; id = 'download'; state = 'running'; done = 60; total = 53; bytes = 9000000; bytesTotal = 8320848 })
+        Get-Cell $over 'Download the items' 4 | Should -Be '60' -Because 'more than announced: only what was done'
+        Get-Cell $over 'Download the items' 5 | Should -Be '8.6 MiB'
+    }
+
+    It 'a folder that was announced with more or fewer items than it holds is never shown with more done than the total' {
+        $events = @(
+            @{ at = 0; e = 'plan'; steps = @(@{ id = 'download'; title = 'Download the items' }) }
+            @{ at = 1; e = 'object'; step = 'download'; key = 'Inbox'; state = 'running'; done = 12; total = 10 }
+            @{ at = 1; e = 'object'; step = 'download'; key = 'Sent'; state = 'running'; done = 3; total = 10 }
+            @{ at = 1; e = 'object'; step = 'download'; key = 'Drafts'; state = 'done'; done = 7; total = 5 }
+        )
+        $html = New-ReportOf 'folder-over' $events
+        $html | Should -Match '<td>Inbox</td>.*?<td class="num">12</td>'
+        $html | Should -Match '<td>Sent</td>.*?<td class="num">3 of 10</td>'
+        $html | Should -Match '<td>Drafts</td>.*?<td class="num">7</td>'
+        $html | Should -Not -Match '12 of 10|7 of 5'
+        Format-MbtReportProgress 5 0 | Should -Be '5'
+        Format-MbtReportProgress 0 0 | Should -Be ''
+        Format-MbtReportProgress 0 9 -Finished | Should -Be '9'
+        Format-MbtReportProgress 1048576 2097152 -Bytes -About | Should -Be '1.0 MiB of about 2.0 MiB'
+    }
+
+    It 'a step that is done keeps no progress text: its own final message only, and a running step shows its progress' {
+        $events = @(
+            @{ at = 0; e = 'plan'; steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items' }, @{ id = 'send'; title = 'Send the items' }) }
+            @{ at = 1; e = 'step'; id = 'tree'; state = 'running'; msg = 'Measuring 1 folder the service gives no size for: 1 done' }
+            @{ at = 2; e = 'step'; id = 'tree'; state = 'done' }
+            @{ at = 3; e = 'step'; id = 'list'; state = 'running'; msg = 'Counting' }
+            @{ at = 4; e = 'step'; id = 'list'; state = 'done'; msg = 'Each item is checked as it arrives.' }
+            @{ at = 5; e = 'step'; id = 'send'; state = 'running'; msg = 'Sending 4 of 9' }
+        )
+        $html = New-ReportOf 'msg-done' $events
+        Get-Cell $html 'Read the folder tree' 6 | Should -Be ''
+        Get-Cell $html 'List the items' 6 | Should -Be 'Each item is checked as it arrives.'
+        Get-Cell $html 'Send the items' 6 | Should -Be 'Sending 4 of 9'
+        $chrono = $html.Substring($html.IndexOf('id="chrono"', [StringComparison]::Ordinal))
+        $chrono | Should -Match 'Measuring 1 folder the service gives no size for: 1 done' -Because 'the progress stays in the chronology'
+    }
+
+    It 'a number of times or of rows agrees with its noun' {
+        Format-MbtReportQuantity 1 'time' | Should -Be '1 time'
+        Format-MbtReportQuantity 3 'time' | Should -Be '3 times'
+        Format-MbtReportQuantity 1200 'folder' | Should -Be '1,200 folders'
+        $html = New-ReportOf 'network-once' @(
+            @{ at = 0; e = 'plan'; steps = @(@{ id = 'send'; title = 'Send' }) }
+            @{ at = 5; e = 'wait'; reason = 'network'; seconds = 30; count = 1; waited = 30 }
+            @{ at = 40; e = 'result'; exit = 0; complete = $true; counts = @{ done = 1 }; next = 'done' }
+        )
+        $html | Should -Match 'tried again \(1 time, 30 s in all\)'
+        $html | Should -Not -Match '\(s\)|1 times'
+        $events = @(@{ at = 0; e = 'plan'; steps = @(@{ id = 'send'; title = 'Send' }) })
+        foreach ($i in 1..2) { $events += @{ at = $i; e = 'object'; step = 'send'; key = "Folder $i"; state = 'done'; done = 1; total = 1 } }
+        $events += @{ at = 9; e = 'result'; exit = 0; complete = $true; counts = @{ done = 2 }; next = 'done' }
+        $dir = New-JobFolder 'caption-one'
+        Write-Status $dir @{}
+        Write-Events $dir $events
+        $model = Get-MbtJobReportModel -Folder $dir -MaxFolders 1
+        $page = ConvertTo-MbtJobReportHtml -Model $model
+        $page | Should -Match '1 more folder is in events.jsonl'
     }
 }
 

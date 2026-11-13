@@ -723,3 +723,60 @@ Describe 'Disk check sentences of the To page' {
         $text | Should -Match 'Not enough disk space on \$drive\.'
     }
 }
+
+Describe 'What a step that is done shows' {
+    BeforeAll { . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') }
+
+    It 'a step that is done without a message of its own keeps none of its progress text, and keeps a real final message' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }, [pscustomobject]@{ id = 'list'; title = 'List the items' }, [pscustomobject]@{ id = 'bad'; title = 'Write' }) }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = 'Measuring 1 folder the service gives no size for: 1 done' }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; done = 1 }
+        $r.Steps[0].Msg | Should -Be 'Measuring 1 folder the service gives no size for: 1 done' -Because 'a running step without a message keeps what it said'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'done' }
+        $r.Steps[0].Msg | Should -Be ''
+        Get-MbtGuiStepSub $r.Steps[0] | Should -Be '' -Because 'nothing is left to say'
+        Add-Evt $r step -Fields @{ id = 'list'; state = 'running'; msg = 'Counting' }
+        Add-Evt $r step -Fields @{ id = 'list'; state = 'done'; msg = '4,443 folders read' }
+        $r.Steps[1].Msg | Should -Be '4,443 folders read'
+        Get-MbtGuiStepSub $r.Steps[1] | Should -Be '4,443 folders read'
+        Add-Evt $r step -Fields @{ id = 'bad'; state = 'running'; msg = 'Writing part 2' }
+        Add-Evt $r step -Fields @{ id = 'bad'; state = 'failed' }
+        $r.Steps[2].Msg | Should -Be 'Writing part 2' -Because 'a step that failed keeps where it was'
+    }
+
+    It 'the line of a step never says more done than the total, and a step that is done says what it did' {
+        Get-MbtGuiStepSub @{ State = 'running'; Msg = ''; Done = 5; Total = 8 } | Should -Be '5 / 8 items'
+        Get-MbtGuiStepSub @{ State = 'running'; Msg = ''; Done = 9; Total = 8 } | Should -Be '9 items'
+        Get-MbtGuiStepSub @{ State = 'running'; Msg = ''; Done = 1; Total = 1 } | Should -Be '1 / 1 item'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 53; Total = 53 } | Should -Be '53 items'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 60; Total = 53 } | Should -Be '60 items'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 0; Total = 4 } | Should -Be '4 items'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 0; Total = 0 } | Should -Be ''
+    }
+
+    It 'a number that is done is shown with its total only while it is below it; a size is only about right' {
+        Format-MbtGuiProgressOf 5 8 | Should -Be '5 of 8 items'
+        Format-MbtGuiProgressOf 9 8 | Should -Be '9 items'
+        Format-MbtGuiProgressOf 1 0 | Should -Be '1 item'
+        Format-MbtGuiProgressOf 8 8 -Finished | Should -Be '8 items'
+        Format-MbtGuiFraction 5 8 | Should -Be '5 / 8'
+        Format-MbtGuiFraction 12 10 | Should -Be '12'
+        Format-MbtGuiFraction 10 10 -Finished | Should -Be '10'
+        Format-MbtGuiFraction 0 10 -Finished | Should -Be '10'
+        Format-MbtGuiBytesOf 5MB 8MB | Should -Be '5 MiB of about 8 MiB'
+        Format-MbtGuiBytesOf 9MB 8MB | Should -Be '9 MiB'
+        Format-MbtGuiBytesOf 8.2MB 7.9MB -Finished | Should -Be '8 MiB'
+        Format-MbtGuiBytesOf 3MB 0 | Should -Be '3 MiB'
+    }
+
+    It 'the run model keeps what a download really did when the announced size was smaller' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'download'; title = 'Download the items' }) }
+        Add-Evt $r step -Fields @{ id = 'download'; state = 'running'; done = 0; total = 53; bytes = 0; bytesTotal = 8320848 }
+        Add-Evt $r step -Fields @{ id = 'download'; state = 'done'; done = 53; total = 53; bytes = 8620875; bytesTotal = 8320848 }
+        Format-MbtGuiBytesOf $r.Bytes $r.BytesTotal -Finished | Should -Be '8 MiB'
+        Format-MbtGuiBytesOf $r.Bytes $r.BytesTotal | Should -Be '8 MiB' -Because 'more than announced'
+        Get-MbtGuiStepSub $r.Steps[0] | Should -Be '53 items'
+    }
+}
