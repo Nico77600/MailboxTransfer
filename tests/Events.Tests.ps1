@@ -554,6 +554,7 @@ Describe 'Invoke-MailboxTransfer.ps1 -EventsFile (child pwsh)' {
         $x.Events[1].exit | Should -Be 0; $x.Events[1].complete | Should -BeTrue; $x.Events[1].next | Should -Be 'done'
         $s = Get-Content (Join-Path (Split-Path $ev) 'status.json') -Raw | ConvertFrom-Json
         $s.state | Should -Be 'complete'; $s.jobId | Should -Be 'st-1'; $s.exitCode | Should -Be 0
+        (Join-Path (Split-Path $ev) 'report.html') | Should -Not -Exist -Because 'the state of a store is not a job with a report'
         $x.Output | Should -Match 'the C# engine compiles'
     }
 
@@ -572,6 +573,14 @@ Describe 'Invoke-MailboxTransfer.ps1 -EventsFile (child pwsh)' {
         $res.e | Should -Be 'result'; $res.exit | Should -Be 0; $res.complete | Should -BeTrue; $res.reason | Should -Be 'clean'
         $res.counts.errors | Should -Be 0
         (Get-Content (Join-Path (Split-Path $ev) 'status.json') -Raw | ConvertFrom-Json).state | Should -Be 'complete'
+        $status = Get-Content (Join-Path (Split-Path $ev) 'status.json') -Raw | ConvertFrom-Json
+        $status.source | Should -Be $script:Good -Because 'the report says what the job read'
+        $report = Join-Path (Split-Path $ev) 'report.html'
+        $report | Should -Exist
+        $x.Output | Should -Match ('(?m)^\s+\S*\s*Report\s+' + [regex]::Escape($report))
+        $html = Get-Content -LiteralPath $report -Raw
+        $html | Should -Match '<div class="tile-value">Clean</div>'
+        $html | Should -Match 'Check the file'
     }
 
     It 'Mode CheckPst on a damaged PST: exit code of the checker, one item event per finding code, next = repair, the file untouched' {

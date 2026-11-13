@@ -602,6 +602,11 @@ function Write-MbtRunSummary {
     $values.Duration = @('Clock', (Format-MbtDuration $runClock.Elapsed.TotalSeconds))
     if ($script:next -and $script:next -notin 'done') { $values.Next = @('Plan', [string]$script:next) }
     if ($logPath) { $values.Log = @('Log', $logPath) }
+    # the report of the job (steps and chronology, waits, warnings, folders): one HTML file in the job folder, written from the events just written
+    if ($EventsFile -and -not $dryRun -and $Mode -in 'Export', 'ExportPst', 'Import', 'ImportPst', 'ExportEml', 'ImportEml', 'CheckPst', 'RepairPst') {
+        try { $values.Report = @('Report', [string](Write-MbtJobHtmlReport -Folder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent))) }
+        catch { Write-MbtItem WARN "the HTML report could not be written: $($_.Exception.Message)" }
+    }
     Write-MbtSummary -Title $title -Values $values -Status $status
 }
 
@@ -614,7 +619,17 @@ if ($EventsFile) {
         'ImportPst' { "Import from PST - $UserPrincipalName" } 'ExportEml' { "Export EML files - $EmlPath" } 'ImportEml' { "Import EML files - $UserPrincipalName" }
         'CheckPst' { "Check - $Path" } 'RepairPst' { "Repair - $Path" } default { $Mode }
     }
-    Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import') { $StorePath })
+    $mailboxText = if ($MailboxId) { $MailboxId } else { $UserPrincipalName }
+    $mailboxText = ($mailboxText + $(if ($Mailbox -and $Mailbox -ne 'Primary') { " ($Mailbox)" } else { '' })).Trim()
+    $sourceText = switch ($Mode) {
+        'Export' { $mailboxText } 'ExportPst' { $(if ($PstPath) { $PstPath } else { $StorePath }) } 'Import' { $StorePath } 'ImportPst' { $PstPath } 'ExportEml' { $(if ($PstPath) { $PstPath } elseif ($StorePath) { $StorePath } else { $mailboxText }) }
+        'ImportEml' { $EmlPath } 'CheckPst' { $Path } 'RepairPst' { $Path } default { '' }
+    }
+    $destinationText = switch ($Mode) {
+        'Export' { $StorePath + $(if ($OutputPst) { ", PST files: $OutputPst" } else { '' }) } 'ExportPst' { $OutputPst } 'Import' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) }
+        'ImportPst' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'ExportEml' { $EmlPath } 'ImportEml' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'RepairPst' { $Destination } default { '' }
+    }
+    Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import') { $StorePath }) -Source ([string]$sourceText) -Destination ([string]$destinationText)
     $steps = switch ($Mode) {
         'Export' {
             @(@{ Id = 'tree'; Title = 'Read the folder tree' }, @{ Id = 'list'; Title = 'List the items you chose' }, @{ Id = 'download'; Title = 'Download the items' }, @{ Id = 'verify'; Title = 'Check the downloads' }) +

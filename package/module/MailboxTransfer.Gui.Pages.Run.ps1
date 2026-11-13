@@ -756,8 +756,7 @@ function New-MbtGuiReportsCard {
         else { Show-MbtGuiDialog -Title 'Nothing to open here' -Body 'No file was written: this is the demonstration.' -Buttons @(@{ Text = 'Close'; Accent = $true }) }
     }
     $folder = if ($g.Job) { $g.Job.Folder } else { $null }
-    $report = @($g.Reports | Where-Object { $_ -like '*.csv' } | Select-Object -First 1)
-    $reportPath = if ($report.Count) { $report[0] } elseif ($folder) { [IO.Path]::Combine($folder, 'report.csv') } else { $null }
+    $reportPath = Get-MbtGuiReportPath -Reports @($g.Reports) -Folder $folder
     $logPath = if ($folder) { [IO.Path]::Combine($folder, 'events.jsonl') } else { $null }
     $dir = switch ($s.Task) { 'repair' { Split-Path $s.RpDest -Parent } 'import' { $folder } default { $s.OutFolder } }
     $bar = [Windows.Controls.WrapPanel]::new()

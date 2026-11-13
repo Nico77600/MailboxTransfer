@@ -110,14 +110,14 @@ function Get-MbtIconSet {
     switch ($Style) {
         'Emoji' { return @{
                 Logo = & $u 0x1F4EC; Ok = & $u 0x2705; Warn = (& $u 0x26A0) + [char]0xFE0F; Fail = & $u 0x274C; Info = & $u 0x1F539; Skip = & $u 0x23E9
-                Plan = & $u 0x1F50E; Mode = & $u 0x1F3AF; Store = & $u 0x1F4BE; Folder = & $u 0x1F4C1; Log = & $u 0x1F4DD; Done = & $u 0x1F389; Clock = & $u 0x23F3
+                Plan = & $u 0x1F50E; Mode = & $u 0x1F3AF; Store = & $u 0x1F4BE; Folder = & $u 0x1F4C1; Log = & $u 0x1F4DD; Done = & $u 0x1F389; Clock = & $u 0x23F3; Report = & $u 0x1F4CA
             } }
         'Symbols' { return @{
                 Logo = & $u 0x2666; Ok = & $u 0x221A; Warn = & $u 0x25B2; Fail = & $u 0x00D7; Info = & $u 0x2022; Skip = & $u 0x00BB
-                Plan = & $u 0x25BA; Mode = & $u 0x25D9; Store = & $u 0x25A0; Folder = & $u 0x2302; Log = & $u 0x00B6; Done = & $u 0x221A; Clock = & $u 0x25CB
+                Plan = & $u 0x25BA; Mode = & $u 0x25D9; Store = & $u 0x25A0; Folder = & $u 0x2302; Log = & $u 0x00B6; Done = & $u 0x221A; Clock = & $u 0x25CB; Report = & $u 0x2261
             } }
         default { return @{
-                Logo = '*'; Ok = '+'; Warn = '!'; Fail = 'x'; Info = '-'; Skip = '>'; Plan = '?'; Mode = 'o'; Store = '#'; Folder = '>'; Log = '='; Done = '*'; Clock = '~'
+                Logo = '*'; Ok = '+'; Warn = '!'; Fail = 'x'; Info = '-'; Skip = '>'; Plan = '?'; Mode = 'o'; Store = '#'; Folder = '>'; Log = '='; Done = '*'; Clock = '~'; Report = '='
             } }
     }
 }
@@ -3309,6 +3309,8 @@ function Get-MbtPstPreview {
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Eml.ps1')
 # Events of a job (JSON lines), stop request, keep awake, job status, capabilities.
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Events.ps1')
+# The HTML report of a job: written at the end of every job from events.jsonl and status.json of the job folder.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.Report.ps1')
 
 # An engine left in this process by an older build of the module is refused here, before any network or store operation.
 [void](Assert-MbtEngineCurrent -Name Engine -Root $script:ToolRoot)
@@ -3330,4 +3332,5 @@ Export-ModuleMember -Function @(
     'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
     'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
+    'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel'
 )

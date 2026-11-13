@@ -395,7 +395,7 @@ To stop on purpose, click **Stop and keep progress** (bottom left). A question a
 | **Needs a decision** | amber | An item needs your choice (chapter 5, step 7). |
 | **Error** | red | The job stopped. Read the message. Your files are kept. |
 
-Under the result, **What to do next** offers buttons for the logical next step: after a finished export, **Import into a mailbox** and **How to open the PST in Outlook**; after a stopped one, **Continue**. **The same from the command line** shows the commands that were run, with **Copy**. **Reports and log** opens the report, the log or the folder. **Start another task** (bottom right) goes back to the Task page.
+Under the result, **What to do next** offers buttons for the logical next step: after a finished export, **Import into a mailbox** and **How to open the PST in Outlook**; after a stopped one, **Continue**. **The same from the command line** shows the commands that were run, with **Copy**. **Reports and log** opens the report, the log or the folder. The report is a page for your browser, **report.html**, written at the end of every job: the result, the numbers, every step with its start, end and duration, what happened in time order (waits for Microsoft, sleeps of the PC, warnings, errors), one row for each folder, and what to do next. It needs no network and can be sent as it is. **report.csv** stays next to it for a spreadsheet; a job made by an older version has only the CSV. **Start another task** (bottom right) goes back to the Task page.
 
 ![The end of an export: complete. 1: the result in words, and the files written. 2: what to do next. 3: the same from the command line](images/console-done-export-complete-light.png)
 

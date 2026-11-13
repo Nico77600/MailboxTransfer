@@ -39,6 +39,9 @@ function Open-MbtEventLog {
         [string]$Title,
         [string]$Mode,
         [string]$Store,
+        # what the job reads from and writes to, in a few words: the report of the job says it (status.json: source, destination)
+        [string]$Source,
+        [string]$Destination,
         # period of the heartbeat that detects a sleep (milliseconds, 0 = none)
         [int]$HeartbeatMs = 5000
     )
@@ -49,7 +52,7 @@ function Open-MbtEventLog {
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
     $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false }
     $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store
+    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination
 }
 
 function Close-MbtEventLog {
@@ -215,19 +218,19 @@ function Write-MbtJobStatus {
     .SYNOPSIS
         Writes (or updates) status.json in a job folder: what the Continue list of the console reads.
     .DESCRIPTION
-        Fields: v, jobId, task, title, mode, store, state (running | stopped | resumable | needs-decision | complete | error), exitCode,
+        Fields: v, jobId, task, title, mode, store, source, destination, state (running | stopped | resumable | needs-decision | complete | error), exitCode,
         counts, next, reason, started, updated, lastEvent, pid. A call updates the fields it is given and keeps the others.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$JobFolder,
         [Parameter(Mandatory)][ValidateSet('running', 'stopped', 'resumable', 'needs-decision', 'complete', 'error')][string]$State,
-        [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store,
+        [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store, [string]$Source, [string]$Destination,
         [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason
     )
     if (-not (Test-Path -LiteralPath $JobFolder)) { New-Item -ItemType Directory -Path $JobFolder -Force | Out-Null }
     $file = Join-Path $JobFolder 'status.json'
-    $s = [ordered]@{ v = 1; jobId = $null; task = $null; title = $null; mode = $null; store = $null; state = $null; exitCode = $null; counts = @{}; next = $null; reason = $null; started = $null; updated = $null; lastEvent = $null; pid = $PID }
+    $s = [ordered]@{ v = 1; jobId = $null; task = $null; title = $null; mode = $null; store = $null; source = $null; destination = $null; state = $null; exitCode = $null; counts = @{}; next = $null; reason = $null; started = $null; updated = $null; lastEvent = $null; pid = $PID }
     if (Test-Path -LiteralPath $file) {
         try { $old = Read-MbtJsonFile -Path $file -AsHashtable; foreach ($k in $old.Keys) { $s[$k] = $(if ($old[$k] -is [datetime]) { $old[$k].ToUniversalTime().ToString('yyyy-MM-dd\THH:mm:ss.fff\Z') } else { $old[$k] }) } } catch { }
     }
@@ -235,7 +238,7 @@ function Write-MbtJobStatus {
     if (-not $s.started) { $s.started = $now }
     $s.state = $State; $s.updated = $now; $s.pid = $PID
     $s.lastEvent = if ($script:EventLog) { [MailboxTransfer.EventLog]::Iso($script:EventLog.LastEventUtc) } else { $now }
-    foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
+    foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('source', $Source), @('destination', $Destination), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
     if ($Counts) { $s.counts = $Counts }
     if ($PSBoundParameters.ContainsKey('ExitCode') -and $null -ne $ExitCode) { $s.exitCode = [int]$ExitCode }
     $json = $s | ConvertTo-Json -Depth 6

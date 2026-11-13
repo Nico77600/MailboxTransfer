@@ -17,6 +17,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 - **An export of a few folders no longer reads the whole mailbox tree**: the folders chosen, those below them and the ones above them are read (9 s instead of 77 s for 3 folders of an archive of 4,443 folders). The store gets the same folders and items. Recoverable Items and auxiliary archives still read the whole tree.
 
 ### Added
+- **An HTML report with a chronology** at the end of every job (`report.html` in the job folder, path on the `Report` line of the summary card): the result, the numbers, each step with its start, end and duration, the waits for Microsoft, the sleeps of the PC, the warnings and the errors in time order, one row for each folder and the next step. One file, no network. **Open the report** opens it; `report.csv` stays, and a job of an older version still opens its CSV.
 - **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.
 
 ### Fixed

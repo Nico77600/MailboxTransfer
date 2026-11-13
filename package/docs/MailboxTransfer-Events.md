@@ -101,10 +101,12 @@ Export `done`, `failed`, `deferred`, `bytes` (+ `parts`, `itemsWritten` with PST
 Written in the job folder at the start (`running`), refreshed while the job runs (at most every 15 seconds, when a step or folder event is written: `updated`, `lastEvent` and, when the counting step gives them, `counts.done` and `counts.total`), and updated at the end (the result closes it: nothing changes it afterwards); what the **Continue** list reads (`Get-MbtJob -WorkFolder <dir>` lists `<dir>\jobs\*\status.json`, newest first).
 
 ```json
-{ "v": 1, "jobId": "imp-7c1e", "task": "import", "title": "Import - adele@contoso.com", "mode": "Import", "store": "D:\\MailboxTransfer\\stores\\adele",
+{ "v": 1, "jobId": "imp-7c1e", "task": "import", "title": "Import - adele@contoso.com", "mode": "Import", "store": "D:\\MailboxTransfer\\stores\\adele", "source": "D:\\MailboxTransfer\\stores\\adele", "destination": "adele@contoso.com, folder Restore",
   "state": "resumable", "exitCode": 2, "counts": { "done": 5120, "pending": 4738 }, "next": "continue", "reason": "stopped",
   "started": "2026-11-09T14:02:11.000Z", "updated": "2026-11-09T22:41:03.000Z", "lastEvent": "2026-11-09T22:41:03.000Z", "pid": 10432 }
 ```
+
+`source` and `destination` say in a few words what the job reads from and writes to (the report of the job shows them).
 
 `state`: `running`, `stopped` (stop request), `resumable` (exit 2), `needs-decision` (exit 3), `complete` (exit 0, and a check that ended, whatever it found), `error` (exit 1). `Get-MbtJob` adds `EffectiveState`: a job `running` whose process is gone (crash, power loss, killed) is `resumable` with `Interrupted = $true`; `Alive` is true when the process is still there ("running elsewhere").
 
@@ -114,3 +116,7 @@ Written in the job folder at the start (`running`), refreshed while the job runs
 - **Sleep**: a `slept` event after the wake-up. The engine retries the requests that timed out; the items whose answer was lost become Unknown and are looked up (`item` / `decision` events).
 - **Sign-in**: with `-NoPrompt` a missing or expired sign-in ends the job resumable (exit 2, `signin-required`); the same error in the middle of a run has the same result.
 - **Other errors**: an `error` event with the plain sentence and the raw message in `tech`, then `result` with `exit` 1; the exception is thrown as before (the script's exit code is 1).
+
+## report.html
+
+Every job of Export, ExportPst, Import, ImportPst, ExportEml, ImportEml, CheckPst and RepairPst that has an events file ends by writing **report.html** in the job folder (`Write-MbtJobHtmlReport`, from `events.jsonl` and `status.json`; the console writes it again beside report.csv and report.json, which it then links). It holds the header (task, source, destination, started, finished, duration, result), tiles (the counts of the result, data size, PST files, throttling waits), what to do next, the error, a picture and a table of the **chronology** (each step with its start, end, duration, state and message; waits for the service, sleeps of the PC, warnings and errors in time order; waits that follow each other are one row), one row for each folder, items that need a look and warnings. Every text of a job is HTML-encoded; the page needs no network and the same data is in it as JSON (`script` element `mbt-report-data`). A job with no `result` event is reported as interrupted. A `-WhatIf` run, `Status` and `Browse` write none. The path is on the line `Report` of the summary card.

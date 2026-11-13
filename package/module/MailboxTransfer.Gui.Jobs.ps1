@@ -17,6 +17,9 @@
 #>
 Set-StrictMode -Version Latest
 
+# The HTML report of a job (the same writer as the command line: report.html in the job folder).
+. (Join-Path $PSScriptRoot 'MailboxTransfer.Report.ps1')
+
 function New-MbtGuiJobId { return -join ((1..4) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] }) }
 
 function New-MbtGuiJobFolder {
@@ -494,8 +497,8 @@ function ConvertTo-MbtGuiCsvRow {
 
 function Write-MbtGuiRunReport {
     <#
-        The report of a finished run, CSV and JSON (an HTML report is for later): report.json and report.csv in the job folder; for a repair also
-        <new file>.repair-report.csv / .json next to the new file. Returns the paths written.
+        The report of a finished run: report.json and report.csv in the job folder, and report.html (the chronology of the job, written from its events.jsonl, which links the CSV and the JSON);
+        for a repair also <new file>.repair-report.csv / .json next to the new file. Returns the paths written.
     #>
     param([Parameter(Mandatory)]$Run, [Parameter(Mandatory)][string]$Folder, [string]$Task, [string]$RepairDestination)
     $null = New-Item -ItemType Directory -Force -Path $Folder
@@ -522,6 +525,27 @@ function Write-MbtGuiRunReport {
         $rows | ConvertTo-MbtGuiCsvRow | Export-Csv -LiteralPath $t.Csv -NoTypeInformation -Encoding utf8
         $written.Add($t.Json); $written.Add($t.Csv)
     }
+    if (Test-Path -LiteralPath (Join-Path $Folder 'events.jsonl') -PathType Leaf) {
+        try { $written.Add((Write-MbtJobHtmlReport -Folder $Folder)) } catch { Write-Verbose "The HTML report could not be written: $($_.Exception.Message)" }
+    }
     return $written.ToArray()
+}
+
+function Get-MbtGuiReportPath {
+    <#
+        The report the Done page opens: report.html when the job has one (written by the command line at the end of the job, and again by the console beside the CSV), else report.csv
+        (a job of an older version has only the CSV). -Reports are the files the console wrote for this run, -Folder the job folder. Null without either.
+    #>
+    param([string[]]$Reports = @(), [string]$Folder)
+    $html = @($Reports | Where-Object { $_ -like '*.html' } | Select-Object -First 1)
+    if ($html.Count -and (Test-Path -LiteralPath $html[0] -PathType Leaf)) { return $html[0] }
+    if ($Folder) {
+        $inFolder = [IO.Path]::Combine($Folder, 'report.html')
+        if (Test-Path -LiteralPath $inFolder -PathType Leaf) { return $inFolder }
+    }
+    $csv = @($Reports | Where-Object { $_ -like '*.csv' } | Select-Object -First 1)
+    if ($csv.Count) { return $csv[0] }
+    if ($Folder) { return [IO.Path]::Combine($Folder, 'report.csv') }
+    return $null
 }
 
