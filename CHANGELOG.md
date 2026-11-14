@@ -18,6 +18,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 
 ### Added
 - **An HTML report with a chronology** at the end of every job (`report.html` in the job folder, path on the `Report` line of the summary card): the result, the numbers, each step with its start, end and duration, the waits for Microsoft, the sleeps of the PC, the warnings and the errors in time order, one row for each folder and the next step. One file, no network. **Open the report** opens it; `report.csv` stays, and a job of an older version still opens its CSV.
+- **The report of a very large job stays small and quick**: the folders and the chronology are capped at 2,000 rows each (the folders that are not done come first), the page says how many rows were left out and where they are, and a job of 50,000 folders and 195,000 events is reported in under a minute in a page of about 1 MB.
 - **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.
 
 ### Fixed

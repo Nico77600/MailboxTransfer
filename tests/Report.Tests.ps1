@@ -455,3 +455,112 @@ Describe 'The shipped template' {
         (Get-Content -LiteralPath $path -Raw) | Should -Match '<h1>Import - adele@contoso.com</h1>'
     }
 }
+
+Describe 'The report of a very large job' {
+    BeforeAll {
+        # events.jsonl of a large export, written in one go: a plan, a step, a pair of folder events for each folder (the last three fail), warnings, waits and notes, a result
+        function New-LargeJob([string]$Name, [int]$Folders, [int]$Warnings, [int]$Waits, [switch]$WithCsv) {
+            $dir = New-JobFolder $Name
+            $writer = [IO.StreamWriter]::new((Join-Path $dir 'events.jsonl'), $false, [Text.UTF8Encoding]::new($false))
+            $at = 0.0
+            $stamp = { param([double]$S) $script:T0.AddSeconds($S).ToString('yyyy-MM-dd\THH:mm:ss.fff\Z') }
+            try {
+                $writer.WriteLine('{"v":1,"t":"' + (& $stamp 0) + '","e":"plan","job":"big-0001","task":"export","mode":"Export","steps":[{"id":"download","title":"Download the items"}]}')
+                $writer.WriteLine('{"v":1,"t":"' + (& $stamp 1) + '","e":"step","id":"download","state":"running","done":0,"total":1000000}')
+                for ($i = 0; $i -lt $Folders; $i++) {
+                    $at += 0.5
+                    $failed = $i -ge $Folders - 3
+                    $writer.WriteLine('{"v":1,"t":"' + (& $stamp $at) + '","e":"object","step":"download","key":"Folder ' + $i + '","state":"running","done":0,"total":10}')
+                    $writer.WriteLine('{"v":1,"t":"' + (& $stamp ($at + 0.2)) + '","e":"object","step":"download","key":"Folder ' + $i + '","state":"' + $(if ($failed) { 'failed' } else { 'done' }) + '","done":10,"total":10,"bytes":' + ($i * 100) + '}')
+                }
+                for ($i = 0; $i -lt $Warnings; $i++) { $at += 0.7; $writer.WriteLine('{"v":1,"t":"' + (& $stamp $at) + '","e":"warn","code":"engine","step":"download","key":"Item ' + $i + '","msg":"The item ' + $i + ' was refused: too large."}') }
+                for ($i = 0; $i -lt $Waits; $i++) {
+                    $at += 3; $writer.WriteLine('{"v":1,"t":"' + (& $stamp $at) + '","e":"wait","reason":"throttle","seconds":2,"count":' + ($i + 1) + ',"waited":' + (2 * ($i + 1)) + '}')
+                    $at += 1; $writer.WriteLine('{"v":1,"t":"' + (& $stamp $at) + '","e":"info","msg":"Went on ' + $i + '"}')
+                }
+                $writer.WriteLine('{"v":1,"t":"' + (& $stamp ($at + 5)) + '","e":"result","exit":0,"complete":true,"counts":{"done":123456,"failed":3},"next":"done"}')
+            } finally { $writer.Dispose() }
+            Write-Status $dir @{ jobId = 'big-0001'; task = 'export'; title = 'Export - adele@contoso.com'; mode = 'Export'; state = 'complete'; exitCode = 0 }
+            if ($WithCsv) { Set-Content -LiteralPath (Join-Path $dir 'report.csv') -Value 'Kind' }
+            return $dir
+        }
+        $script:Large = New-LargeJob 'large' 5000 1200 1500 -WithCsv
+        $script:LargeTime = Measure-Command { $script:LargePath = Write-MbtJobHtmlReport -Folder $script:Large }
+        $script:LargeHtml = Get-Content -LiteralPath $script:LargePath -Raw
+        $script:LargeModel = Get-MbtJobReportModel -Folder $script:Large
+    }
+
+    It 'keeps the page small: the folders and the chronology are capped, whatever the size of the job' {
+        (Get-Item -LiteralPath $script:LargePath).Length | Should -BeLessThan 3MB
+        $script:LargeTime.TotalSeconds | Should -BeLessThan 90 -Because 'a job of 5,000 folders is reported in seconds, not minutes'
+        $folders = $script:LargeHtml.Substring($script:LargeHtml.IndexOf('id="folders"', [StringComparison]::Ordinal))
+        $folders = $folders.Substring(0, $folders.IndexOf('</table>', [StringComparison]::Ordinal))
+        ([regex]::Matches($folders, '<tr><td>')).Count | Should -Be 2000
+        $chrono = $script:LargeHtml.Substring($script:LargeHtml.IndexOf('id="chrono"', [StringComparison]::Ordinal))
+        $chrono = $chrono.Substring(0, $chrono.IndexOf('</table>', [StringComparison]::Ordinal))
+        ([regex]::Matches($chrono, '<tr class=')).Count | Should -Be 2000
+        $data = Get-ReportData $script:LargeHtml
+        @($data.folders).Count | Should -Be 2000
+        @($data.chronology).Count | Should -Be 2000
+        @($data.warnings).Count | Should -Be 500
+    }
+
+    It 'says how many rows were left out, and where they are' {
+        $script:LargeHtml | Should -Match '3,000 more folders are in report\.csv and events\.jsonl\. The folders that are not done come first\.'
+        $script:LargeHtml | Should -Match 'more events are in events\.jsonl\. This table shows the first 2,000\.'
+        $script:LargeHtml | Should -Match '700 more warnings are in events\.jsonl\.'
+        $script:LargeModel.LeftFolders | Should -Be 3000
+        $script:LargeModel.LeftWarnings | Should -Be 700
+        # 1 step started, 1200 warnings, 1500 waits, 1500 notes
+        $script:LargeModel.LeftChronology + @($script:LargeModel.Chronology).Count | Should -Be (1 + 1200 + 1500 + 1500)
+        $dir = New-JobFolder 'large-nocsv'
+        Copy-Item -LiteralPath (Join-Path $script:Large 'events.jsonl'), (Join-Path $script:Large 'status.json') -Destination $dir
+        (Get-Content -LiteralPath (Write-MbtJobHtmlReport -Folder $dir) -Raw) | Should -Match '3,000 more folders are in events\.jsonl\. The folders'
+    }
+
+    It 'lists the folders that are not done first, and keeps the numbers of the whole job' {
+        $names = @($script:LargeModel.Folders | ForEach-Object { $_.Key })
+        $names | Should -Contain 'Folder 4999'
+        $names | Should -Contain 'Folder 4997'
+        @($script:LargeModel.Folders | Where-Object State -EQ 'failed').Count | Should -Be 3
+        $script:LargeModel.Folders[0].Key | Should -Be 'Folder 0' -Because 'the folders keep the order of the job'
+        $script:LargeModel.Counts['done'] | Should -Be 123456
+        $script:LargeModel.Counts['failed'] | Should -Be 3
+        $script:LargeModel.Waits.Count | Should -Be 1500
+        $script:LargeModel.Waits.Seconds | Should -Be 3000
+        $script:LargeModel.EventCount | Should -Be (1 + 1 + 10000 + 1200 + 3000 + 1)
+        $script:LargeHtml | Should -Match 'Throttling waits</div><div class="tile-value">1,500</div>'
+    }
+
+    It 'draws the waits of the picture as a few bars, not one for each wait' {
+        ([regex]::Matches($script:LargeHtml, 'class="bar wait"')).Count | Should -BeLessThan 800
+        ([regex]::Matches($script:LargeHtml, 'class="bar wait"')).Count | Should -BeGreaterThan 0
+    }
+
+    It 'a message of a job that is far too long is cut' {
+        $dir = New-JobFolder 'longtext'
+        Write-Events $dir @(
+            @{ at = 0; e = 'plan'; steps = @(@{ id = 'send'; title = 'Send' }) }
+            @{ at = 1; e = 'warn'; code = 'w'; step = 'send'; key = 'k'; msg = ('x' * 50000) }
+            @{ at = 2; e = 'result'; exit = 0; complete = $true; counts = @{ done = 1 }; next = 'done' }
+        )
+        $m = Get-MbtJobReportModel -Folder $dir
+        $m.Warnings[0].Msg.Length | Should -BeLessThan 2100
+        (Get-Item -LiteralPath (Write-MbtJobHtmlReport -Folder $dir)).Length | Should -BeLessThan 100KB
+    }
+
+    It 'the caps can be changed, and the folders that are not done stay in' {
+        $m = Get-MbtJobReportModel -Folder $script:Large -MaxFolders 50 -MaxChronology 40
+        @($m.Folders).Count | Should -Be 50
+        @($m.Chronology).Count | Should -Be 40
+        $m.LeftFolders | Should -Be 4950
+        @($m.Folders | Where-Object State -EQ 'failed').Count | Should -Be 3
+    }
+
+    It 'a job of 50,000 folders and 200,000 events is reported in minutes and the page stays at a few MB (opt in: MBT_BIG_REPORT=1)' -Skip:(-not $env:MBT_BIG_REPORT) {
+        $dir = New-LargeJob 'huge' 50000 20000 20000
+        $elapsed = Measure-Command { $path = Write-MbtJobHtmlReport -Folder $dir }
+        $elapsed.TotalMinutes | Should -BeLessThan 5
+        (Get-Item -LiteralPath $path).Length | Should -BeLessThan 4MB
+    }
+}

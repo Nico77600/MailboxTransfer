@@ -10,8 +10,7 @@
     and status.json. The page is one self-contained file (templates\Report.template.html): no network, no other file; every text that comes from
     a job (a folder name, a message of the service) is HTML-encoded.
 
-        Read-MbtJobEvents          the events of a job folder, parsed
-        Get-MbtJobReportModel      what the report says, as data
+        Get-MbtJobReportModel      what the report says, as data (events.jsonl is read once, a block of lines at a time; the lists are capped as they are built)
         ConvertTo-MbtJobReportHtml the page for a model
         Write-MbtJobHtmlReport     report.html in the job folder (the other files of the folder are linked from it)
 
@@ -108,6 +107,7 @@ function Get-MbtReportTaskName {
     <# The task alone, never the title: "Export", "Import (PST)", "Copy (EML files)". #>
     param([string]$Task, [string]$Mode)
     $name = ($Task -replace '-plan$', '').Trim()
+    if ($name -eq 'exportpst') { $name = 'export' }
     if (-not $name) {
         $name = switch -Regex ($Mode) { '^Export' { 'export' } '^Import' { 'import' } '^Check' { 'check' } '^Repair' { 'repair' } default { '' } }
     }
@@ -144,30 +144,6 @@ function Read-MbtReportJsonFile {
         if (-not $text.Trim()) { return $null }
         return ($text | ConvertFrom-Json -AsHashtable -Depth 20)
     } catch { return $null }
-}
-
-function Read-MbtJobEvents {
-    <# The events of events.jsonl in the order they were written. A line that is not JSON is left out. The file may still be open for writing. #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
-    Set-StrictMode -Version Latest
-    $list = [Collections.Generic.List[object]]::new()
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return , $list }
-    $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-    try {
-        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
-        $text = $reader.ReadToEnd()
-    } finally { $stream.Dispose() }
-    $lines = @($text -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    if (-not $lines.Count) { return , $list }
-    $parsed = $null
-    try { $parsed = @(('[' + ($lines -join ',') + ']') | ConvertFrom-Json -AsHashtable -Depth 20) } catch { $parsed = $null }
-    if ($null -ne $parsed -and $parsed.Count -eq 1 -and $parsed[0] -is [System.Collections.IEnumerable] -and $parsed[0] -isnot [System.Collections.IDictionary] -and $parsed[0] -isnot [string]) { $parsed = @($parsed[0]) }
-    if ($null -eq $parsed) {
-        $parsed = foreach ($line in $lines) { try { $line | ConvertFrom-Json -AsHashtable -Depth 20 } catch { } }
-    }
-    foreach ($e in @($parsed)) { if ($e -is [System.Collections.IDictionary]) { $list.Add($e) } }
-    return , $list
 }
 
 function Get-MbtReportVerdict {
@@ -219,39 +195,85 @@ function Get-MbtReportVerdict {
     }
 }
 
+function Read-MbtJobEventChunk {
+    <#
+        The events of lines [Start, Start + Count) of events.jsonl, parsed in one call, in the order they were written (a block at a time, so that a file of hundreds of
+        thousands of events never sits in memory as parsed objects). A line that is not JSON (the one still being written) is left out.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Lines, [Parameter(Mandatory)][int]$Start, [Parameter(Mandatory)][int]$Count)
+    $parsed = $null
+    try { $parsed = ('[' + [string]::Join(',', $Lines, $Start, $Count) + ']') | ConvertFrom-Json -AsHashtable -Depth 20 -NoEnumerate } catch { $parsed = $null }
+    if ($null -ne $parsed) { return , $parsed }
+    $each = [Collections.Generic.List[object]]::new($Count)
+    for ($i = $Start; $i -lt $Start + $Count; $i++) {
+        if ($Lines[$i].Trim().Length -lt 2) { continue }
+        try { $each.Add(($Lines[$i] | ConvertFrom-Json -AsHashtable -Depth 20)) } catch { Write-Verbose 'An event line that is not JSON is left out.' }
+    }
+    return , $each
+}
+
+function Get-MbtJobEndpoint {
+    <# What a job reads from and writes to, in a few words: status.json says it, else the title and the mode do. Returns Source and Destination. #>
+    param([string]$Title, [string]$Mode, [string]$Store, [string]$Source, [string]$Destination)
+    if (-not $Source -and -not $Destination) {
+        $tail = if ($Title -match ' - (.+)$') { $Matches[1] } else { '' }
+        switch ($Mode) {
+            'Export' { $Source = $tail; $Destination = $Store }
+            'ExportPst' { $Source = $Store; $Destination = $tail }
+            'Import' { $Source = $Store; $Destination = $tail }
+            'ImportPst' { $Source = 'PST files'; $Destination = $tail }
+            'ExportEml' { $Destination = $tail }
+            'ImportEml' { $Source = 'EML files'; $Destination = $tail }
+            'CheckPst' { $Source = $tail }
+            'RepairPst' { $Source = $tail }
+        }
+    }
+    return @{ Source = $Source; Destination = $Destination }
+}
+
 function Get-MbtJobReportModel {
     <#
     .SYNOPSIS
         What the report of a job folder says, as data: header, result, counts, steps, chronology, folders, items, warnings, errors, decisions.
     .DESCRIPTION
         Reads events.jsonl and status.json of the folder. A job that has no result event (killed, power loss) is reported as interrupted.
-        Lists are capped (MaxChronology, MaxFolders, MaxItems, MaxWarnings); Left* says how many rows were left out.
+        The events are read once, a block at a time, and the lists are capped as they are built (MaxChronology, MaxFolders, MaxItems, MaxWarnings, MaxDecisions): a job of
+        50,000 folders and 200,000 events gives the same small page as a job of a hundred. Left* says how many rows were left out. When there are more folders than the cap,
+        the ones that are not done come first (a folder that failed or is not finished is what a reader looks for). The numbers (counts, waits, steps) are always complete.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Folder,
-        [int]$MaxChronology = 2000, [int]$MaxFolders = 3000, [int]$MaxItems = 500, [int]$MaxWarnings = 500
+        [int]$MaxChronology = 2000, [int]$MaxFolders = 2000, [int]$MaxItems = 500, [int]$MaxWarnings = 500, [int]$MaxDecisions = 200, [int]$MaxText = 2000
     )
     Set-StrictMode -Version Latest
-    $events = Read-MbtJobEvents -Path (Join-Path $Folder 'events.jsonl')
     $status = Read-MbtReportJsonFile -Path (Join-Path $Folder 'status.json')
     if ($null -eq $status) { $status = @{} }
 
     $steps = [ordered]@{}
-    $stepTitles = @{}
     $chrono = [Collections.Generic.List[hashtable]]::new()
-    $folders = [ordered]@{}
+    $chronoLeft = [ref]0L
+    $tail = @{ Kind = ''; Reason = ''; Row = $null }
+    $folders = @{}
+    $folderList = [Collections.Generic.List[hashtable]]::new()
     $items = [ordered]@{}
     $warnings = [Collections.Generic.List[hashtable]]::new()
+    $warningCount = 0L
     $errors = [Collections.Generic.List[hashtable]]::new()
     $decisions = [Collections.Generic.List[hashtable]]::new()
+    $decisionCount = 0L
+    $waitSpans = [Collections.Generic.List[datetime[]]]::new()
+    $sleepSpans = [Collections.Generic.List[hashtable]]::new()
+    $marks = [Collections.Generic.List[hashtable]]::new()
     $rates = [Collections.Generic.List[double]]::new()
     $phase = @{}
     $result = $null
-    $first = $null; $last = $null
+    $first = $null; $last = $null; $lastRaw = $null
     $waitCount = 0L; $waitSeconds = 0.0
+    $eventCount = 0L
     $job = [string](Get-MbtReportValue $status 'jobId' ''); $task = [string](Get-MbtReportValue $status 'task' ''); $mode = [string](Get-MbtReportValue $status 'mode' '')
-    $tickWords = '\d[\d,\.]*'
+    $tickWords = [regex]::new('\d[\d,\.]*')
+    $oneText = { param([string]$S) if ($S.Length -gt $MaxText) { $S.Substring(0, $MaxText) + '...' } else { $S } }
 
     $addStep = {
         param([string]$Id, [string]$Title)
@@ -259,118 +281,150 @@ function Get-MbtJobReportModel {
         elseif ($Title -and $steps[$Id].Title -eq $Id) { $steps[$Id].Title = $Title }
     }
     $titleOf = { param([string]$Id) if ($steps.Contains($Id)) { $steps[$Id].Title } else { $Id } }
-    $closePhase = {
-        param([string]$Id, $At)
-        if ($phase.ContainsKey($Id) -and $null -ne $phase[$Id].Row -and $null -eq $phase[$Id].Row.Until) { $phase[$Id].Row.Until = $At }
+    # a row of the chronology: kept while there is room, else only counted (the line "N more events" says how many)
+    $addRow = {
+        param([hashtable]$Row)
+        $tail.Kind = $Row.Kind; $tail.Reason = $(if ($Row.ContainsKey('Reason')) { $Row.Reason } else { '' })
+        if ($chrono.Count -lt $MaxChronology) { $chrono.Add($Row); $tail.Row = $Row; return $true }
+        $tail.Row = $null
+        $chronoLeft.Value++
+        return $false
     }
 
-    foreach ($e in $events) {
-        $kind = [string](Get-MbtReportValue $e 'e' '')
-        $at = ConvertTo-MbtReportTime (Get-MbtReportValue $e 't')
-        if ($null -eq $at) { $at = if ($last) { $last } else { [datetime]::UtcNow } }
-        if (-not $first) { $first = $at }
-        $last = $at
-        switch ($kind) {
-            'plan' {
-                if (-not $job) { $job = [string](Get-MbtReportValue $e 'job' '') }
-                if (-not $task) { $task = [string](Get-MbtReportValue $e 'task' '') }
-                if (-not $mode) { $mode = [string](Get-MbtReportValue $e 'mode' '') }
-                foreach ($s in @(Get-MbtReportValue $e 'steps' @())) { & $addStep ([string](Get-MbtReportValue $s 'id' '')) ([string](Get-MbtReportValue $s 'title' '')) }
+    $eventsFile = Join-Path $Folder 'events.jsonl'
+    $lines = [string[]]@()
+    if (Test-Path -LiteralPath $eventsFile -PathType Leaf) {
+        $stream = [IO.FileStream]::new($eventsFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        try { $lines = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true).ReadToEnd().Split("`n") } finally { $stream.Dispose() }
+    }
+    $lineCount = $lines.Length
+    while ($lineCount -gt 0 -and $lines[$lineCount - 1].Trim().Length -lt 2) { $lineCount-- }
+    for ($start = 0; $start -lt $lineCount; $start += 2000) {
+        $block = Read-MbtJobEventChunk -Lines $lines -Start $start -Count ([math]::Min(2000, $lineCount - $start))
+        foreach ($e in $block) {
+            if ($e -isnot [hashtable]) { continue }
+            $eventCount++
+            $kind = [string]$e['e']
+            $at = $e['t']
+            # the folders and the items are the bulk of a large job: they need no time, only the order
+            if ($kind -eq 'object' -or $kind -eq 'item') {
+                if (-not $first) { $first = ConvertTo-MbtReportTime $at }
+                $lastRaw = $at
+                $id = [string]$e['step'] + '|' + [string]$e['key']
+                if ($kind -eq 'object') {
+                    $o = $folders[$id]
+                    if ($null -eq $o) { $o = @{ Step = [string]$e['step']; Key = [string]$e['key']; State = ''; Done = 0L; Total = 0L; Bytes = -1L; Msg = ''; Detail = ''; Count = 0L }; $folders[$id] = $o; $folderList.Add($o) }
+                } else {
+                    if ($items.Contains($id)) { $o = $items[$id] } else { $o = @{ Step = [string]$e['step']; Key = [string]$e['key']; State = ''; Done = 0L; Total = 0L; Bytes = -1L; Msg = ''; Detail = ''; Count = 0L }; $items[$id] = $o }
+                }
+                $v = $e['state']; $o.State = if ($null -ne $v) { [string]$v } else { 'running' }
+                $v = $e['done']; if ($null -ne $v) { $o.Done = if ($v -is [long] -or $v -is [int]) { [long]$v } else { ConvertTo-MbtReportLong $v } }
+                $v = $e['total']; if ($null -ne $v) { $o.Total = if ($v -is [long] -or $v -is [int]) { [long]$v } else { ConvertTo-MbtReportLong $v } }
+                $v = $e['bytes']; if ($null -ne $v) { $o.Bytes = if ($v -is [long] -or $v -is [int]) { [long]$v } else { ConvertTo-MbtReportLong $v -1 } }
+                $v = $e['msg']; if ($null -ne $v) { $o.Msg = [string]$v }
+                $v = $e['detail']; if ($null -ne $v) { $o.Detail = [string]$v }
+                $v = $e['count']; if ($null -ne $v) { $o.Count = ConvertTo-MbtReportLong $v }
+                continue
             }
-            'step' {
-                $id = [string](Get-MbtReportValue $e 'id' '')
-                & $addStep $id ''
-                $s = $steps[$id]
-                $state = [string](Get-MbtReportValue $e 'state' 'running')
-                $msg = [string](Get-MbtReportValue $e 'msg' '')
-                if ($state -eq 'running' -and -not $s.Started) {
-                    $s.Started = $at
-                    $chrono.Add(@{ T = $at; Kind = 'step'; Tone = 'info'; Step = $s.Title; Text = "$($s.Title) started"; Until = $null; Count = 0 })
-                }
-                if ($state -in 'done', 'failed') {
-                    if (-not $s.Started) { $s.Started = $at }
-                    $s.Finished = $at
-                    & $closePhase $id $at
-                    $text = "$($s.Title) " + $(if ($state -eq 'done') { 'done' } else { 'failed' }) + $(if ($msg) { ": $msg" } else { '' })
-                    $chrono.Add(@{ T = $at; Kind = 'step'; Tone = $(if ($state -eq 'done') { 'ok' } else { 'fail' }); Step = $s.Title; Text = $text; Until = $null; Count = 0 })
-                }
-                $s.State = $state
-                if ($state -eq 'done') { $s.Msg = '' }
-                $s.Done = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'done' $s.Done)
-                $s.Total = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'total' $s.Total)
-                $s.Bytes = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'bytes' $s.Bytes)
-                $s.BytesTotal = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'bytesTotal' $s.BytesTotal)
-                if ($msg) {
-                    $s.Msg = $msg
-                    if ($state -eq 'running') {
-                        $norm = [regex]::Replace($msg, $tickWords, '#')
-                        if ($phase.ContainsKey($id) -and $phase[$id].Norm -eq $norm -and $null -ne $phase[$id].Row) { $phase[$id].Row.Text = $msg }
-                        else {
-                            & $closePhase $id $at
-                            $row = @{ T = $at; Kind = 'phase'; Tone = 'info'; Step = $s.Title; Text = $msg; Until = $null; Count = 0 }
-                            $chrono.Add($row)
-                            $phase[$id] = @{ Norm = $norm; Row = $row }
+            if ($at -is [datetime]) { $at = if ($at.Kind -eq [DateTimeKind]::Unspecified) { [datetime]::SpecifyKind($at, [DateTimeKind]::Utc) } else { $at.ToUniversalTime() } }
+            else { $at = ConvertTo-MbtReportTime $at }
+            if ($null -eq $at) { $at = if ($last) { $last } else { [datetime]::UtcNow } }
+            if (-not $first) { $first = $at }
+            $last = $at
+            $lastRaw = $null
+            switch ($kind) {
+                'step' {
+                    $id = [string]$e['id']
+                    & $addStep $id ''
+                    $s = $steps[$id]
+                    $v = $e['state']; $state = if ($null -ne $v) { [string]$v } else { 'running' }
+                    $v = $e['msg']; $msg = if ($null -ne $v) { & $oneText ([string]$v) } else { '' }
+                    if ($state -eq 'running' -and -not $s.Started) {
+                        $s.Started = $at
+                        [void](& $addRow @{ T = $at; Kind = 'step'; Tone = 'info'; Step = $s.Title; Text = "$($s.Title) started"; Until = $null; Count = 0 })
+                    }
+                    if ($state -in 'done', 'failed') {
+                        if (-not $s.Started) { $s.Started = $at }
+                        $s.Finished = $at
+                        if ($phase.ContainsKey($id) -and $null -ne $phase[$id].Row -and $null -eq $phase[$id].Row.Until) { $phase[$id].Row.Until = $at }
+                        [void](& $addRow @{ T = $at; Kind = 'step'; Tone = $(if ($state -eq 'done') { 'ok' } else { 'fail' }); Step = $s.Title; Text = ("$($s.Title) " + $(if ($state -eq 'done') { 'done' } else { 'failed' }) + $(if ($msg) { ": $msg" } else { '' })); Until = $null; Count = 0 })
+                    }
+                    $s.State = $state
+                    if ($state -eq 'done') { $s.Msg = '' }
+                    $v = $e['done']; if ($null -ne $v) { $s.Done = ConvertTo-MbtReportLong $v }
+                    $v = $e['total']; if ($null -ne $v) { $s.Total = ConvertTo-MbtReportLong $v }
+                    $v = $e['bytes']; if ($null -ne $v) { $s.Bytes = ConvertTo-MbtReportLong $v }
+                    $v = $e['bytesTotal']; if ($null -ne $v) { $s.BytesTotal = ConvertTo-MbtReportLong $v }
+                    if ($msg) {
+                        $s.Msg = $msg
+                        if ($state -eq 'running') {
+                            $norm = $tickWords.Replace($msg, '#')
+                            if ($phase.ContainsKey($id) -and $phase[$id].Norm -eq $norm -and ($null -ne $phase[$id].Row -or $phase[$id].Over)) { if ($phase[$id].Row) { $phase[$id].Row.Text = $msg } }
+                            else {
+                                if ($phase.ContainsKey($id) -and $null -ne $phase[$id].Row -and $null -eq $phase[$id].Row.Until) { $phase[$id].Row.Until = $at }
+                                $row = @{ T = $at; Kind = 'phase'; Tone = 'info'; Step = $s.Title; Text = $msg; Until = $null; Count = 0 }
+                                $kept = & $addRow $row
+                                $phase[$id] = @{ Norm = $norm; Row = $(if ($kept) { $row } else { $null }); Over = (-not $kept) }
+                            }
                         }
                     }
                 }
-            }
-            { $_ -in 'object', 'item' } {
-                $stepId = [string](Get-MbtReportValue $e 'step' '')
-                $key = [string](Get-MbtReportValue $e 'key' '')
-                $table = if ($kind -eq 'object') { $folders } else { $items }
-                $id = "$stepId|$key"
-                if (-not $table.Contains($id)) { $table[$id] = [ordered]@{ Step = $stepId; Key = $key; State = ''; Done = 0L; Total = 0L; Bytes = -1L; Msg = ''; Detail = ''; Count = 0L; At = $at } }
-                $o = $table[$id]
-                $o.State = [string](Get-MbtReportValue $e 'state' 'running')
-                $o.Done = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'done' $o.Done)
-                $o.Total = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'total' $o.Total)
-                $o.Bytes = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'bytes' $o.Bytes) -1
-                $o.Msg = [string](Get-MbtReportValue $e 'msg' $o.Msg)
-                $o.Detail = [string](Get-MbtReportValue $e 'detail' $o.Detail)
-                $o.Count = ConvertTo-MbtReportLong (Get-MbtReportValue $e 'count' $o.Count)
-            }
-            'wait' {
-                $secs = [double](Get-MbtReportValue $e 'seconds' 0)
-                $reason = [string](Get-MbtReportValue $e 'reason' 'throttle')
-                $waitCount = [math]::Max($waitCount + 0, (ConvertTo-MbtReportLong (Get-MbtReportValue $e 'count' ($waitCount + 1))))
-                $waitSeconds = [math]::Max($waitSeconds, [double](Get-MbtReportValue $e 'waited' ($waitSeconds + $secs)))
-                $prev = if ($chrono.Count) { $chrono[$chrono.Count - 1] } else { $null }
-                if ($prev -and $prev.Kind -eq 'wait' -and $prev.Reason -eq $reason) { $prev.Count++; $prev.Seconds += $secs; $prev.Until = $at.AddSeconds($secs); $prev.Spans.Add(@($at, $at.AddSeconds($secs))) }
-                else {
-                    $spans = [Collections.Generic.List[object]]::new()
-                    $spans.Add(@($at, $at.AddSeconds($secs)))
-                    $chrono.Add(@{ T = $at; Kind = 'wait'; Tone = 'warn'; Step = ''; Reason = $reason; Text = ''; Until = $at.AddSeconds($secs); Count = 1; Seconds = $secs; Spans = $spans })
+                'wait' {
+                    $v = $e['seconds']; $secs = if ($null -ne $v) { [double]$v } else { 0.0 }
+                    $v = $e['reason']; $reason = if ($null -ne $v) { [string]$v } else { 'throttle' }
+                    $v = $e['count']; $waitCount = [math]::Max($waitCount, $(if ($null -ne $v) { ConvertTo-MbtReportLong $v } else { $waitCount + 1 }))
+                    $v = $e['waited']; $waitSeconds = [math]::Max($waitSeconds, $(if ($null -ne $v) { [double]$v } else { $waitSeconds + $secs }))
+                    $waitSpans.Add([datetime[]]@($at, $at.AddSeconds($secs)))
+                    if ($tail.Kind -eq 'wait' -and $tail.Reason -eq $reason) {
+                        $prev = $tail.Row
+                        if ($prev) { $prev.Count++; $prev.Seconds += $secs; $prev.Until = $at.AddSeconds($secs) }
+                    } else { [void](& $addRow @{ T = $at; Kind = 'wait'; Tone = 'warn'; Step = ''; Reason = $reason; Text = ''; Until = $at.AddSeconds($secs); Count = 1; Seconds = $secs }) }
                 }
-            }
-            'rate' { $rates.Add([double](Get-MbtReportValue $e 'gibPerHour' 0)) }
-            'warn' {
-                $w = @{ T = $at; Code = [string](Get-MbtReportValue $e 'code' ''); Step = [string](Get-MbtReportValue $e 'step' ''); Key = [string](Get-MbtReportValue $e 'key' ''); Msg = [string](Get-MbtReportValue $e 'msg' '') }
-                $warnings.Add($w)
-                $chrono.Add(@{ T = $at; Kind = 'warn'; Tone = 'warn'; Step = (& $titleOf $w.Step); Text = $w.Msg; Until = $null; Count = 0 })
-            }
-            'decision' {
-                $decisions.Add(@{ T = $at; Key = [string](Get-MbtReportValue $e 'key' ''); Msg = [string](Get-MbtReportValue $e 'msg' ''); Folder = [string](Get-MbtReportValue $e 'folder' '') })
-                $chrono.Add(@{ T = $at; Kind = 'decision'; Tone = 'warn'; Step = ''; Text = [string](Get-MbtReportValue $e 'msg' ''); Until = $null; Count = 0 })
-            }
-            'slept' {
-                $from = ConvertTo-MbtReportTime (Get-MbtReportValue $e 'from'); $to = ConvertTo-MbtReportTime (Get-MbtReportValue $e 'to')
-                $secs = [double](Get-MbtReportValue $e 'seconds' 0)
-                $chrono.Add(@{ T = $(if ($from) { $from } else { $at }); Kind = 'sleep'; Tone = 'info'; Step = ''; Text = ('This PC was asleep for ' + (Format-MbtReportDuration $secs) + '. The job went on when it woke up.'); Until = $(if ($to) { $to } else { $at }); Count = 1; Seconds = $secs })
-            }
-            'info' {
-                $text = [string](Get-MbtReportValue $e 'msg' '')
-                if ($text) { $chrono.Add(@{ T = $at; Kind = 'info'; Tone = 'info'; Step = ''; Text = $text; Until = $null; Count = 0 }) }
-            }
-            'error' {
-                $err = @{ T = $at; Code = [string](Get-MbtReportValue $e 'code' ''); Msg = [string](Get-MbtReportValue $e 'msg' ''); Tech = [string](Get-MbtReportValue $e 'tech' '') }
-                $errors.Add($err)
-                $chrono.Add(@{ T = $at; Kind = 'error'; Tone = 'fail'; Step = ''; Text = $err.Msg; Until = $null; Count = 0 })
-            }
-            'result' {
-                $result = @{ Exit = [int](ConvertTo-MbtReportLong (Get-MbtReportValue $e 'exit' 1) 1); Complete = [bool](Get-MbtReportValue $e 'complete' $false); Counts = (Get-MbtReportValue $e 'counts' @{}); Next = [string](Get-MbtReportValue $e 'next' ''); Reason = [string](Get-MbtReportValue $e 'reason' ''); At = $at }
+                'rate' { $v = $e['gibPerHour']; $rates.Add($(if ($null -ne $v) { [double]$v } else { 0.0 })) }
+                'warn' {
+                    $warningCount++
+                    $text = & $oneText ([string]$e['msg'])
+                    if ($warnings.Count -lt $MaxWarnings) { $warnings.Add(@{ T = $at; Code = [string]$e['code']; Step = [string]$e['step']; Key = [string]$e['key']; Msg = $text }) }
+                    if ($marks.Count -lt 300) { $marks.Add(@{ T = $at; Kind = 'warn'; Text = $text }) }
+                    [void](& $addRow @{ T = $at; Kind = 'warn'; Tone = 'warn'; Step = (& $titleOf ([string]$e['step'])); Text = $text; Until = $null; Count = 0 })
+                }
+                'decision' {
+                    $decisionCount++
+                    $text = & $oneText ([string]$e['msg'])
+                    if ($decisions.Count -lt $MaxDecisions) { $decisions.Add(@{ T = $at; Key = [string]$e['key']; Msg = $text; Folder = [string]$e['folder'] }) }
+                    [void](& $addRow @{ T = $at; Kind = 'decision'; Tone = 'warn'; Step = ''; Text = $text; Until = $null; Count = 0 })
+                }
+                'slept' {
+                    $from = ConvertTo-MbtReportTime $e['from']; $to = ConvertTo-MbtReportTime $e['to']
+                    $v = $e['seconds']; $secs = if ($null -ne $v) { [double]$v } else { 0.0 }
+                    $row = @{ T = $(if ($from) { $from } else { $at }); Kind = 'sleep'; Tone = 'info'; Step = ''; Text = ('This PC was asleep for ' + (Format-MbtReportDuration $secs) + '. The job went on when it woke up.'); Until = $(if ($to) { $to } else { $at }); Count = 1; Seconds = $secs }
+                    if ($sleepSpans.Count -lt 200) { $sleepSpans.Add($row) }
+                    [void](& $addRow $row)
+                }
+                'info' {
+                    $text = & $oneText ([string]$e['msg'])
+                    if ($text) { [void](& $addRow @{ T = $at; Kind = 'info'; Tone = 'info'; Step = ''; Text = $text; Until = $null; Count = 0 }) }
+                }
+                'error' {
+                    $err = @{ T = $at; Code = [string]$e['code']; Msg = (& $oneText ([string]$e['msg'])); Tech = (& $oneText ([string]$e['tech'])) }
+                    if ($errors.Count -lt 100) { $errors.Add($err) }
+                    if ($marks.Count -lt 300) { $marks.Add(@{ T = $at; Kind = 'error'; Text = $err.Msg }) }
+                    [void](& $addRow @{ T = $at; Kind = 'error'; Tone = 'fail'; Step = ''; Text = $err.Msg; Until = $null; Count = 0 })
+                }
+                'plan' {
+                    if (-not $job) { $job = [string]$e['job'] }
+                    if (-not $task) { $task = [string]$e['task'] }
+                    if (-not $mode) { $mode = [string]$e['mode'] }
+                    foreach ($s in @(Get-MbtReportValue $e 'steps' @())) { & $addStep ([string](Get-MbtReportValue $s 'id' '')) ([string](Get-MbtReportValue $s 'title' '')) }
+                }
+                'result' {
+                    $result = @{ Exit = [int](ConvertTo-MbtReportLong (Get-MbtReportValue $e 'exit' 1) 1); Complete = [bool](Get-MbtReportValue $e 'complete' $false); Counts = (Get-MbtReportValue $e 'counts' @{}); Next = [string](Get-MbtReportValue $e 'next' ''); Reason = [string](Get-MbtReportValue $e 'reason' ''); At = $at }
+                }
             }
         }
     }
+    # the time of the last event, when the last events were folders (their time was not read)
+    if ($null -ne $lastRaw) { $lastFolder = ConvertTo-MbtReportTime $lastRaw; if ($lastFolder -and (-not $last -or $lastFolder -gt $last)) { $last = $lastFolder } }
     foreach ($id in @($phase.Keys)) { if ($phase[$id].Row -and $null -eq $phase[$id].Row.Until) { $phase[$id].Row.Until = $last } }
     foreach ($row in $chrono) { if ($row.Kind -eq 'wait') { $row.Text = if ($row.Reason -eq 'network') { "Microsoft could not be reached; the job tried again ($(Format-MbtReportQuantity $row.Count 'time'), $(Format-MbtReportDuration $row.Seconds) in all)." } elseif ($row.Count -gt 1) { "Microsoft asked to wait because of too many requests: $($row.Count) waits, $(Format-MbtReportDuration $row.Seconds) in all." } else { "Microsoft asked to wait $(Format-MbtReportDuration $row.Seconds) because of too many requests." } } }
 
@@ -387,35 +441,34 @@ function Get-MbtJobReportModel {
     if ($rawCounts -is [System.Collections.IDictionary]) { foreach ($k in $rawCounts.Keys) { $counts[[string]$k] = $rawCounts[$k] } }
 
     # the plan of a selection is shown only when the job has nothing better: the folders it then worked on say the same with their progress
-    $folderRows = @($folders.Values)
-    if (@($folderRows | Where-Object { $_.Step -ne 'plan' }).Count) { $folderRows = @($folderRows | Where-Object { $_.Step -ne 'plan' }) }
+    $worked = [Collections.Generic.List[hashtable]]::new()
+    foreach ($f in $folderList) { if ($f.Step -ne 'plan') { $worked.Add($f) } }
+    $folderRows = $folderList
+    if ($worked.Count) { $folderRows = $worked }
     $stepList = @($steps.Values)
     # a job without counts: the folders say how far it got
     if (-not $counts.Contains('done')) {
-        $work = @($folderRows | Where-Object { $_.Step -notin 'plan', '' })
-        $sum = 0L; foreach ($w in $work) { $sum += [long]$w.Done }
+        $sum = 0L; $nWork = 0
+        foreach ($w in $folderRows) { if ($w.Step -notin 'plan', '') { $sum += [long]$w.Done; $nWork++ } }
         $most = 0L; foreach ($s in $stepList) { $most = [math]::Max($most, [long]$s.Done) }
-        if ($work.Count) { $counts['done'] = $sum } elseif ($stepList.Count) { $counts['done'] = $most }
+        if ($nWork) { $counts['done'] = $sum } elseif ($stepList.Count) { $counts['done'] = $most }
     }
+    # more folders than the page holds: the ones that are not done first (in the order of the events), then the others
+    $folderShown = $folderRows
+    if ($folderRows.Count -gt $MaxFolders) {
+        $take = [bool[]]::new($folderRows.Count); $n = 0
+        for ($i = 0; $i -lt $folderRows.Count -and $n -lt $MaxFolders; $i++) { if ($folderRows[$i].State -notin 'done', 'ok', 'complete') { $take[$i] = $true; $n++ } }
+        for ($i = 0; $i -lt $folderRows.Count -and $n -lt $MaxFolders; $i++) { if (-not $take[$i]) { $take[$i] = $true; $n++ } }
+        $folderShown = [Collections.Generic.List[hashtable]]::new($MaxFolders)
+        for ($i = 0; $i -lt $folderRows.Count; $i++) { if ($take[$i]) { $folderShown.Add($folderRows[$i]) } }
+    }
+    $itemShown = @($items.Values | Select-Object -First $MaxItems)
 
     $title = [string](Get-MbtReportValue $status 'title' '')
     if (-not $title) { $title = 'Mailbox Transfer job' }
-    $tail = if ($title -match ' - (.+)$') { $Matches[1] } else { '' }
     $store = [string](Get-MbtReportValue $status 'store' '')
-    $source = [string](Get-MbtReportValue $status 'source' '')
-    $destination = [string](Get-MbtReportValue $status 'destination' '')
-    if (-not $source -and -not $destination) {
-        switch ($mode) {
-            'Export' { $source = $tail; $destination = $store }
-            'ExportPst' { $source = $store; $destination = $tail }
-            'Import' { $source = $store; $destination = $tail }
-            'ImportPst' { $source = 'PST files'; $destination = $tail }
-            'ExportEml' { $destination = $tail }
-            'ImportEml' { $source = 'EML files'; $destination = $tail }
-            'CheckPst' { $source = $tail }
-            'RepairPst' { $source = $tail }
-        }
-    }
+    $ends = Get-MbtJobEndpoint -Title $title -Mode $mode -Store $store -Source ([string](Get-MbtReportValue $status 'source' '')) -Destination ([string](Get-MbtReportValue $status 'destination' ''))
+    $source = $ends.Source; $destination = $ends.Destination
 
     $model = [ordered]@{
         Title = $title; Task = $task; TaskName = (Get-MbtReportTaskName -Task $task -Mode $mode); Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store
@@ -426,17 +479,21 @@ function Get-MbtJobReportModel {
         Waits = @{ Count = $waitCount; Seconds = $waitSeconds }
         Rates = @{ Samples = $rates.Count; MaxGiBPerHour = $(if ($rates.Count) { [math]::Round(($rates | Measure-Object -Maximum).Maximum, 2) } else { 0 }) }
         Steps = $stepList
-        Chronology = @($chrono | Select-Object -First $MaxChronology)
-        LeftChronology = [math]::Max(0, $chrono.Count - $MaxChronology)
-        Folders = @($folderRows | Select-Object -First $MaxFolders)
-        LeftFolders = [math]::Max(0, $folderRows.Count - $MaxFolders)
-        Items = @($items.Values | Select-Object -First $MaxItems)
-        LeftItems = [math]::Max(0, $items.Count - $MaxItems)
-        Warnings = @($warnings | Select-Object -First $MaxWarnings)
-        LeftWarnings = [math]::Max(0, $warnings.Count - $MaxWarnings)
+        Chronology = $chrono.ToArray()
+        LeftChronology = $chronoLeft.Value
+        WaitSpans = $waitSpans
+        SleepSpans = $sleepSpans.ToArray()
+        Marks = $marks.ToArray()
+        Folders = $folderShown.ToArray()
+        LeftFolders = [math]::Max(0, $folderRows.Count - $folderShown.Count)
+        Items = $itemShown
+        LeftItems = [math]::Max(0, $items.Count - $itemShown.Count)
+        Warnings = $warnings.ToArray()
+        LeftWarnings = [math]::Max(0, $warningCount - $warnings.Count)
         Errors = $errors.ToArray()
         Decisions = $decisions.ToArray()
-        EventCount = @($events).Count
+        LeftDecisions = [math]::Max(0, $decisionCount - $decisions.Count)
+        EventCount = $eventCount
     }
     return $model
 }
@@ -451,9 +508,16 @@ function New-MbtReportTimeline {
     $width = 1000; $labelWidth = 200; $x0 = $labelWidth; $x1 = 985; $laneHeight = 18; $gap = 8; $top = 6
     $lanes = [Collections.Generic.List[hashtable]]::new()
     foreach ($s in $Model.Steps) { if ($s.Started) { $lanes.Add(@{ Kind = 'step'; Label = $s.Title; Step = $s }) } }
-    $waits = @($Model.Chronology | Where-Object { $_.Kind -eq 'wait' })
-    $sleeps = @($Model.Chronology | Where-Object { $_.Kind -eq 'sleep' })
-    $marks = @($Model.Chronology | Where-Object { $_.Kind -in 'warn', 'error' })
+    $sleeps = @($Model.SleepSpans)
+    $marks = @($Model.Marks)
+    # the waits of a long job are many: the ones that fall on the same pixel are drawn as one bar
+    $waits = [Collections.Generic.List[object]]::new()
+    $pixel = $span / ($x1 - $x0)
+    foreach ($w in $Model.WaitSpans) {
+        $cur = if ($waits.Count) { $waits[$waits.Count - 1] } else { $null }
+        if ($cur -and ($w[0] - $cur.To).TotalSeconds -le $pixel) { if ($w[1] -gt $cur.To) { $cur.To = $w[1] }; $cur.Count++; $cur.Seconds += ($w[1] - $w[0]).TotalSeconds }
+        else { $waits.Add(@{ From = $w[0]; To = $w[1]; Count = 1; Seconds = ($w[1] - $w[0]).TotalSeconds }) }
+    }
     if ($waits.Count) { $lanes.Add(@{ Kind = 'waits'; Label = 'Waits for the service' }) }
     if ($marks.Count) { $lanes.Add(@{ Kind = 'marks'; Label = 'Warnings and errors' }) }
     if (-not $lanes.Count) { return '<p class="empty">The job wrote no step.</p>' }
@@ -489,16 +553,15 @@ function New-MbtReportTimeline {
             }
             'waits' {
                 foreach ($w in $waits) {
-                    foreach ($part in $w.Spans) {
-                        $a = [datetime]$part[0]; $b = [datetime]$part[1]
-                        $bx = & $xOf $a
-                        $bw = [math]::Max(2.0, (& $xOf $b) - $bx)
-                        [void]$sb.Append('<rect class="bar wait" x="' + (& $num $bx) + '" y="' + $y + '" width="' + (& $num $bw) + '" height="' + $laneHeight + '" rx="2"><title>' + (ConvertTo-MbtHtmlText ((Format-MbtReportTime $a -Short) + ': waited ' + (Format-MbtReportDuration ($b - $a).TotalSeconds))) + '</title></rect>')
-                    }
+                    $a = [datetime]$w.From; $b = [datetime]$w.To
+                    $bx = & $xOf $a
+                    $bw = [math]::Max(2.0, (& $xOf $b) - $bx)
+                    $tip = (Format-MbtReportTime $a -Short) + ': waited ' + (Format-MbtReportDuration $w.Seconds) + $(if ($w.Count -gt 1) { ' in ' + (Format-MbtReportQuantity $w.Count 'wait') } else { '' })
+                    [void]$sb.Append('<rect class="bar wait" x="' + (& $num $bx) + '" y="' + $y + '" width="' + (& $num $bw) + '" height="' + $laneHeight + '" rx="2"><title>' + (ConvertTo-MbtHtmlText $tip) + '</title></rect>')
                 }
             }
             'marks' {
-                foreach ($m in ($marks | Select-Object -First 300)) {
+                foreach ($m in $marks) {
                     $mx = & $xOf ([datetime]$m.T)
                     $cls = if ($m.Kind -eq 'error') { 'mark-error' } else { 'mark-warn' }
                     $tip = (Format-MbtReportTime $m.T -Short) + ' ' + $m.Text
@@ -587,6 +650,8 @@ function ConvertTo-MbtJobReportHtml {
     & $addTile 'Duration' (Format-MbtReportDuration $Model.Seconds) 'info'
 
     # next step and errors
+    $folderOfReport = if ($Model.Contains('Folder') -and $Model.Folder) { [string]$Model.Folder } else { $null }
+    $moreIn = if ($folderOfReport -and (Test-Path -LiteralPath (Join-Path $folderOfReport 'report.csv') -PathType Leaf)) { 'report.csv and events.jsonl' } else { 'events.jsonl' }
     $nextBody = '<p>' + (& $enc $verdict.Sentence) + '</p>'
     if ($verdict.Next -and $verdict.Next -ne $verdict.Sentence) { $nextBody += '<p><strong>' + (& $enc $verdict.Next) + '</strong></p>' }
     $next = '<section class="card next ' + $verdict.NextTone + '"><h2>What to do next</h2>' + $nextBody + '</section>'
@@ -604,9 +669,11 @@ function ConvertTo-MbtJobReportHtml {
     $decisionHtml = ''
     if ($Model.Decisions.Count) {
         $sb = [Text.StringBuilder]::new()
-        [void]$sb.Append('<section class="card attention"><h2>Items waiting for a decision<span class="count">' + $Model.Decisions.Count + '</span></h2><ul>')
-        foreach ($d in ($Model.Decisions | Select-Object -First 200)) { [void]$sb.Append('<li>' + (& $enc $d.Msg) + $(if ($d.Folder) { ' <small>' + (& $enc $d.Folder) + '</small>' } else { '' }) + '</li>') }
-        [void]$sb.Append('</ul></section>')
+        [void]$sb.Append('<section class="card attention"><h2>Items waiting for a decision<span class="count">' + (Format-MbtReportNumber ($Model.Decisions.Count + $Model.LeftDecisions)) + '</span></h2><ul>')
+        foreach ($d in $Model.Decisions) { [void]$sb.Append('<li>' + (& $enc $d.Msg) + $(if ($d.Folder) { ' <small>' + (& $enc $d.Folder) + '</small>' } else { '' }) + '</li>') }
+        [void]$sb.Append('</ul>')
+        if ($Model.LeftDecisions -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftDecisions -eq 1) { '1 more item is' } else { (Format-MbtReportNumber $Model.LeftDecisions) + ' more items are' }) + ' in events.jsonl.</p>') }
+        [void]$sb.Append('</section>')
         $decisionHtml = $sb.ToString()
     }
 
@@ -641,7 +708,7 @@ function ConvertTo-MbtJobReportHtml {
             [void]$sb.Append('<tr class="' + $cls + '" data-kind="' + (& $enc $row.Kind) + '"><td class="when">' + (& $enc $when) + '</td><td class="num">' + (& $enc $since) + '</td><td>' + (& $enc $row.Step) + '</td><td>' + (& $enc $text) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftChronology -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftChronology -eq 1) { '1 more event is' } else { (Format-MbtReportNumber $Model.LeftChronology) + ' more events are' }) + ' in events.jsonl.</p>') }
+        if ($Model.LeftChronology -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftChronology -eq 1) { '1 more event is' } else { (Format-MbtReportNumber $Model.LeftChronology) + ' more events are' }) + ' in events.jsonl. This table shows the first ' + (Format-MbtReportNumber $Model.Chronology.Count) + '.</p>') }
     } else { [void]$sb.Append('<p class="empty">The job wrote no event.</p>') }
     $chronoHtml = $sb.ToString()
 
@@ -660,7 +727,7 @@ function ConvertTo-MbtJobReportHtml {
             [void]$sb.Append('<tr><td>' + (& $enc $f.Key) + '</td><td>' + (& $enc $stepText) + '</td><td>' + (Get-MbtReportBadge $f.State) + '</td><td class="num">' + (& $enc $itemsText) + '</td><td class="num">' + (& $enc $(if ($f.Bytes -ge 0) { Format-MbtReportBytes $f.Bytes } else { '' })) + '</td><td>' + (& $enc $f.Msg) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftFolders -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftFolders -eq 1) { '1 more folder is' } else { (Format-MbtReportNumber $Model.LeftFolders) + ' more folders are' }) + ' in events.jsonl.</p>') }
+        if ($Model.LeftFolders -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftFolders -eq 1) { '1 more folder is' } else { (Format-MbtReportNumber $Model.LeftFolders) + ' more folders are' }) + ' in ' + $moreIn + '. The folders that are not done come first.</p>') }
         [void]$sb.Append('</section>')
         $foldersHtml = $sb.ToString()
     }
@@ -674,7 +741,7 @@ function ConvertTo-MbtJobReportHtml {
             [void]$sb.Append('<tr><td>' + (& $enc $i.Key) + '</td><td>' + (Get-MbtReportBadge $i.State) + '</td><td>' + (& $enc $i.Msg) + '</td><td>' + (& $enc $i.Detail) + '</td><td class="num">' + (& $enc $(if ($i.Count -gt 0) { Format-MbtReportNumber $i.Count } else { '' })) + '</td></tr>')
         }
         [void]$sb.Append('</tbody></table></div>')
-        if ($Model.LeftItems -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftItems -eq 1) { '1 more is' } else { (Format-MbtReportNumber $Model.LeftItems) + ' more are' }) + ' in the CSV report.</p>') }
+        if ($Model.LeftItems -gt 0) { [void]$sb.Append('<p class="caption">' + $(if ($Model.LeftItems -eq 1) { '1 more is' } else { (Format-MbtReportNumber $Model.LeftItems) + ' more are' }) + ' in ' + $moreIn + '.</p>') }
         [void]$sb.Append('</section>')
         $itemsHtml = $sb.ToString()
     }
@@ -697,7 +764,6 @@ function ConvertTo-MbtJobReportHtml {
     # files
     $sb = [Text.StringBuilder]::new()
     [void]$sb.Append('<ul class="files">')
-    $folderOfReport = if ($Model.Contains('Folder') -and $Model.Folder) { [string]$Model.Folder } else { $null }
     foreach ($f in @(@('report.csv', 'Report (CSV)'), @('report.json', 'Report (JSON)'), @('events.jsonl', 'Events of the job'), @('status.json', 'Status of the job'), @('stdout.txt', 'Text of the job'))) {
         if ($folderOfReport -and -not (Test-Path -LiteralPath (Join-Path $folderOfReport $f[0]) -PathType Leaf)) { continue }
         [void]$sb.Append('<li><a href="' + (& $enc $f[0]) + '">' + (& $enc $f[1]) + '</a> <small>' + (& $enc $f[0]) + '</small></li>')
