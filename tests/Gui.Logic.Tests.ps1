@@ -486,6 +486,31 @@ Describe 'Report' {
     }
 }
 
+Describe 'The report of a run is written in the background' {
+    It 'report.json and report.csv are written at once; report.html only when it is not left to the worker' {
+        $r = New-MbtGuiRun -Task export -Title 'Export x'
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'd'; title = 'Download the items' }) }
+        Add-Evt $r result -Fields @{ exit = 0; counts = [pscustomobject]@{ done = 5 } }
+        $folder = Join-Path $TestDrive 'bg-job'
+        $null = New-Item -ItemType Directory -Force -Path $folder
+        Set-Content -LiteralPath (Join-Path $folder 'events.jsonl') -Value '{"v":1,"t":"2026-11-12T10:00:00.000Z","e":"plan","steps":[{"id":"d","title":"Download the items"}]}'
+        $files = @(Write-MbtGuiRunReport -Run $r -Folder $folder -Task export -NoHtml)
+        $files.Count | Should -Be 2
+        (Join-Path $folder 'report.json') | Should -Exist
+        (Join-Path $folder 'report.csv') | Should -Exist
+        (Join-Path $folder 'report.html') | Should -Not -Exist
+        @(Write-MbtGuiRunReport -Run $r -Folder $folder -Task export).Count | Should -Be 3
+        (Join-Path $folder 'report.html') | Should -Exist
+    }
+    It 'the end of a run leaves report.html to the worker, says so on the Done page, and writes the overview when the report is there' {
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport [^\r\n]*-NoHtml.*?\$g\.ReportState = ''writing''.*?\$reportDone = \{.*?\$g\.Engine\.JobOverview \$work.*?& \$g\.Engine\.JobReport \$g\.Job\.Folder \$reportDone'
+        $run | Should -Match '(?s)\$openReport = \{.*?ReportState -eq ''writing''.*?The report is being written.*?Get-MbtGuiReportPath'
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1') -Raw) | Should -Match '(?s)\$e\.JobReport = .*?-OnDone \{ param\(\$res\) & \$OnDone @\(\$res\)\[0\] \}.*?Write-MbtJobHtmlReport -Folder \$folder'
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Fake.ps1') -Raw) | Should -Match '\$engine\.JobReport = \{ param\(\$Folder, \$OnDone, \$OnError\) & \$OnDone \$null \}'
+    }
+}
+
 Describe 'Results of the engine handed to the pages' {
     It 'the worker hands an array: an engine call whose page expects one object unwraps it (the sign-in gives one object, never an array)' {
         $file = Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1'
@@ -829,6 +854,7 @@ Describe 'The All jobs button' {
     }
     It 'the overview is written again when a run ends' {
         $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
-        $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport.*?\& \$g\.Engine\.JobOverview \$s\.WorkFolder'
+        $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport.*?\$reportDone = \{.*?\$g\.Engine\.JobOverview \$work'
     }
+
 }

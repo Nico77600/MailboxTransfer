@@ -185,6 +185,7 @@ function New-MbtGuiFakeEngine {
         $jobs }
     # the demonstration writes no overview and removes no folder
     $engine.JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null }
+    $engine.JobReport = { param($Folder, $OnDone, $OnError) & $OnDone $null }
     $engine.Retention = { param($Work) }
     $engine.FreeSpace ={ param($Path) 412GB }
     # what the check of the plan would count: the ticks, as the service counts them (an auxiliary archive and a PST give no size)

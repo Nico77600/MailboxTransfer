@@ -328,6 +328,54 @@ console.log('rows', els.rows.children.length, 'chips', els.chips.children.length
     }
 }
 
+Describe 'The time budget of the overview' {
+    BeforeAll {
+        # every block of job folders takes 600 ms to read, as a virus scanner can make it: the build of the page cannot wait for ever
+        Mock -ModuleName MailboxTransfer Read-MbtOverviewStatusBlock { Start-Sleep -Milliseconds 600; return @{} }
+        function New-ManyJobs([string]$Work, [int]$Count) {
+            foreach ($i in 1..$Count) { $null = New-TestJob $Work ('20261110-1000-export-{0:x4}' -f $i) @{ jobId = "export-$i" } 20 }
+        }
+    }
+    It 'stops after the budget, keeps the page that is there, says how many job folders are left, and keeps what it read for the next build' {
+        $w = Join-Path $TestDrive 'budget'
+        New-ManyJobs $w 300
+        $page = Join-Path $w 'jobs\overview.html'
+        Set-Content -LiteralPath $page -Value 'the page of the last build'
+        $info = @{}
+        $path = Write-MbtJobOverview -WorkFolder $w -TimeBudgetSeconds 1 -Info $info
+        $path | Should -BeNullOrEmpty
+        $info.Complete | Should -BeFalse
+        $info.Folders | Should -Be 300
+        $info.Unread | Should -BeGreaterThan 100
+        $info.Unread | Should -BeLessThan 300
+        (Get-Content -LiteralPath $page -Raw).Trim() | Should -Be 'the page of the last build'
+        $cache = Get-Content -LiteralPath (Join-Path $w 'jobs\overview.cache.json') -Raw | ConvertFrom-Json
+        @($cache.rows).Count | Should -Be (300 - $info.Unread)
+    }
+    It 'is finished by several short builds: each one goes on where the last one stopped, and the page is then the one a build without a budget gives' {
+        $w = Join-Path $TestDrive 'budget-converge'
+        New-ManyJobs $w 200
+        $builds = 0
+        $info = @{}
+        do { $builds++; $info = @{}; $path = Write-MbtJobOverview -WorkFolder $w -TimeBudgetSeconds 1 -Info $info } while (-not $info.Complete -and $builds -lt 12)
+        $info.Complete | Should -BeTrue
+        $builds | Should -BeGreaterThan 1
+        $path | Should -Be (Join-Path $w 'jobs\overview.html')
+        $page = (Get-Content -LiteralPath $path -Raw) -replace 'Written [^.]*\.', ''
+        $fresh = (Get-Content -LiteralPath (Write-MbtJobOverview -WorkFolder $w -NoCache) -Raw) -replace 'Written [^.]*\.', ''
+        $page | Should -Be $fresh
+    }
+    It 'a build without a budget reads everything and writes the page' {
+        $w = Join-Path $TestDrive 'budget-none'
+        New-ManyJobs $w 60
+        $info = @{}
+        $path = Write-MbtJobOverview -WorkFolder $w -Info $info
+        $path | Should -Be (Join-Path $w 'jobs\overview.html')
+        $info.Complete | Should -BeTrue
+        $info.Unread | Should -Be 0
+    }
+}
+
 Describe 'A folder of 5,000 jobs' {
     BeforeAll {
         $script:Big = Join-Path $TestDrive 'big'

@@ -499,9 +499,10 @@ function ConvertTo-MbtGuiCsvRow {
 function Write-MbtGuiRunReport {
     <#
         The report of a finished run: report.json and report.csv in the job folder, and report.html (the chronology of the job, written from its events.jsonl, which links the CSV and the JSON);
-        for a repair also <new file>.repair-report.csv / .json next to the new file. Returns the paths written.
+        for a repair also <new file>.repair-report.csv / .json next to the new file. Returns the paths written. -NoHtml leaves report.html out: the page of a job of 50,000 folders takes about a minute, so
+        the console has the worker write it (Complete-MbtGuiRun).
     #>
-    param([Parameter(Mandatory)]$Run, [Parameter(Mandatory)][string]$Folder, [string]$Task, [string]$RepairDestination)
+    param([Parameter(Mandatory)]$Run, [Parameter(Mandatory)][string]$Folder, [string]$Task, [string]$RepairDestination, [switch]$NoHtml)
     $null = New-Item -ItemType Directory -Force -Path $Folder
     $rows = [Collections.Generic.List[object]]::new()
     foreach ($s in $Run.Steps) { $rows.Add([pscustomobject]@{ Kind = 'step'; Step = $s.Id; Key = $s.Title; State = $s.State; Done = $s.Done; Total = $s.Total; Message = $s.Msg }) }
@@ -526,7 +527,7 @@ function Write-MbtGuiRunReport {
         $rows | ConvertTo-MbtGuiCsvRow | Export-Csv -LiteralPath $t.Csv -NoTypeInformation -Encoding utf8
         $written.Add($t.Json); $written.Add($t.Csv)
     }
-    if (Test-Path -LiteralPath (Join-Path $Folder 'events.jsonl') -PathType Leaf) {
+    if (-not $NoHtml -and (Test-Path -LiteralPath (Join-Path $Folder 'events.jsonl') -PathType Leaf)) {
         try { $written.Add((Write-MbtJobHtmlReport -Folder $Folder)) } catch { Write-Verbose "The HTML report could not be written: $($_.Exception.Message)" }
     }
     return $written.ToArray()

@@ -308,8 +308,9 @@ function Invoke-MbtJobRetention {
     .DESCRIPTION
         Only the direct subfolders of <WorkFolder>\jobs are ever looked at, and only a job whose status.json says that it is finished (state complete or error) and whose last
         update is older than the retention is deleted. Kept, always: a job that can still be continued (not complete or error: stopped, partial, waiting for a decision, still
-        running, or that never wrote its end), a folder without a readable status.json, a folder that is a link to somewhere else, the folder named by -Keep (the job that
-        is starting), and a folder that a job that is kept names in its request (a store, an output, a file). The stores, the selections and the files a job wrote
+        running, or that never wrote its end), a folder without a readable status.json, a folder that is a link
+        to somewhere else, the folder named by -Keep (the job that is starting), and a folder that a job that is kept names in its request (a store, an output, a file). The checks of a plan
+        (task ending in -plan) write nothing: their folders are removed after one day, whatever their state. The stores, the selections and the files a job wrote
         (PST, EML) are not in the jobs folder: they are never touched. The overview of all the jobs is written again when something was removed. What was removed is written
         to the log, one line for each folder. Returns RetentionDays, JobsFolder, Removed, Failed, Protected (names of folders) and Overview.
     #>
@@ -318,7 +319,9 @@ function Invoke-MbtJobRetention {
         [Parameter(Mandatory, ParameterSetName = 'Work')][string]$WorkFolder,
         [Parameter(Mandatory, ParameterSetName = 'Job')][string]$JobFolder,
         [ValidateRange(0, 3650)][Nullable[int]]$RetentionDays,
-        [Parameter(ParameterSetName = 'Work')][string]$Keep
+        [Parameter(ParameterSetName = 'Work')][string]$Keep,
+        # the overview that is written after a purge is stopped after this many seconds (0 = no limit): the next job or the console finishes it
+        [ValidateRange(0, 86400)][int]$OverviewBudgetSeconds = 0
     )
     Set-StrictMode -Version Latest
     if ($PSCmdlet.ParameterSetName -eq 'Job') {
@@ -332,16 +335,29 @@ function Invoke-MbtJobRetention {
     $jobsFolder = [IO.Path]::GetFullPath((Join-Path $WorkFolder 'jobs')).TrimEnd('\')
     $result = [pscustomobject]@{ RetentionDays = $days; JobsFolder = $jobsFolder; Removed = @(); Failed = @(); Protected = @(); Overview = $null }
     if ($days -le 0 -or -not [IO.Directory]::Exists($jobsFolder)) { return $result }
+    $epoch = [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
     $limit = [datetime]::UtcNow.AddDays(-$days)
-    $limitSeconds = [long][math]::Floor(($limit - [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)).TotalSeconds)
+    $limitSeconds = [long][math]::Floor(($limit - $epoch).TotalSeconds)
+    $planLimit = [datetime]::UtcNow.AddDays(-1)
+    $planLimitSeconds = [long][math]::Floor(($planLimit - $epoch).TotalSeconds)
     $keepName = if ($Keep) { [IO.Path]::GetFileName([IO.Path]::GetFullPath($Keep).TrimEnd('\')) } else { '' }
 
-    # the folders of finished jobs that were last touched before the limit (a folder that was touched since cannot be old: its status.json is rewritten with every update)
+    # the folders of finished jobs that were last touched before the limit (a folder that was touched since cannot be old: its status.json is rewritten with every update), and the checks of a plan after a day
     $old = [Collections.Generic.List[IO.DirectoryInfo]]::new()
+    $planFolder = [regex]::new('-plan-[0-9a-fA-F]{4}$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($dir in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) {
         if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $dir.Name -ieq $keepName) { continue }
-        if ($dir.LastWriteTimeUtc -ge $limit) { continue }
+        if ($dir.LastWriteTimeUtc -ge $planLimit) { continue }
+        $isPlan = $planFolder.IsMatch($dir.Name)
+        if (-not $isPlan -and $dir.LastWriteTimeUtc -ge $limit) { continue }
         $status = Read-MbtOverviewStatus -Path ([IO.Path]::Combine($dir.FullName, 'status.json'))
+        # the check of a plan is a job of its own that writes nothing: its folder name says it (<time>-<task>-plan-<id>)
+        if ($isPlan) {
+            $stamp = if ($null -ne $status) { ConvertTo-MbtOverviewSeconds $(if ($status.ContainsKey('updated')) { $status.updated } elseif ($status.ContainsKey('lastEvent')) { $status.lastEvent } else { $null }) } else { $null }
+            if ($null -eq $stamp) { $stamp = [long][math]::Floor(($dir.LastWriteTimeUtc - $epoch).TotalSeconds) }
+            if ($stamp -lt $planLimitSeconds) { $old.Add($dir) }
+            continue
+        }
         if ($null -eq $status -or -not $status.ContainsKey('state') -or [string]$status.state -notin 'complete', 'error') { continue }
         $updated = ConvertTo-MbtOverviewSeconds $(if ($status.ContainsKey('updated')) { $status.updated } elseif ($status.ContainsKey('lastEvent')) { $status.lastEvent } else { $null })
         if ($null -eq $updated -or $updated -ge $limitSeconds) { continue }
@@ -396,7 +412,7 @@ function Invoke-MbtJobRetention {
     }
     $result.Removed = $removed.ToArray(); $result.Failed = $failed.ToArray(); $result.Protected = $protected.ToArray()
     if ($removed.Count -and -not $WhatIfPreference) {
-        try { $result.Overview = Write-MbtJobOverview -WorkFolder $WorkFolder }
+        try { $result.Overview = Write-MbtJobOverview -WorkFolder $WorkFolder -TimeBudgetSeconds $OverviewBudgetSeconds }
         catch { Write-MbtLog WARN "The overview of all the jobs could not be written: $($_.Exception.Message)" }
     }
     return $result

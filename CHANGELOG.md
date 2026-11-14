@@ -24,6 +24,9 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 - **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.
 
 ### Fixed
+- **No more freeze at the end of a very large job in the console**: the report of the job is written in the background, and **Open the report** says so while it is.
+- **The overview never makes a job wait**: the command line gives it 20 seconds; what it has read is kept for the next job or the console, which finish it (a virus scanner can make the first read of thousands of job folders take minutes).
+- The folders of the checks of a plan are removed after one day, whatever their state, so they do not pile up.
 - Works with **PowerShell 7.6** (the console of 1.1.0 closed at the first click).
 - The Setup page shows the work folder and its free space with the real engine. The certificate sign-in uses the tenant of the configuration when it has none of its own.
 - Every number is written the same way (en-US), whatever the language of Windows.

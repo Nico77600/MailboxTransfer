@@ -109,6 +109,11 @@ function New-MbtGuiRealEngine {
         Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($work) Write-MbtJobOverview -WorkFolder $work }
     }.GetNewClosure()
 
+    # the report of a job (report.html in its folder), written by the worker: a job of 50,000 folders takes about a minute; OnDone gets its path
+    $e.JobReport = { param($Folder, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Folder) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($folder) Write-MbtJobHtmlReport -Folder $folder }
+    }.GetNewClosure()
+
     # when the console starts: the folders of the jobs that are finished and older than Jobs.RetentionDays are removed, in the background; a job that can still be continued never is
     $e.Retention = { param($Work)
         Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnError { param($message) Write-MbtGuiFault 'job retention' $message } -Script {

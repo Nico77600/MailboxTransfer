@@ -63,6 +63,36 @@ Describe 'The configuration key Jobs.RetentionDays' {
     }
 }
 
+Describe 'The checks of a plan' {
+    It 'a plan check is removed after a day, whatever its state, interrupted or never finished included; a younger one and every other job stay' {
+        $w = Join-Path $TestDrive 'plans'
+        $null = New-OldJob $w '20261101-1000-export-plan-aa01' 2
+        $null = New-OldJob $w '20261101-1001-export-plan-aa02' 2 -State error
+        $null = New-OldJob $w '20261101-1002-import-plan-aa03' 3 -State running
+        $null = New-OldJob $w '20261101-1003-export-plan-aa04' 5 -State resumable
+        $null = New-OldJob $w '20261101-1004-export-plan-aa05' 40 -State stopped
+        $null = New-OldJob $w '20261101-1005-export-plan-aa06' 2 -NoStatus
+        $null = New-OldJob $w '20261101-1006-export-plan-aa07' 2 -StatusText 'not json'
+        $null = New-OldJob $w '20261114-0900-export-plan-bb01' 0.5
+        $null = New-OldJob $w '20261101-1010-export-aa08' 2
+        $null = New-OldJob $w '20261101-1011-export-aa09' 20 -State stopped
+        $null = New-OldJob $w '20261101-1012-export-planet-aa0a' 5
+        $r = Invoke-MbtJobRetention -WorkFolder $w -RetentionDays 90
+        @($r.Removed | Sort-Object) | Should -Be @('20261101-1000-export-plan-aa01', '20261101-1001-export-plan-aa02', '20261101-1002-import-plan-aa03', '20261101-1003-export-plan-aa04', '20261101-1004-export-plan-aa05', '20261101-1005-export-plan-aa06', '20261101-1006-export-plan-aa07')
+        Get-JobNames $w | Should -Be @('20261101-1010-export-aa08', '20261101-1011-export-aa09', '20261101-1012-export-planet-aa0a', '20261114-0900-export-plan-bb01')
+    }
+    It 'the retention of 0 days keeps everything, the checks of a plan too; a plan that a job that stays names in its request stays' {
+        $w = Join-Path $TestDrive 'plans-keep'
+        $null = New-OldJob $w '20261101-1000-export-plan-cc01' 9
+        (Invoke-MbtJobRetention -WorkFolder $w -RetentionDays 0).Removed.Count | Should -Be 0
+        Get-JobNames $w | Should -Be @('20261101-1000-export-plan-cc01')
+        $kept = New-OldJob $w '20261101-1001-export-cc02' 1 -State stopped -Request ('{"StorePath":"' + (ConvertTo-JsonPath (Join-Path $w 'jobs\20261101-1000-export-plan-cc01\temp')) + '"}')
+        $r = Invoke-MbtJobRetention -WorkFolder $w -RetentionDays 90
+        @($r.Removed).Count | Should -Be 0
+        @($r.Protected) | Should -Contain '20261101-1000-export-plan-cc01'
+    }
+}
+
 Describe 'Removing the folders of old jobs' {
     It 'removes a finished job that is older than the retention, and keeps a young one, whatever its result' {
         $w = Join-Path $TestDrive 'basic'

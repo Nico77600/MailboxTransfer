@@ -651,9 +651,20 @@ function Complete-MbtGuiRun {
         try { Remove-Item -LiteralPath $g.Job.StorePath -Recurse -Force; Add-MbtGuiLog $run 'ok' 'The working store was removed, as you chose.' ([datetime]::UtcNow) } catch { Add-MbtGuiLog $run 'warn' "The working store could not be removed: $($_.Exception.Message)" ([datetime]::UtcNow) }
     }
     $s.Outcome = $run.State
-    try { $g.Reports = @(Write-MbtGuiRunReport -Run $run -Folder $g.Job.Folder -Task $s.Task -RepairDestination $s.RpDest) } catch { Add-MbtGuiLog $run 'warn' "The report could not be written: $($_.Exception.Message)" ([datetime]::UtcNow) }
-    # this job is one more row of the overview of all the jobs (written by the worker, so the page does not wait for it)
-    try { & $g.Engine.JobOverview $s.WorkFolder { param($path) } { param($message) Write-MbtGuiFault 'job overview' $message } } catch { Write-MbtGuiFault 'job overview' $_ }
+    # report.json and report.csv are small and are written here; report.html of a big job takes about a minute, so the worker writes it while the Done page is usable ("Open the report" says so until it is there)
+    try { $g.Reports = @(Write-MbtGuiRunReport -Run $run -Folder $g.Job.Folder -Task $s.Task -RepairDestination $s.RpDest -NoHtml) } catch { Add-MbtGuiLog $run 'warn' "The report could not be written: $($_.Exception.Message)" ([datetime]::UtcNow) }
+    $g.ReportState = 'writing'
+    $work = $s.WorkFolder
+    $reportDone = {
+        param($path)
+        $g.ReportState = 'ready'
+        if ($path) { $g.Reports = @($g.Reports) + [string]$path }
+        if ($g.ReportHint) { try { $g.ReportHint.Visibility = 'Collapsed' } catch { Write-Verbose "hint: $_" } }
+        # this job is one more row of the overview of all the jobs (written by the worker, so the page does not wait for it)
+        try { & $g.Engine.JobOverview $work { param($overview) } { param($message) Write-MbtGuiFault 'job overview' $message } } catch { Write-MbtGuiFault 'job overview' $_ }
+    }.GetNewClosure()
+    $reportFailed = { param($message) $g.ReportState = 'failed'; Write-MbtGuiFault 'job report' $message; try { $g.ReportHint.Text = "The report could not be written: $message"; $g.ReportHint.Visibility = 'Visible' } catch { Write-Verbose "hint: $_" } }.GetNewClosure()
+    try { & $g.Engine.JobReport $g.Job.Folder $reportDone $reportFailed } catch { & $reportFailed $_.Exception.Message }
     Set-MbtGuiStep ($script:Flows[$s.Task].IndexOf('done'))
 }
 
@@ -758,15 +769,22 @@ function New-MbtGuiReportsCard {
         else { Show-MbtGuiDialog -Title 'Nothing to open here' -Body 'No file was written: this is the demonstration.' -Buttons @(@{ Text = 'Close'; Accent = $true }) }
     }
     $folder = if ($g.Job) { $g.Job.Folder } else { $null }
-    $reportPath = Get-MbtGuiReportPath -Reports @($g.Reports) -Folder $folder
     $logPath = if ($folder) { [IO.Path]::Combine($folder, 'events.jsonl') } else { $null }
+    # the report is looked for when the button is pressed: it may have been written since the page was drawn
+    $openReport = {
+        if ($g.ReportState -eq 'writing') { Show-MbtGuiDialog -Title 'The report is being written' -Body 'The report of a big job takes about a minute. Press the button again in a moment: the line under the buttons goes away when it is ready.' -Buttons @(@{ Text = 'Close'; Accent = $true }); return }
+        & $open (Get-MbtGuiReportPath -Reports @($g.Reports) -Folder $folder)
+    }.GetNewClosure()
     $dir = switch ($s.Task) { 'repair' { Split-Path $s.RpDest -Parent } 'import' { $folder } default { $s.OutFolder } }
     $bar = [Windows.Controls.WrapPanel]::new()
-    $bar.Children.Add((New-GuiButton -Text 'Open the report' -Small -Icon doc -OnClick { & $open $reportPath }.GetNewClosure())) | Out-Null
+    $bar.Children.Add((New-GuiButton -Text 'Open the report' -Small -Icon doc -OnClick { & $openReport }.GetNewClosure())) | Out-Null
     $bar.Children.Add((New-GuiButton -Text 'Open the log' -Small -Icon clip -OnClick { & $open $logPath }.GetNewClosure())) | Out-Null
     $bar.Children.Add((New-GuiButton -Text 'Open the folder' -Small -Icon open -OnClick { & $open $dir }.GetNewClosure())) | Out-Null
     $bar.Children.Add((New-GuiButton -Text 'All jobs' -Small -Icon doc -OnClick { Open-MbtGuiJobOverview })) | Out-Null
-    return (New-GuiCard -Title 'Reports and log' -Content @($bar))
+    $hint = New-GuiText 'The report is being written: it takes about a minute for a big job. You can keep working.' 'Small'
+    $hint.Visibility = $(if ($g.ReportState -eq 'writing') { 'Visible' } else { 'Collapsed' })
+    $g.ReportHint = $hint
+    return (New-GuiCard -Title 'Reports and log' -Content @($bar, $hint))
 }
 
 function New-MbtGuiTiles {

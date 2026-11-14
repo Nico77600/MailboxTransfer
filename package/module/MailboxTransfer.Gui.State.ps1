@@ -118,7 +118,7 @@ function New-MbtGuiWindow {
     $script:Gui = @{
         Window = $window; C = $c; Theme = $look; ThemeName = $Theme; Engine = $Engine; S = (New-MbtGuiState -WorkFolder $WorkFolder); Version = $Version
         EntryScript = $EntryScript; Timer = $timer; Job = $null; Run = $null; Browsers = @{}; PrimaryAction = $null; BackAction = $null
-        OnSelectionChanged = $null; Reports = @(); ExportSelection = [pscustomobject]@{ Entries = @(); Items = 0L; Bytes = 0L; Folders = 0; UnknownSize = 0; SubtreeUnread = $false }; ImportTotals = $null; PlanJob = $null; PlanRun = $null; PlanHolder = $null; PlanStarted = $null; PlanShown = ''
+        OnSelectionChanged = $null; Reports = @(); ReportState = ''; ReportHint = $null; ExportSelection = [pscustomobject]@{ Entries = @(); Items = 0L; Bytes = 0L; Folders = 0; UnknownSize = 0; SubtreeUnread = $false }; ImportTotals = $null; PlanJob = $null; PlanRun = $null; PlanHolder = $null; PlanStarted = $null; PlanShown = ''
         ExportToHolder = $null; ExportDiskHolder = $null; ExportDiskBad = $false; RepairHolder = $null; CloseWhenStopped = $false; LastTickError = $null; PageName = ''
         RunHeadHolder = $null; RunDecisionHolder = $null; RunCols = $null; RunStepsHolder = $null; RunMidHolder = $null; RunDetailHolder = $null
         DialogOpen = $false; Pollers = [Collections.Generic.List[scriptblock]]::new(); Tick = 0; LastEtaPaint = [datetime]::MinValue; Closing = $false; ForceClose = $false

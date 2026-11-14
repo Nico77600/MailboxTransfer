@@ -131,12 +131,16 @@ function Get-MbtJobOverviewModel {
         Only the jobs of this batch (the "batch" field of status.json). A job without one is never listed when a batch is asked for.
     .PARAMETER MaxJobs
         The page lists the newest jobs only; Left says how many older ones were left out.
+    .PARAMETER TimeBudgetSeconds
+        Stops reading job folders after this many seconds (0 = no limit). What was read is kept for the next build (Incomplete is true and Unread says how many folders are left), so a folder that
+        is slow to read (a virus scanner looks at every file the first time) is finished by several short builds.
     .PARAMETER NoCache
         Reads every job folder.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkFolder, [string]$Batch, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [switch]$NoCache)
+    param([Parameter(Mandatory)][string]$WorkFolder, [string]$Batch, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [ValidateRange(0, 86400)][int]$TimeBudgetSeconds = 0, [switch]$NoCache)
     Set-StrictMode -Version Latest
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     $jobsFolder = Join-Path $WorkFolder 'jobs'
     $strings = [Collections.Generic.List[string]]::new()
     $index = [Collections.Hashtable]::new([StringComparer]::Ordinal)
@@ -171,9 +175,13 @@ function Get-MbtJobOverviewModel {
         if ($null -ne $c -and $c[0] -eq $d.LastWriteTimeUtc.Ticks) { $known[$d.Name] = $c; $cacheRows.Add($c) } else { $todo.Add($d) }
     }
     if ($todo.Count -ne 0 -or $cache.Count -ne $known.Count) { $cacheDirty = $true }
+    $incomplete = $false
+    $unread = 0
+    $blockSize = if ($TimeBudgetSeconds -gt 0) { 50 } else { 250 }
 
-    for ($block = 0; $block -lt $todo.Count; $block += 250) {
-        $last = [math]::Min($block + 249, $todo.Count - 1)
+    for ($block = 0; $block -lt $todo.Count; $block += $blockSize) {
+        if ($TimeBudgetSeconds -gt 0 -and $clock.Elapsed.TotalSeconds -ge $TimeBudgetSeconds) { $incomplete = $true; $unread = $todo.Count - $block; break }
+        $last = [math]::Min($block + $blockSize - 1, $todo.Count - 1)
         $names = [string[]]@($todo[$block..$last] | ForEach-Object { $_.FullName })
         $statuses = Read-MbtOverviewStatusBlock -Folders $names
         for ($n = 0; $n -lt $names.Length; $n++) {
@@ -307,6 +315,7 @@ function Get-MbtJobOverviewModel {
     }
     return [ordered]@{
         JobsFolder = $jobsFolder; Batch = $batchText; Columns = $script:MbtOverviewColumns; Strings = $strings.ToArray(); Rows = $items; Left = $left; MaxJobs = $MaxJobs; Totals = $totals
+        Incomplete = $incomplete; Unread = $unread; Folders = $dirs.Count
         CacheRows = $cacheRows; CacheDirty = ($cacheDirty -and -not $NoCache)
     }
 }
@@ -407,6 +416,10 @@ function Write-MbtJobOverview {
         holds the file for a moment is waited for. The links to the reports of the jobs are relative to the jobs folder, so the page works where it is.
     .PARAMETER Batch
         Only the jobs of this batch (status.json: batch).
+    .PARAMETER TimeBudgetSeconds
+        The build stops after this many seconds (0 = no limit). The page is then not written (the one that is there stays), what was read is kept for the next build, and $null is returned; -Info says how many job folders are left.
+    .PARAMETER Info
+        A hashtable that receives Complete, Unread, Folders and Seconds of the build.
     .PARAMETER NoCache
         Reads every job folder instead of the ones that changed since the last build (jobs\overview.cache.json, which holds what the last build learned of the folders that were not running).
     #>
@@ -414,7 +427,7 @@ function Write-MbtJobOverview {
     param(
         [Parameter(Mandatory, ParameterSetName = 'Work')][string]$WorkFolder,
         [Parameter(Mandatory, ParameterSetName = 'Job')][string]$JobFolder,
-        [string]$Batch, [string]$FileName = 'overview.html', [string]$TemplatePath, [string]$Version, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [switch]$NoCache
+        [string]$Batch, [string]$FileName = 'overview.html', [string]$TemplatePath, [string]$Version, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [ValidateRange(0, 86400)][int]$TimeBudgetSeconds = 0, [hashtable]$Info, [switch]$NoCache
     )
     Set-StrictMode -Version Latest
     if ($PSCmdlet.ParameterSetName -eq 'Job') {
@@ -435,11 +448,17 @@ function Write-MbtJobOverview {
     $held = $false
     try {
         try { $held = $mutex.WaitOne(30000) } catch [Threading.AbandonedMutexException] { $held = $true }
-        $model = Get-MbtJobOverviewModel -WorkFolder $WorkFolder -Batch $Batch -MaxJobs $MaxJobs -NoCache:$NoCache
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $model = Get-MbtJobOverviewModel -WorkFolder $WorkFolder -Batch $Batch -MaxJobs $MaxJobs -TimeBudgetSeconds $TimeBudgetSeconds -NoCache:$NoCache
+        if ($Info) { $Info.Complete = -not $model.Incomplete; $Info.Unread = $model.Unread; $Info.Folders = $model.Folders; $Info.Seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1) }
+        if ($model.CacheDirty) { try { Write-MbtOverviewFile -Path (Join-Path $jobsFolder 'overview.cache.json') -Text (ConvertTo-MbtOverviewCacheJson -Model $model) } catch { Write-Verbose "overview cache not written: $($_.Exception.Message)" } }
+        if ($model.Incomplete) {
+            Write-MbtLog WARN ('The overview was not finished in {0} s: {1} of {2} job folders are left for the next build' -f $TimeBudgetSeconds, $model.Unread, $model.Folders)
+            return $null
+        }
         $html = ConvertTo-MbtJobOverviewHtml -Model $model -TemplatePath $TemplatePath -Version $Version
         $target = Join-Path $jobsFolder $FileName
         Write-MbtOverviewFile -Path $target -Text $html
-        if ($model.CacheDirty) { try { Write-MbtOverviewFile -Path (Join-Path $jobsFolder 'overview.cache.json') -Text (ConvertTo-MbtOverviewCacheJson -Model $model) } catch { Write-Verbose "overview cache not written: $($_.Exception.Message)" } }
         return $target
     } finally {
         if ($held) { try { $mutex.ReleaseMutex() } catch { Write-Verbose "overview mutex: $($_.Exception.Message)" } }

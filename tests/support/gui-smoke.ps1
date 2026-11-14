@@ -250,6 +250,18 @@ foreach ($theme in 'Light', 'Dark') {
         Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }; Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'done'; done = 10; total = 10 }
         Add-Line $script:job @{ e = 'result'; exit = 0; complete = $true; counts = @{ done = 10; failed = 0; unknown = 0; pending = 0; foldersCreated = 3 } }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window
         (Get-MbtGuiScreen) -eq 'done' -and (Find-Text $g.C.Page.Content 'Everything was imported') }
+    Check 'run: the report is written in the background: the Done page opens at once and says so, and the path arrives later' {
+        Start-Fake 'export'
+        Add-Line $script:job @{ e = 'result'; exit = 0; complete = $true; counts = @{ done = 10; failed = 0 } }; Pump $script:job $window
+        $script:Deferred = $null
+        $inline = $g.Engine.JobReport
+        $g.Engine.JobReport = { param($Folder, $OnDone, $OnError) $script:Deferred = $OnDone }
+        try { Complete-MbtGuiRun; Measure-Window $window } finally { $g.Engine.JobReport = $inline }
+        $shown = (Get-MbtGuiScreen) -eq 'done' -and $g.ReportState -eq 'writing' -and $g.ReportHint.Visibility -eq 'Visible' -and (Find-Text $g.C.Page.Content 'The report is being written')
+        $html = Join-Path $g.Job.Folder 'report.html'
+        Set-Content -LiteralPath $html -Value 'x'
+        & $script:Deferred $html
+        $shown -and $g.ReportState -eq 'ready' -and $g.ReportHint.Visibility -eq 'Collapsed' -and @($g.Reports) -contains $html -and (Get-MbtGuiReportPath -Reports @($g.Reports) -Folder $g.Job.Folder) -eq $html }
     Check 'run: exit 2 without a stop is resumable (Not finished)' { Start-Fake 'export'; Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'continue'; counts = @{ done = 5; pending = 5 } }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'partial' -and (Find-Text $g.C.Page.Content 'Not finished') }
     Check 'run: exit 3 is a decision' { Start-Fake 'import'; Add-Line $script:job @{ e = 'decision'; key = '1'; msg = 'Two items.' }; Add-Line $script:job @{ e = 'result'; exit = 3; complete = $false; next = 'decide'; counts = @{ done = 9; unknown = 1 } }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'decision-final' -and (Find-Text $g.C.Page.Content 'Almost done') }
     Check 'run: an error shows the plain message and offers Try again' { Start-Fake 'export'; Add-Line $script:job @{ e = 'error'; code = 'disk-full'; msg = 'The disk D: is full.'; tech = 'IOException' }; Add-Line $script:job @{ e = 'result'; exit = 1; complete = $false; next = 'retry' }; Pump $script:job $window; Complete-MbtGuiRun; Measure-Window $window; $g.Run.State -eq 'error' -and (Find-Text $g.C.Page.Content 'Stopped by an error') -and (Find-Text $g.C.Page.Content 'disk D:') -and (Find-Text $g.C.Page.Content 'Try again') -and $g.C.PrimaryLabel.Text -eq 'Start another task' }

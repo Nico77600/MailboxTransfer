@@ -580,6 +580,7 @@ $script:counts = @{}
 $script:reason = $null
 $script:next = $null
 $script:stateOverride = $null
+$overviewBudgetSeconds = 20
 $script:sawResult = $false
 $script:resultComplete = $false
 # The card that ends every run: what happened (exit code rule: 3 uncertain items, 2 resumable, 1 error or items refused for good, 0 complete), the counts, the log, what to do next.
@@ -607,7 +608,12 @@ function Write-MbtRunSummary {
         try { $values.Report = @('Report', [string](Write-MbtJobHtmlReport -Folder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent))) }
         catch { Write-MbtItem WARN "the HTML report could not be written: $($_.Exception.Message)" }
         # the overview of all the jobs of the work folder (<work folder>\jobs\overview.html): this job is one more row of it
-        try { $overviewPath = Write-MbtJobOverview -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent); if ($overviewPath) { $values['All jobs'] = @('Report', [string]$overviewPath) } }
+        try {
+            $overviewInfo = @{}
+            $overviewPath = Write-MbtJobOverview -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -TimeBudgetSeconds $overviewBudgetSeconds -Info $overviewInfo
+            if ($overviewPath) { $values['All jobs'] = @('Report', [string]$overviewPath) }
+            elseif ($overviewInfo.Contains('Complete') -and -not $overviewInfo.Complete) { Write-MbtItem WARN "the overview of all the jobs was not finished in $overviewBudgetSeconds s ($(Format-MbtNumber $overviewInfo.Unread) of $(Format-MbtNumber $overviewInfo.Folders) job folders are still to read): the next job or the console finishes it" }
+        }
         catch { Write-MbtItem WARN "the overview of all the jobs could not be written: $($_.Exception.Message)" }
     }
     Write-MbtSummary -Title $title -Values $values -Status $status
@@ -616,7 +622,7 @@ function Write-MbtRunSummary {
 # The folders of the jobs that are finished and older than Jobs.RetentionDays (90 days; 0 keeps everything) are removed before this job starts; a job that can still be continued never is.
 if ($EventsFile -and -not $dryRun) {
     try {
-        $purge = Invoke-MbtJobRetention -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -RetentionDays $config.Jobs.RetentionDays
+        $purge = Invoke-MbtJobRetention -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -RetentionDays $config.Jobs.RetentionDays -OverviewBudgetSeconds $overviewBudgetSeconds
         if ($purge -and @($purge.Removed).Count) { Write-MbtItem INFO "removed $(Format-MbtNumber @($purge.Removed).Count) old job $(if (@($purge.Removed).Count -eq 1) { 'folder' } else { 'folders' }) (finished more than $($purge.RetentionDays) days ago); the names are in the log" }
         if ($purge -and @($purge.Failed).Count) { Write-MbtItem WARN "$(Format-MbtNumber @($purge.Failed).Count) old job $(if (@($purge.Failed).Count -eq 1) { 'folder' } else { 'folders' }) could not be removed (something holds a file); the next job tries again" }
     } catch { Write-MbtItem WARN "the old job folders could not be removed: $($_.Exception.Message)" }
