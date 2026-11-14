@@ -3317,6 +3317,8 @@ function Get-MbtPstPreview {
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Report.ps1')
 # The overview of all the jobs of a work folder: <work folder>\jobs\overview.html, rewritten at the end of every job.
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Overview.ps1')
+# The export of a list of mailboxes (a batch): the CSV, the batch folder, the child processes, the batch report, what the retention keeps.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.Batch.ps1')
 
 # An engine left in this process by an older build of the module is refused here, before any network or store operation.
 [void](Assert-MbtEngineCurrent -Name Engine -Root $script:ToolRoot)
@@ -3339,4 +3341,5 @@ Export-ModuleMember -Function @(
     'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
     'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
+    'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken'
 )

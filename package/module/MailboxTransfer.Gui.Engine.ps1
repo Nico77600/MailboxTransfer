@@ -89,7 +89,27 @@ function New-MbtGuiRealEngine {
 
     $e.Jobs = {
         param($Work)
-        $out = foreach ($j in @(Get-MbtJob -WorkFolder $Work -Limit 8)) {
+        # a batch is one line (its numbers and its report; a batch is run from the command line), and the jobs of a batch that is complete are not listed one by one; the jobs of a batch that is not
+        # complete are listed with the name of the batch, three at most
+        $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 3)
+        $lines = [Collections.Generic.List[object]]::new()
+        foreach ($b in $batches) {
+            $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
+            if ($b.Partial + $b.Running) { $sub += ', {0} not complete' -f (Format-MbtNumber ($b.Partial + $b.Running)) }
+            if ($b.Failed) { $sub += ', {0} failed' -f (Format-MbtNumber $b.Failed) }
+            if ($b.Pending) { $sub += ', {0} not started' -f (Format-MbtNumber $b.Pending) }
+            if ($b.State -ne 'complete') { $sub += '. Run it again from the command line to continue.' }
+            $lines.Add([pscustomobject]@{ Task = 'batch'; Title = "Batch $($b.Id)"; Sub = $sub; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id })
+        }
+        $finished = @($(foreach ($b in @(Get-MbtBatchList -WorkFolder $Work -Limit 1000 | Where-Object { $_.State -eq 'complete' })) { $b.Jobs }))
+        $ofBatch = 0
+        foreach ($j in @(Get-MbtJob -WorkFolder $Work -Limit 50 -ExcludeFolder $finished)) {
+            if ($j.Batch -and $ofBatch -ge 3) { continue }
+            if ($j.Batch) { $ofBatch++ }
+            $lines.Add($j)
+        }
+        $out = foreach ($j in @($lines | Select-Object -First 8)) {
+            if ($j.PSObject.Properties['Report']) { $j; continue }
             $state = switch ($j.EffectiveState) { 'complete' { 'ok' } 'error' { 'warn' } 'needs-decision' { 'warn' } default { 'run' } }
             $counts = $j.Counts
             $sub = switch ($j.EffectiveState) {
@@ -99,6 +119,7 @@ function New-MbtGuiRealEngine {
                 default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiQuantity $counts.done 'item') done" } else { '' }) }
             }
             if ($j.Alive) { $sub = 'running elsewhere' }
+            if ($j.Batch) { $sub = "batch $($j.Batch) - $sub" }
             [pscustomobject]@{ Task = $j.Task; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; State = $state; Button = $(if ($j.EffectiveState -eq 'complete' -or $j.Alive) { 'Open' } else { 'Continue' }); Folder = $j.Folder }
         }
         @($out)
@@ -112,6 +133,17 @@ function New-MbtGuiRealEngine {
     # the report of a job (report.html in its folder), written by the worker: a job of 50,000 folders takes about a minute; OnDone gets its path
     $e.JobReport = { param($Folder, $OnDone, $OnError)
         Start-MbtGuiWork -Worker $worker -Arguments @($Folder) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($folder) Write-MbtJobHtmlReport -Folder $folder }
+    }.GetNewClosure()
+
+    # the report of a batch (<work folder>\batches\<batch>\report.html), written by the worker when it is not there yet; OnDone gets its path
+    $e.BatchReport = { param($Work, $Id, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work, $Id) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($work, $id)
+            $folder = Get-MbtBatchFolder -WorkFolder $work -Name $id
+            $batch = Read-MbtBatch -Folder $folder
+            if ($null -eq $batch) { throw "The batch $id cannot be read." }
+            Write-MbtBatchReport -WorkFolder $work -Batch $batch -Folder $folder
+        }
     }.GetNewClosure()
 
     # when the console starts: the folders of the jobs that are finished and older than Jobs.RetentionDays are removed, in the background; a job that can still be continued never is

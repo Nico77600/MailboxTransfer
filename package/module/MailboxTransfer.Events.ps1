@@ -252,16 +252,20 @@ function Write-MbtJobStatus {
 function Get-MbtJob {
     <#
     .SYNOPSIS
-        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job".
+        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job". -ExcludeFolder: names of job folders that are left out without being read.
     .DESCRIPTION
         A job whose state is running but whose process is gone (crash, power loss, killed) is reported with EffectiveState resumable and
         Interrupted = $true; if the process is still there, Alive is $true ("running elsewhere").
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50)
+    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50, [string[]]$ExcludeFolder)
     $jobs = Join-Path $WorkFolder 'jobs'
     if (-not (Test-Path -LiteralPath $jobs)) { return }
-    $found = foreach ($dir in Get-ChildItem -LiteralPath $jobs -Directory -ErrorAction SilentlyContinue) {
+    # the newest folders only (a status.json is replaced with every update, which touches its folder), and not the ones the caller already knows about (the jobs of a batch that is complete)
+    $skip = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $ExcludeFolder) { if ($n) { [void]$skip.Add($n) } }
+    $newest = @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { -not $skip.Contains($_.Name) } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([math]::Max($Limit * 4, 200)))
+    $found = foreach ($dir in $newest) {
         $file = Join-Path $dir.FullName 'status.json'
         if (-not (Test-Path -LiteralPath $file)) { continue }
         try { $s = Read-MbtJsonFile -Path $file } catch { continue }
@@ -278,7 +282,7 @@ function Get-MbtJob {
         $effective = if ($state -eq 'running' -and -not $alive) { 'resumable' } else { $state }
         [pscustomobject]@{
             JobId = & $get 'jobId'; Task = & $get 'task'; Title = & $get 'title'; Mode = & $get 'mode'; Store = & $get 'store'; State = $state; EffectiveState = $effective
-            Alive = $alive; Interrupted = ($state -eq 'running' -and -not $alive); ExitCode = & $get 'exitCode'; Counts = & $get 'counts'; Next = & $get 'next'; Reason = & $get 'reason'
+            Alive = $alive; Interrupted = ($state -eq 'running' -and -not $alive); ExitCode = & $get 'exitCode'; Counts = & $get 'counts'; Next = & $get 'next'; Reason = & $get 'reason'; Batch = & $get 'batch'
             Started = $started; Updated = $updated; Folder = $dir.FullName; EventsFile = (Join-Path $dir.FullName 'events.jsonl')
         }
     }
@@ -308,7 +312,7 @@ function Invoke-MbtJobRetention {
     .DESCRIPTION
         Only the direct subfolders of <WorkFolder>\jobs are ever looked at, and only a job whose status.json says that it is finished (state complete or error) and whose last
         update is older than the retention is deleted. Kept, always: a job that can still be continued (not complete or error: stopped, partial, waiting for a decision, still
-        running, or that never wrote its end), a folder without a readable status.json, a folder that is a link
+        running, or that never wrote its end), a job of a batch that is not finished (a mailbox of the batch is not complete: the batch may be run again), a folder without a readable status.json, a folder that is a link
         to somewhere else, the folder named by -Keep (the job that is starting), and a folder that a job that is kept names in its request (a store, an output, a file). The checks of a plan
         (task ending in -plan) write nothing: their folders are removed after one day, whatever their state. The stores, the selections and the files a job wrote
         (PST, EML) are not in the jobs folder: they are never touched. The overview of all the jobs is written again when something was removed. What was removed is written
@@ -334,6 +338,7 @@ function Invoke-MbtJobRetention {
     $days =if ($null -ne $RetentionDays) { [int]$RetentionDays } else { [int](Import-MbtConfiguration).Jobs.RetentionDays }
     $jobsFolder = [IO.Path]::GetFullPath((Join-Path $WorkFolder 'jobs')).TrimEnd('\')
     $result = [pscustomobject]@{ RetentionDays = $days; JobsFolder = $jobsFolder; Removed = @(); Failed = @(); Protected = @(); Overview = $null }
+    $batchHeld = [Collections.Generic.List[string]]::new()
     if ($days -le 0 -or -not [IO.Directory]::Exists($jobsFolder)) { return $result }
     $epoch = [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
     $limit = [datetime]::UtcNow.AddDays(-$days)
@@ -341,6 +346,7 @@ function Invoke-MbtJobRetention {
     $planLimit = [datetime]::UtcNow.AddDays(-1)
     $planLimitSeconds = [long][math]::Floor(($planLimit - $epoch).TotalSeconds)
     $keepName = if ($Keep) { [IO.Path]::GetFileName([IO.Path]::GetFullPath($Keep).TrimEnd('\')) } else { '' }
+    $held = Get-MbtBatchProtection -WorkFolder $WorkFolder
 
     # the folders of finished jobs that were last touched before the limit (a folder that was touched since cannot be old: its status.json is rewritten with every update), and the checks of a plan after a day
     $old = [Collections.Generic.List[IO.DirectoryInfo]]::new()
@@ -361,9 +367,12 @@ function Invoke-MbtJobRetention {
         if ($null -eq $status -or -not $status.ContainsKey('state') -or [string]$status.state -notin 'complete', 'error') { continue }
         $updated = ConvertTo-MbtOverviewSeconds $(if ($status.ContainsKey('updated')) { $status.updated } elseif ($status.ContainsKey('lastEvent')) { $status.lastEvent } else { $null })
         if ($null -eq $updated -or $updated -ge $limitSeconds) { continue }
+        # a job of a batch that is not finished stays: the batch may be run again
+        $jobBatch = if ($status.ContainsKey('batch')) { [string]$status.batch } else { '' }
+        if ($held.Jobs.Contains($dir.Name) -or ($jobBatch -and $held.Batches.Contains($jobBatch))) { $batchHeld.Add($dir.Name); continue }
         $old.Add($dir)
     }
-    if (-not $old.Count) { return $result }
+    if (-not $old.Count) { $result.Protected = $batchHeld.ToArray(); return $result }
 
     # a folder that a job that stays names in its request (a store, an output, a file) is not removed with its job
     $own = @('events.jsonl', 'status.json', 'stop.request', 'stdout.txt', 'stderr.txt', 'request.json', 'report.json', 'report.csv', 'report.html', 'temp', 'choice.folders.txt', 'choice.items.txt')
@@ -410,7 +419,7 @@ function Invoke-MbtJobRetention {
             Write-MbtLog WARN "Job folder not removed ($($dir.FullName)): $($_.Exception.Message)"
         }
     }
-    $result.Removed = $removed.ToArray(); $result.Failed = $failed.ToArray(); $result.Protected = $protected.ToArray()
+    $result.Removed = $removed.ToArray(); $result.Failed = $failed.ToArray(); $result.Protected = @($protected.ToArray()) + @($batchHeld.ToArray())
     if ($removed.Count -and -not $WhatIfPreference) {
         try { $result.Overview = Write-MbtJobOverview -WorkFolder $WorkFolder -TimeBudgetSeconds $OverviewBudgetSeconds }
         catch { Write-MbtLog WARN "The overview of all the jobs could not be written: $($_.Exception.Message)" }

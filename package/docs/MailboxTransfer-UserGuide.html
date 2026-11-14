@@ -854,6 +854,77 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor" version="1.1" width="16" height="16" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p><strong>Keep awake.</strong> Windows follows your company's power settings unless you tick <strong>Keep this PC awake while it runs</strong> (in <strong>Expert mode</strong>, at the bottom of the Verify page; it is off by default). If the PC goes to sleep, the job stops and <strong>Continue</strong> does what is left. Ticked, the tool asks Windows not to sleep because of inactivity; it still cannot stop a closed lid, a Sleep you choose yourself, or a restart. The Verify page says so before you start (<strong>What if this PC sleeps, or I close the window?</strong>).</p>
 </div>
+<h3 id="exporting-many-mailboxes">Exporting many mailboxes</h3>
+<p>If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a <strong>CSV file</strong> (one mailbox on each line) and start <strong>one command</strong>. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one <strong>batch</strong> that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the <strong>command line</strong>: the console shows a batch, read only, but does not start one. Only <strong>export</strong> works this way; a batch of imports is not part of this version.</p>
+<p><strong>1. The list.</strong> A text file, saved as UTF-8 (Excel: <em>CSV UTF-8</em>). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Needed</th>
+<th>What it says</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UserPrincipalName</code></td>
+<td>yes</td>
+<td>The address of the mailbox.</td>
+</tr>
+<tr>
+<td><code>Location</code></td>
+<td>no</td>
+<td><code>Primary</code>, <code>Archive</code> or <code>Both</code> (the primary mailbox, the archive and, for an auto-expanding archive, its auxiliary archives). Empty: <code>-Mailbox</code> of the command, <code>Primary</code> unless you say otherwise.</td>
+</tr>
+<tr>
+<td><code>OutputPst</code></td>
+<td>no</td>
+<td>Where this mailbox goes as PST: a <code>.pst</code> file, or a folder (the file is then named after the address). Empty: the <code>-OutputPst</code> of the command. A relative path starts from the folder of the CSV file.</td>
+</tr>
+<tr>
+<td><code>SelectionFile</code></td>
+<td>no</td>
+<td>A selection saved by the console or by <code>-Mode Browse -SaveSelection</code>: only what it ticks is exported, and its mailbox is the one it names (<code>Location</code> is not used).</td>
+</tr>
+<tr>
+<td><code>Notes</code></td>
+<td>no</td>
+<td>Anything you want. It is ignored, like any other column the tool does not know.</td>
+</tr>
+</tbody>
+</table></div>
+<div class="code"><div class="code-head"><span>Text</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>UserPrincipalName;Location;OutputPst;Notes
+adele.vance@contoso.com;Both;;Finance
+alex.wilber@contoso.com;Primary;;
+lee.gu@contoso.com;Archive;D:\Exports\legal\lee-gu.pst;legal hold
+grady.archie@contoso.com;;;uses the default
+</code></pre></div>
+<p>The whole file is checked <strong>before anything starts</strong>, and every problem is printed together, each with its line: an empty or wrong address, the same address twice (capitals do not matter), a wrong <code>Location</code>, a <code>SelectionFile</code> that does not exist, a file name Windows refuses, and two lines that would write <strong>the same PST file</strong>. The same address can be on two lines when they are for different places (its <code>Primary</code> mailbox on one, its <code>Archive</code> on the other, or two different <code>SelectionFile</code>s); their stores and PST files then carry the <code>Location</code> (or the number of the line) in their name. The same <code>Location</code> twice is refused, and <code>Both</code> already covers <code>Primary</code> and <code>Archive</code>. Nothing starts while one problem is left; fix the file and run the command again.</p>
+<p><strong>2. The command.</strong> Run it with <code>-WhatIf</code> first: it checks the file and prints the plan, and writes nothing.</p>
+<div class="code"><div class="code-head"><span>PowerShell</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>.\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\Batch\mailboxes.csv -BatchName Wave1 -OutputPst D:\Exports -StorePath D:\Stores -WhatIf
+.\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\Batch\mailboxes.csv -BatchName Wave1 -OutputPst D:\Exports -StorePath D:\Stores -ParallelMailboxes 2 -AppOnly
+</code></pre></div>
+<ul>
+<li><code>-OutputPst D:\Exports</code>: one PST for each mailbox, <code>D:\Exports\&lt;address&gt;.pst</code> (a name such as <code>D:\Exports\mail.pst</code> gives <code>mail-&lt;address&gt;.pst</code>). Without it, a mailbox is exported to its store only.</li>
+<li><code>-StorePath D:\Stores</code>: the folder that holds one export store for each mailbox. A store can be as big as its mailbox: plan the disk. Default: the <code>stores</code> folder of the work folder.</li>
+<li><code>-BatchName Wave1</code>: the name of the batch (letters, digits, spaces, dots, dashes). Without a name the date and the time are used. The usual options of an export apply to every line (<code>-Concurrency</code>, <code>-PstMaxSizeGB</code>, <code>-SkipCheck</code>, <code>-IncludeRecoverableItems</code>, <code>-Folder</code>, <code>-RetryWaitSeconds</code>...).</li>
+<li><code>-ParallelMailboxes 1</code> to <code>4</code> (default 1): how many mailboxes run at the same time. Each one is a process of its own with its own requests, so the throttling of Microsoft (it is counted for each mailbox, and waited for exactly as always) never mixes two mailboxes. With more than one at a time, each uses 2 parallel requests unless you give <code>-Concurrency</code>. Start with 1 or 2 and look at the <em>Microsoft slowed us down</em> counts in the report before you go higher.</li>
+<li><code>-WorkFolder</code>: where the batch, its jobs and its stores live. Default: <code>%LOCALAPPDATA%\MailboxTransfer</code>, the folder of the console.</li>
+</ul>
+<p><strong>3. Sign-in, once.</strong> The command signs in once, before the first mailbox, and says if it cannot. A mailbox <strong>never asks</strong> for a sign-in in the middle of a run (nobody is there at night): one that needs it is marked <em>failed</em> with that reason, and the batch goes on; after three in a row it stops starting mailboxes, since the others would fail the same way. Use the sign-in as <strong>the application</strong> (<code>-AppOnly</code>, chapter 2 and the reference guide, 4.6): it has no token to expire and reaches every mailbox of its scope. With a <strong>delegated</strong> sign-in (you), the account must have access to each mailbox (FullAccess), only its own mailbox can have its archive exported, and the sign-in must still be valid for the length of the run: sign in just before you start.</p>
+<p><strong>4. While it runs.</strong> One line is printed as each mailbox ends, and the report of the batch is written again each time:</p>
+<div class="code"><div class="code-head"><span>Text</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>      +  [1/500] adele.vance@contoso.com (Both) complete: 12,431 items, 4.2 GiB, 00:18:02
+      !  [2/500] alex.wilber@contoso.com (Primary) not complete: run the batch again to continue - 8,100 items, 3 failed
+      x  [3/500] lee.gu@contoso.com (Archive) failed: We cannot find this mailbox. Check the address.
+</code></pre></div>
+<p>To <strong>stop</strong>, press <strong>Ctrl+C</strong>, or create a file named <code>stop.request</code> in the folder of the batch (<code>&lt;work folder&gt;\batches\Wave1\</code>; or give <code>-StopFile</code>). The running mailboxes stop the way <strong>Stop and keep progress</strong> stops them, no other starts, and nothing is lost.</p>
+<p><strong>5. Continue.</strong> Run <strong>the same command again</strong> (or <code>-ResumeBatch Wave1</code>, which needs nothing else). The mailboxes that are <em>complete</em> are skipped, the ones that were stopped or interrupted go on in <strong>their own job folder</strong> (only what is left is done), and the <em>failed</em> ones are tried again. A batch keeps the mailboxes it was made with: a different list needs another <code>-BatchName</code>. The options of the first run (sign-in, output folder, tuning) are kept unless you give them again.</p>
+<p><strong>6. The report of the batch.</strong> <code>&lt;work folder&gt;\batches\&lt;name&gt;\report.html</code> is the page <em>All jobs</em> of the jobs of this batch, one row for each mailbox: the result, the items done (and failed), the data, the duration and a link to the <strong>report of its job</strong>. The tiles give the totals; the mailboxes that failed or are not complete come first; a line above the table says how many mailboxes have not started yet. The same folder holds <code>batch.json</code> (the list, the options, the state and the job of each mailbox) and <code>batch.log</code>. At the end the summary card prints the numbers, the paths of the report and the log, the <strong>next steps</strong> and the exit code: <strong>0</strong> every mailbox is complete, <strong>2</strong> not complete (stopped, or mailboxes left; nothing is lost; run the command again), <strong>1</strong> the file has problems or a mailbox failed. When one mailbox failed and others are not complete, the code is 1: a failure needs a look; the report tells which.</p>
+<p><strong>7. In the console.</strong> The Task page, in <strong>Continue a job</strong>, shows a batch as one line (<em>Batch Wave1: 412 of 500 mailboxes complete, 3 failed...</em>) with a button that opens its report. The jobs of the batch that are not complete are listed with the name of the batch and continue like any job; the finished ones are not listed one by one. <strong>All jobs</strong> has a <strong>Batch</strong> list that shows one batch. The folders of a batch's jobs are never tidied away while the batch is not complete (see below).</p>
+<div class="markdown-alert markdown-alert-note">
+<p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor" version="1.1" width="16" height="16" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><strong>Limits.</strong> Export only (no batch of imports yet). At most 4 mailboxes at a time; use <code>Both</code> on one line for the primary mailbox and the archive of the same address. Another mailbox than your own with a delegated sign-in: <code>Primary</code> only. The report lists the jobs of the batch, so a mailbox that has not started has no row until it starts. A batch that is never finished keeps the folders of its jobs for ever: remove the batch folder (<code>batches\&lt;name&gt;</code>) when you give it up.</p>
+</div>
 <h3 id="many-jobs-one-page-for-all-of-them">Many jobs: one page for all of them</h3>
 <p>After a few dozen jobs the question is no longer &quot;what did this job do&quot; but &quot;which of my jobs need me&quot;. The tool answers it with one page, <strong>overview.html</strong>, in the folder <code>jobs</code> of your work folder. It has one row for each job: when it started, the task, the mailbox or the source, the destination, the result, the items done (and failed), the data, the duration, and a link to the report of the job. The tiles at the top give the totals.</p>
 <ul>
@@ -864,7 +935,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <li>The page is one file that needs no network. It follows the theme of your browser. It is rewritten at the end of every job; two jobs that end together cannot damage it. If it cannot be written, the job is not affected: a warning is shown. From PowerShell: <code>Write-MbtJobOverview -WorkFolder &lt;work folder&gt;</code>.</li>
 </ul>
 <h3 id="old-jobs-are-tidied-away">Old jobs are tidied away</h3>
-<p>Each job leaves a folder in <code>jobs</code> (its report, its events, its status). After <strong>90 days</strong> the folder of a job that is <strong>finished</strong> (complete, or ended by an error) is removed, when the console starts and when a command line job starts; the overview is written again. The tool never removes a job that can still be continued (stopped, not complete, waiting for a decision, interrupted), a job whose folder it cannot read, or a folder that another job still names. The folders of the checks of a plan (<strong>Check the plan</strong>) write nothing and are removed after <strong>one day</strong>, whatever their state. The export stores, the selections you saved and the PST or EML files a job wrote are not in <code>jobs</code>: they are never touched. The names of the folders that were removed are in the log.</p>
+<p>Each job leaves a folder in <code>jobs</code> (its report, its events, its status). After <strong>90 days</strong> the folder of a job that is <strong>finished</strong> (complete, or ended by an error) is removed, when the console starts and when a command line job starts; the overview is written again. The tool never removes a job that can still be continued (stopped, not complete, waiting for a decision, interrupted), a job of a batch that is not complete, a job whose folder it cannot read, or a folder that another job still names. The folders of the checks of a plan (<strong>Check the plan</strong>) write nothing and are removed after <strong>one day</strong>, whatever their state. The export stores, the selections you saved and the PST or EML files a job wrote are not in <code>jobs</code>: they are never touched. The names of the folders that were removed are in the log.</p>
 <p>To change the delay, set <code>Jobs.RetentionDays</code> in <code>config\MailboxTransfer.config.local.psd1</code> (a number of days, from 1 to 3650; <strong>0 keeps everything</strong>):</p>
 <div class="code"><div class="code-head"><span>PowerShell</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>@{ Jobs = @{ RetentionDays = 30 } }
 </code></pre></div>
@@ -1236,7 +1307,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <hr />
 <p><strong>Next:</strong> the <a href="MailboxTransfer-Guide.html">reference guide</a> has every setting, the exact rights, the file formats, the exit codes and the limits.</p>
 </div></section>
-<footer>Mailbox Transfer 1.1.0 · Nicolas Fabert · generated 2026-11-14 13:08 from MailboxTransfer-UserGuide.md</footer></main>
+<footer>Mailbox Transfer 1.1.0 · Nicolas Fabert · generated 2026-11-14 13:12 from MailboxTransfer-UserGuide.md</footer></main>
 <button type="button" id="to-top" title="Back to top"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
 <dialog id="zoom"><img alt=""></dialog>
 <script>

@@ -24,6 +24,15 @@
                   into the Archive tree (same folder entry key) unless -SeparateAuxArchives. Resumable: run it again after an interruption, the finished
                   parts (verified by size and PST header) are kept. Each part is checked (Test-MbtPst) unless -SkipCheck. The store is only read.
                   -Mode Export -OutputPst <file.pst> does the export, then the same conversion.
+    Batch         -Mode Export -MailboxCsv <file.csv> exports the mailboxes of a list, one ordinary export job for each (its own job folder, events, status.json, report.html), 1 to 4 mailboxes at a time
+                  (-ParallelMailboxes). The columns of the CSV file (headers not case sensitive, delimiter comma or semicolon, UTF-8): UserPrincipalName (required), Location (Primary, Archive or Both;
+                  empty: -Mailbox, Primary unless given), OutputPst (optional: a .pst file or a folder), SelectionFile (optional), Notes (ignored). The whole file is checked first and every problem is
+                  printed together; nothing starts while one remains. -OutputPst is then a folder (one <address>.pst for each mailbox) or a .pst name that gets the address added; -StorePath is the folder
+                  that holds one export store for each mailbox (default <work folder>\stores\<batch>). The batch is a folder, <work folder>\batches\<batch>\ (batch.json, batch.log, report.html);
+                  the same command again, or -ResumeBatch <batch>, skips the complete mailboxes, continues the ones that are not complete (their own job folder: only what is left) and tries the failed ones
+                  again. Sign-in is done once, here; a mailbox never asks for it (-NoPrompt): one that needs it fails with that reason and the batch goes on. A stop request (stop.request in the batch folder,
+                  or -StopFile) or Ctrl+C stops the running mailboxes the way the console does; run the batch again to continue. Exit code: 0 every mailbox complete, 1 the file has problems or a mailbox failed,
+                  2 not complete (stopped, or mailboxes left): nothing was lost. Import is not part of it yet.
     Mode Import   Creates the folder tree in the target mailbox (below -TargetRoot, or at the same paths, or following -MappingFile;
                   a folder is found by its name under its parent, never renamed or deleted) and imports the Exported items of the
                   store (create only). One import session per mailbox is reused until it is about to expire. Items are Pending ->
@@ -312,6 +321,28 @@
 .PARAMETER NoPrompt
     Silent sign-in only (no browser, no device code): when no valid token is cached the script stops with exit code 2 and the result reason 'signin-required'.
 
+.PARAMETER MailboxCsv
+    Export: the CSV file of a batch, the mailboxes to export one after the other (see Batch above and the user guide, "Exporting many mailboxes"). The first line names the columns: UserPrincipalName
+    (required), Location (Primary, Archive or Both), OutputPst, SelectionFile, Notes. A relative OutputPst or SelectionFile of a row is relative to the folder of the CSV file.
+
+.PARAMETER BatchName
+    With -MailboxCsv: the name of the batch (letters, digits, space, dot, dash, underscore; it is the name of its folder and the name in the reports). Without it a name is made of the date and the time.
+    The same name again continues the batch; a batch is made of the same mailboxes for ever (another list needs another name).
+
+.PARAMETER ResumeBatch
+    Export: continues the batch of that name without the CSV file: complete mailboxes are skipped, the others are done again from where they were. The options of the first run (sign-in, output, tuning) are kept
+    unless you give them again.
+
+.PARAMETER ParallelMailboxes
+    With -MailboxCsv: how many mailboxes are exported at the same time, 1 to 4 (default 1). Each one is a process of its own with its own requests; with more than one at a time, each uses 2 parallel
+    requests (-Concurrency 4 is the default of one mailbox) unless -Concurrency is given.
+
+.PARAMETER WorkFolder
+    With -MailboxCsv or -ResumeBatch: the work folder that holds jobs, batches, stores and logs (default %LOCALAPPDATA%\MailboxTransfer, the folder of the console).
+
+.PARAMETER BatchId
+    The batch a job belongs to (status.json: batch). A batch sets it for the jobs it starts; leave it out.
+
 .PARAMETER Path
     CheckPst, RepairPst: the PST file.
 
@@ -342,6 +373,9 @@
     .\Invoke-MailboxTransfer.ps1 -Mode ExportPst -StorePath D:\store -OutputPst D:\pst\adele.pst
     .\Invoke-MailboxTransfer.ps1 -Mode ExportPst -StorePath D:\store -OutputPst D:\pst\adele.pst -WhatIf
     .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox All -StorePath D:\store -WhatIf
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\batch\mailboxes.csv -OutputPst D:\pst -WhatIf
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\batch\mailboxes.csv -BatchName Wave1 -OutputPst D:\pst -ParallelMailboxes 2 -AppOnly
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -ResumeBatch Wave1
     .\Invoke-MailboxTransfer.ps1 -Mode Status -StorePath D:\store
     .\Invoke-MailboxTransfer.ps1 -Mode Status -StorePath D:\store -Unknown -Check
     .\Invoke-MailboxTransfer.ps1 -Mode Status -StorePath D:\store -Unknown -Check -ResolveAbsent -WhatIf
@@ -450,6 +484,12 @@ param(
     [string]$LogFolder,
     [switch]$KeepAwake,
     [switch]$NoPrompt,
+    [string]$MailboxCsv,
+    [string]$BatchName,
+    [string]$ResumeBatch,
+    [ValidateRange(1, 4)][int]$ParallelMailboxes = 1,
+    [string]$WorkFolder,
+    [string]$BatchId,
     [string]$Path,
     [string]$Destination,
     [ValidateSet('Automatic', 'Recompute', 'Rebuild', 'Salvage')][string]$Level = 'Automatic'
@@ -504,6 +544,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # -WhatIf only means "plan the import": the files of the run (store, transcript) are always written.
 $mailboxGiven = $PSBoundParameters.ContainsKey('Mailbox')
+$boundParameters = $PSBoundParameters
+$entryScript = $PSCommandPath
 $dryRun = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'MailboxTransfer.psd1') -Force
@@ -536,6 +578,18 @@ if (-not $TempPath) { $TempPath = Join-Path $outRoot 'transfer' }
 if (-not [IO.Path]::IsPathRooted($StorePath)) { $StorePath = Join-Path (Get-Location).Path $StorePath }
 
 $pstMaxBytes = if ($PSBoundParameters.ContainsKey('PstMaxSizeMiB')) { $PstMaxSizeMiB * 1MB } else { [long]($PstMaxSizeGB * 1024) * 1MB }
+$batchMode = [bool]($MailboxCsv -or $ResumeBatch)
+if ($batchMode) {
+    if ($Mode -ne 'Export') { throw '-MailboxCsv and -ResumeBatch belong to -Mode Export.' }
+    if ($BatchName -and $ResumeBatch -and $BatchName.Trim() -ine $ResumeBatch.Trim()) { throw '-BatchName and -ResumeBatch name two batches: give one of them.' }
+    foreach ($single in 'EventsFile', 'JobId', 'SelectionFile', 'MailboxId', 'LocationsFile', 'PrimaryMailboxId', 'ArchiveMailboxId', 'RecoverableItemsFolders', 'TempPath', 'BatchId') {
+        if ($PSBoundParameters.ContainsKey($single)) { throw "-$single is for one mailbox: with -MailboxCsv give it in the CSV file (SelectionFile, OutputPst), or leave it out. Each mailbox of a batch has its own job folder, store and job." }
+    }
+    if ($Mailbox -eq 'AuxArchive') { throw '-Mailbox AuxArchive names one auxiliary archive: in a batch use Primary, Archive or All (Both in the CSV file) for the mailboxes.' }
+    if ($CertificatePassword) { throw 'A batch starts a process for each mailbox and cannot hand a password to them: put the certificate in the store of the user and give -CertificateThumbprint.' }
+    if ($DeviceCode -and $NoPrompt) { throw '-DeviceCode asks for a sign-in and -NoPrompt forbids it: give one of them.' }
+}
+elseif ($BatchName -or $PSBoundParameters.ContainsKey('ParallelMailboxes')) { throw '-BatchName and -ParallelMailboxes belong to -MailboxCsv (a batch of mailboxes).' }
 if ($OutputPst -and $Mode -notin 'Export', 'ExportPst') { throw '-OutputPst belongs to -Mode Export (export, then convert) and -Mode ExportPst (convert a store).' }
 if (($IncludeRecoverableItems -or $RecoverableItemsFolders) -and $Mode -notin 'Export', 'Browse') { throw '-IncludeRecoverableItems and -RecoverableItemsFolders belong to -Mode Export (and -Mode Browse, which has -RecoverableItems).' }
 if ($RecoverableItemsFolders) {
@@ -556,7 +610,7 @@ $logPath = $null
 try { $logPath = Start-MbtLog -Directory $LogFolder } catch { Write-Warning "No log file ($LogFolder): $($_.Exception.Message)" }
 $runClock = [Diagnostics.Stopwatch]::StartNew()
 $bannerSubtitle = switch ($Mode) {
-    'Export' { 'Exports a mailbox to a verified local store, then to PST files if asked' }
+    'Export' { if ($batchMode) { 'Exports the mailboxes of a list, one job each' } else { 'Exports a mailbox to a verified local store, then to PST files if asked' } }
     'ExportPst' { 'Writes PST files from an export store, or from chosen folders of a PST' }
     'Import' { 'Puts the items of an export store into a mailbox (items are added, never deleted)' }
     'ImportPst' { 'Puts the items of a PST file into a mailbox (items are added, never deleted)' }
@@ -567,8 +621,9 @@ $bannerSubtitle = switch ($Mode) {
     'CheckPst' { 'Checks a PST file, read only' }
     'RepairPst' { 'Writes a repaired copy of a PST file; the original is never changed' }
 }
-$bannerDetails = [ordered]@{ Mode = @('Mode', $Mode + $(if ($dryRun) { ' - WhatIf (nothing is written)' })) }
-if ($Mode -in 'Export', 'ExportPst', 'Import', 'Status', 'ExportEml') { $bannerDetails.Store = @('Store', $StorePath) }
+$bannerDetails = [ordered]@{ Mode = @('Mode', $Mode + $(if ($batchMode) { ' - a list of mailboxes' }) + $(if ($dryRun) { ' - WhatIf (nothing is written)' })) }
+if ($batchMode) { $bannerDetails.Mailboxes = @('Folder', $(if ($MailboxCsv) { $MailboxCsv } else { "batch $ResumeBatch" })) }
+elseif ($Mode -in 'Export', 'ExportPst', 'Import', 'Status', 'ExportEml') { $bannerDetails.Store = @('Store', $StorePath) }
 $bannerSource = @($PstPath, $EmlPath, $Path | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ', '
 if ($bannerSource) { $bannerDetails.Source = @('Folder', $bannerSource) }
 if ($OutputPst) { $bannerDetails.Output = @('Folder', $OutputPst) }
@@ -608,26 +663,28 @@ function Write-MbtRunSummary {
         try { $values.Report = @('Report', [string](Write-MbtJobHtmlReport -Folder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent))) }
         catch { Write-MbtItem WARN "the HTML report could not be written: $($_.Exception.Message)" }
         # the overview of all the jobs of the work folder (<work folder>\jobs\overview.html): this job is one more row of it
-        try {
-            $overviewInfo = @{}
-            $overviewPath = Write-MbtJobOverview -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -TimeBudgetSeconds $overviewBudgetSeconds -Info $overviewInfo
-            if ($overviewPath) { $values['All jobs'] = @('Report', [string]$overviewPath) }
-            elseif ($overviewInfo.Contains('Complete') -and -not $overviewInfo.Complete) { Write-MbtItem WARN "the overview of all the jobs was not finished in $overviewBudgetSeconds s ($(Format-MbtNumber $overviewInfo.Unread) of $(Format-MbtNumber $overviewInfo.Folders) job folders are still to read): the next job or the console finishes it" }
+        if (-not $BatchId) {
+            try {
+                $overviewInfo = @{}
+                $overviewPath = Write-MbtJobOverview -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -TimeBudgetSeconds $overviewBudgetSeconds -Info $overviewInfo
+                if ($overviewPath) { $values['All jobs'] = @('Report', [string]$overviewPath) }
+                elseif ($overviewInfo.Contains('Complete') -and -not $overviewInfo.Complete) { Write-MbtItem WARN "the overview of all the jobs was not finished in $overviewBudgetSeconds s ($(Format-MbtNumber $overviewInfo.Unread) of $(Format-MbtNumber $overviewInfo.Folders) job folders are still to read): the next job or the console finishes it" }
+            }
+            catch { Write-MbtItem WARN "the overview of all the jobs could not be written: $($_.Exception.Message)" }
         }
-        catch { Write-MbtItem WARN "the overview of all the jobs could not be written: $($_.Exception.Message)" }
     }
     Write-MbtSummary -Title $title -Values $values -Status $status
 }
 
 # The folders of the jobs that are finished and older than Jobs.RetentionDays (90 days; 0 keeps everything) are removed before this job starts; a job that can still be continued never is.
-if ($EventsFile -and -not $dryRun) {
+if ($EventsFile -and -not $dryRun -and -not $BatchId) {
     try {
         $purge = Invoke-MbtJobRetention -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -RetentionDays $config.Jobs.RetentionDays -OverviewBudgetSeconds $overviewBudgetSeconds
         if ($purge -and @($purge.Removed).Count) { Write-MbtItem INFO "removed $(Format-MbtNumber @($purge.Removed).Count) old job $(if (@($purge.Removed).Count -eq 1) { 'folder' } else { 'folders' }) (finished more than $($purge.RetentionDays) days ago); the names are in the log" }
         if ($purge -and @($purge.Failed).Count) { Write-MbtItem WARN "$(Format-MbtNumber @($purge.Failed).Count) old job $(if (@($purge.Failed).Count -eq 1) { 'folder' } else { 'folders' }) could not be removed (something holds a file); the next job tries again" }
     } catch { Write-MbtItem WARN "the old job folders could not be removed: $($_.Exception.Message)" }
 }
-if ($StopFile) { Start-MbtStopWatch -Path $StopFile }
+if ($StopFile -and -not $batchMode) { Start-MbtStopWatch -Path $StopFile }
 if ($KeepAwake) { [void](Start-MbtKeepAwake) }
 if ($EventsFile) {
     $taskName = switch ($Mode) { 'Export' { 'export' } 'ExportEml' { 'export' } 'ExportPst' { 'exportpst' } 'Import' { 'import' } 'ImportPst' { 'import' } 'ImportEml' { 'import' } 'CheckPst' { 'check' } 'RepairPst' { 'repair' } 'Browse' { 'browse' } default { 'status' } }
@@ -646,7 +703,7 @@ if ($EventsFile) {
         'Export' { $StorePath + $(if ($OutputPst) { ", PST files: $OutputPst" } else { '' }) } 'ExportPst' { $OutputPst } 'Import' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) }
         'ImportPst' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'ExportEml' { $EmlPath } 'ImportEml' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'RepairPst' { $Destination } default { '' }
     }
-    Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import') { $StorePath }) -Source ([string]$sourceText) -Destination ([string]$destinationText)
+    Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import') { $StorePath }) -Source ([string]$sourceText) -Destination ([string]$destinationText) -Batch $BatchId
     $steps = switch ($Mode) {
         'Export' {
             @(@{ Id = 'tree'; Title = 'Read the folder tree' }, @{ Id = 'list'; Title = 'List the items you chose' }, @{ Id = 'download'; Title = 'Download the items' }, @{ Id = 'verify'; Title = 'Check the downloads' }) +
@@ -803,6 +860,121 @@ function Get-OtherArchiveLocation([string]$ExceptId) {
     }
 }
 
+# The export of a list of mailboxes (-MailboxCsv, or -ResumeBatch for a batch that exists). The whole CSV file is checked first and every problem is printed together; then each mailbox is an ordinary
+# export job in a process of its own (Invoke-MbtBatch). The sign-in is done once here, and never asked for again in the middle of a run.
+function Invoke-BatchExport {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $work = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MailboxTransfer' }
+    $stop = { param([string[]]$Problems)
+        Write-MbtStep 'The batch cannot start'
+        foreach ($p in $Problems) { Write-MbtItem FAIL $p }
+        $count = $Problems.Count
+        Write-MbtBatchSummary -ExitCode 1 -Failure @("$count $(if ($count -eq 1) { 'problem' } else { 'problems' }), listed above: nothing was started") -Log $logPath
+        $script:exitCode = 1
+    }
+    $name = if ($ResumeBatch) { $ResumeBatch.Trim() } elseif ($BatchName) { $BatchName.Trim() } else { '' }
+    if ($name) { $why = Test-MbtBatchName $name; if ($why) { & $stop @($why); return } }
+    $folder = if ($name) { Find-MbtBatchFolder -WorkFolder $work -Name $name } else { $null }
+    $batch = if ($folder) { Read-MbtBatch -Folder $folder } else { $null }
+    if ($folder -and -not $batch) { & $stop @("The folder $folder has no readable batch.json: it is not a batch of this tool, or it is damaged. Use another -BatchName."); return }
+    if ($ResumeBatch -and -not $batch) { & $stop @("There is no batch named $name in $(Join-Path $work 'batches'). Check the name, or -WorkFolder."); return }
+    if (-not $MailboxCsv -and -not $batch) { & $stop @('Give -MailboxCsv (the list of mailboxes) or -ResumeBatch (a batch that exists).'); return }
+    $id = if ($batch) { [string]$batch.id } elseif ($name) { $name } else { (Get-Date).ToString('yyyyMMdd-HHmm') + '-' + (-join ((1..4) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] })) }
+
+    # the options of the run: what the first run kept, over which what is given now
+    $stored = if ($batch -and $batch.Contains('options') -and $batch.options -is [System.Collections.IDictionary]) { $batch.options } else { @{} }
+    $storedPass = if ($stored.Contains('Pass') -and $stored.Pass -is [System.Collections.IDictionary]) { $stored.Pass } else { @{} }
+    $pass = @{}
+    foreach ($k in $storedPass.Keys) { $pass[[string]$k] = $storedPass[$k] }
+    foreach ($n in 'Concurrency', 'MaxAttempts', 'RetryWaitSeconds', 'NotReadyTrip', 'BatchItems', 'BatchMiB', 'IntervalSeconds', 'Folder', 'PstMaxSizeGB', 'PstMaxSizeMiB', 'ConfigPath') {
+        if ($boundParameters.ContainsKey($n)) { $pass[$n] = (Get-Variable -Name $n -ValueOnly) }
+    }
+    foreach ($n in 'SkipInventory', 'IncludeRecoverableItems', 'SeparateAuxArchives', 'SkipCheck', 'Force') {
+        if ($boundParameters.ContainsKey($n)) { $pass[$n] = [bool](Get-Variable -Name $n -ValueOnly) }
+    }
+    $givenAuth = $useCertificate -or $boundParameters.ContainsKey('UserPrincipalName') -or $boundParameters.ContainsKey('TenantId') -or $boundParameters.ContainsKey('ClientId')
+    $appOnly = [bool]$useCertificate
+    $signInUser = if ($appOnly) { '' } else { [string]$UserPrincipalName }
+    if ($useCertificate) {
+        foreach ($n in 'CertificateThumbprint', 'CertificatePath', 'TenantId', 'ClientId') { $v = [string](Get-Variable -Name $n -ValueOnly); if ($v) { $pass[$n] = $v } }
+    } elseif ($boundParameters.ContainsKey('TenantId') -or $boundParameters.ContainsKey('ClientId')) {
+        foreach ($n in 'TenantId', 'ClientId') { if ($boundParameters.ContainsKey($n)) { $pass[$n] = [string](Get-Variable -Name $n -ValueOnly) } }
+    }
+    if ($batch -and -not $givenAuth -and $stored.Contains('AppOnly')) {
+        $appOnly = [bool]$stored.AppOnly
+        $signInUser = [string]$stored.SignInUser
+        if ($appOnly) {
+            $script:useCertificate = $true
+            foreach ($n in 'CertificateThumbprint', 'CertificatePath', 'TenantId', 'ClientId') { if ($pass.Contains($n)) { Set-Variable -Name $n -Value ([string]$pass[$n]) -Scope Script } }
+        }
+    }
+    $globalOutput = if ($OutputPst) { $OutputPst } elseif ($batch -and $stored.Contains('OutputPst')) { [string]$stored.OutputPst } else { '' }
+    $storeBase = if ($boundParameters.ContainsKey('StorePath')) { $StorePath } elseif ($batch -and $stored.Contains('StoreBase') -and $stored.StoreBase) { [string]$stored.StoreBase } else { Join-Path (Join-Path $work 'stores') $id }
+    $parallel = if ($boundParameters.ContainsKey('ParallelMailboxes')) { $ParallelMailboxes } elseif ($batch -and $batch.Contains('parallel')) { [int]$batch.parallel } else { 1 }
+    if (-not $appOnly -and -not $signInUser) { & $stop @('Delegated sign-in needs the account that signs in: give -UserPrincipalName (or set Tenant.UserPrincipalName in the configuration), or sign in as the application (-AppOnly).'); return }
+    $option = @{ AppOnly = $appOnly; SignInUser = $signInUser; OutputPst = $globalOutput; StoreBase = $storeBase; Pass = $pass }
+
+    # the whole CSV file, before anything starts
+    if ($MailboxCsv) {
+        $csv = Read-MbtBatchCsv -Path $MailboxCsv -DefaultLocation $Mailbox -OutputPst $globalOutput -StoreBase $storeBase -SignedInUser $signInUser -AppOnly:$appOnly
+        if ($csv.Problems.Count) { & $stop $csv.Problems; return }
+        if ($batch) {
+            $diff = @(Compare-MbtBatchRow -Batch $batch -Row $csv.Rows)
+            if ($diff.Count) {
+                & $stop (@($diff | Select-Object -First 10 | ForEach-Object { "The CSV file is not the list of the batch $id`: $_." }) + @('A batch keeps the mailboxes it was made with: use -ResumeBatch to continue it, or another -BatchName for this list.'))
+                return
+            }
+            $batch.csv = [IO.Path]::GetFullPath($MailboxCsv)
+        } else {
+            $batch = New-MbtBatch -Id $id -Csv ([IO.Path]::GetFullPath($MailboxCsv)) -Row $csv.Rows -Option $option -Parallel $parallel
+        }
+    }
+    $batch.options = $option
+    $batch.parallel = $parallel
+    $counts = Get-MbtBatchCount $batch
+    Write-MbtStep ("Batch $id")
+    Write-MbtItem INFO ("{0} mailbox{1}: {2} complete, {3} to do; {4} at a time; batch folder {5}" -f (Format-MbtNumber $counts.Total), $(if ($counts.Total -eq 1) { '' } else { 'es' }), (Format-MbtNumber $counts.Complete), (Format-MbtNumber ($counts.Total - $counts.Complete)), $parallel, (Join-Path (Join-Path $work 'batches') $id))
+    Show-MbtBatchPlan -Batch $batch
+    $command = '.\Invoke-MailboxTransfer.ps1 -Mode Export -ResumeBatch ' + (Format-MbtBatchToken $id) + $(if ($WorkFolder) { ' -WorkFolder ' + (Format-MbtBatchToken $work) }) + $(if ($parallel -gt 1) { " -ParallelMailboxes $parallel" })
+    if ($dryRun) {
+        Write-MbtItem WARN 'WhatIf: the file is valid, nothing was started and no folder was written.'
+        Write-MbtBatchSummary -ExitCode 0 -Batch $batch -WhatIf -Log $logPath
+        return
+    }
+    if ($counts.Complete -eq $counts.Total) { Write-MbtItem OK 'every mailbox of this batch is already complete: nothing to do' }
+
+    # one sign-in for the whole batch: the account or the application is checked here, and what is cached serves every mailbox silently
+    if ($counts.Complete -lt $counts.Total) {
+        if ($appOnly) { $script:UserPrincipalName = [string]@($batch.rows)[0].upn }
+        $null = Connect-ForTransfer
+        Disconnect-MbtGraph
+    }
+    try {
+        $purge = Invoke-MbtJobRetention -WorkFolder $work -RetentionDays $config.Jobs.RetentionDays -OverviewBudgetSeconds $overviewBudgetSeconds
+        if ($purge -and @($purge.Removed).Count) { Write-MbtItem INFO "removed $(Format-MbtNumber @($purge.Removed).Count) old job $(if (@($purge.Removed).Count -eq 1) { 'folder' } else { 'folders' }); the names are in the log" }
+    } catch { Write-MbtItem WARN "the old job folders could not be removed: $($_.Exception.Message)" }
+
+    $run = $option.Clone()
+    $runPass = $pass.Clone()
+    if ($parallel -gt 1 -and -not $runPass.Contains('Concurrency')) { $runPass.Concurrency = 2 }
+    $run.Pass = $runPass
+    $result = Invoke-MbtBatch -WorkFolder $work -Batch $batch -EntryScript $entryScript -Option $run -Parallel $parallel -StopFile $StopFile -LogFolder $LogFolder -DevelopmentMode:$DevelopmentMode
+    $failedRows = @($result.Batch.rows | Where-Object { $_.state -eq 'failed' })
+    if ($failedRows.Count) {
+        Write-MbtStep ('Mailboxes that failed ({0})' -f (Format-MbtNumber $failedRows.Count))
+        foreach ($r in ($failedRows | Select-Object -First 25)) { Write-MbtItem FAIL ('{0}: {1}' -f $r.upn, $r.message) }
+        if ($failedRows.Count -gt 25) { Write-MbtDetail ('and {0} more: see the report and batch.log' -f (Format-MbtNumber ($failedRows.Count - 25))) }
+    }
+    $allJobs = $null
+    try {
+        $overviewInfo = @{}
+        $allJobs = Write-MbtJobOverview -WorkFolder $work -TimeBudgetSeconds $overviewBudgetSeconds -Info $overviewInfo
+        if (-not $allJobs -and $overviewInfo.Contains('Complete') -and -not $overviewInfo.Complete) { Write-MbtItem WARN "the overview of all the jobs was not finished in $overviewBudgetSeconds s: the next job or the console finishes it" }
+    } catch { Write-MbtItem WARN "the overview of all the jobs could not be written: $($_.Exception.Message)" }
+    Write-MbtBatchSummary -ExitCode $result.ExitCode -Batch $result.Batch -Folder $result.Folder -Seconds $clock.Elapsed.TotalSeconds -Report $result.Report -AllJobs $allJobs -Log $logPath -Command $command -Stopped:$result.Stopped
+    $script:exitCode = $result.ExitCode
+}
+
 try {
     switch ($Mode) {
         'Status' {
@@ -854,6 +1026,7 @@ try {
             Show-MbtStoreStatus -Status (Get-MbtStoreStatus -Store $store)
         }
         'Export' {
+            if ($batchMode) { Invoke-BatchExport; break }
             $null = Connect-ForTransfer
             # read-only: the folder trees are read once for the whole run, and the reading says how far it is
             Write-MbtJobStep -Id tree -State running -Msg $(if ($SelectionFile) { 'Reading your selection' } else { 'Reading the folder tree' })
@@ -1318,7 +1491,7 @@ try {
     if ($script:reason) { $resultArgs.Reason = $script:reason }
     Write-MbtJobResult @resultArgs
     $script:sawResult = $true
-    if ($Mode -ne 'Browse') { Write-MbtRunSummary -ExitCode $exitCode }
+    if ($Mode -ne 'Browse' -and -not $batchMode) { Write-MbtRunSummary -ExitCode $exitCode }
 } catch {
     $hint = try { Get-ErrorHint $_.Exception.Message } catch { '' }
     $failure = Write-MbtJobError -Message ($_.Exception.Message + $hint)

@@ -171,9 +171,10 @@ Describe 'The overview of all the jobs' {
         $html | Should -Not -Match '[^\x00-\x7F]' -Because 'a text above ASCII is escaped too'
     }
 
-    It 'links the report of each job relative to the jobs folder, built in the page from the name of the folder' {
+    It 'links the report of each job relative to the jobs folder (or to the base the page says), built in the page from the name of the folder' {
         $t = Get-Content -LiteralPath (Join-Path $script:Root 'templates\Overview.template.html') -Raw
-        $t | Should -Match ([regex]::Escape('"./" + encodeURIComponent(r[col.id])'))
+        $t | Should -Match ([regex]::Escape('(data.base || "./") + encodeURIComponent(r[col.id])'))
+        (Get-OverviewData (Get-OverviewPage (Join-Path $TestDrive 'basic'))).Data.base | Should -Be './'
         $t | Should -Not -Match 'innerHTML|outerHTML|document\.write|insertAdjacentHTML' -Because 'no text of a job is ever put in the page as markup'
     }
 

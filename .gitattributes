@@ -22,6 +22,7 @@ package/module/MailboxTransfer.Eml.ps1 -text whitespace=blank-at-eol,space-befor
 package/module/MailboxTransfer.Events.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Report.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Overview.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.Batch.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Gui.Browse.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Gui.Core.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Gui.DemoJob.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol

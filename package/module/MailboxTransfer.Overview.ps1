@@ -129,6 +129,8 @@ function Get-MbtJobOverviewModel {
         The work folder: its jobs are in <WorkFolder>\jobs.
     .PARAMETER Batch
         Only the jobs of this batch (the "batch" field of status.json). A job without one is never listed when a batch is asked for.
+    .PARAMETER JobFolderName
+        Only these job folders (the names, as in the jobs folder): a batch knows its jobs, so the other jobs of the work folder are not looked at.
     .PARAMETER MaxJobs
         The page lists the newest jobs only; Left says how many older ones were left out.
     .PARAMETER TimeBudgetSeconds
@@ -138,7 +140,7 @@ function Get-MbtJobOverviewModel {
         Reads every job folder.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkFolder, [string]$Batch, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [ValidateRange(0, 86400)][int]$TimeBudgetSeconds = 0, [switch]$NoCache)
+    param([Parameter(Mandatory)][string]$WorkFolder, [string]$Batch, [string[]]$JobFolderName, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [ValidateRange(0, 86400)][int]$TimeBudgetSeconds = 0, [switch]$NoCache)
     Set-StrictMode -Version Latest
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $jobsFolder = Join-Path $WorkFolder 'jobs'
@@ -167,14 +169,25 @@ function Get-MbtJobOverviewModel {
     $fresh = 0
 
     $dirs = [Collections.Generic.List[IO.DirectoryInfo]]::new()
-    if (Test-Path -LiteralPath $jobsFolder -PathType Container) { foreach ($d in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) { $dirs.Add($d) } }
+    $only = $null
+    if ($PSBoundParameters.ContainsKey('JobFolderName') -and $null -ne $JobFolderName) {
+        $only = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($n in $JobFolderName) { if ($n) { [void]$only.Add([string]$n) } }
+        foreach ($n in $only) { $d = [IO.DirectoryInfo]::new([IO.Path]::Combine($jobsFolder, $n)); if ($d.Exists) { $dirs.Add($d) } }
+    }
+    elseif (Test-Path -LiteralPath $jobsFolder -PathType Container) { foreach ($d in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) { $dirs.Add($d) } }
     $todo = [Collections.Generic.List[IO.DirectoryInfo]]::new()
     $known = @{}
     foreach ($d in $dirs) {
         $c = $cache[$d.Name]
         if ($null -ne $c -and $c[0] -eq $d.LastWriteTimeUtc.Ticks) { $known[$d.Name] = $c; $cacheRows.Add($c) } else { $todo.Add($d) }
     }
-    if ($todo.Count -ne 0 -or $cache.Count -ne $known.Count) { $cacheDirty = $true }
+    if ($only) {
+        # the other folders were not looked at: what the last build knew of them stays in the cache
+        foreach ($k in $cache.Keys) { if (-not $only.Contains([string]$k)) { $cacheRows.Add($cache[$k]) } }
+        if ($todo.Count -ne 0) { $cacheDirty = $true }
+    }
+    elseif ($todo.Count -ne 0 -or $cache.Count -ne $known.Count) { $cacheDirty = $true }
     $incomplete = $false
     $unread = 0
     $blockSize = if ($TimeBudgetSeconds -gt 0) { 50 } else { 250 }
@@ -315,7 +328,7 @@ function Get-MbtJobOverviewModel {
     }
     return [ordered]@{
         JobsFolder = $jobsFolder; Batch = $batchText; Columns = $script:MbtOverviewColumns; Strings = $strings.ToArray(); Rows = $items; Left = $left; MaxJobs = $MaxJobs; Totals = $totals
-        Incomplete = $incomplete; Unread = $unread; Folders = $dirs.Count
+        Incomplete = $incomplete; Unread = $unread; Folders = $dirs.Count; LinkBase = './'; Caption = ''
         CacheRows = $cacheRows; CacheDirty = ($cacheDirty -and -not $NoCache)
     }
 }
@@ -344,7 +357,7 @@ function ConvertTo-MbtOverviewJson {
     $sb = [Text.StringBuilder]::new(256 + $Model.Rows.Count * 96)
     [void]$sb.Append('{"format":1,"columns":[' + (($Model.Columns | ForEach-Object { & $q $_ }) -join ',') + '],"results":[')
     [void]$sb.Append((($script:MbtOverviewResults | ForEach-Object { '{"code":' + $_.Code + ',"name":' + (& $q $_.Name) + ',"tone":' + (& $q $_.Tone) + ',"rank":' + $script:MbtOverviewRank[[int]$_.Code] + '}' }) -join ','))
-    [void]$sb.Append('],"strings":[' + (($Model.Strings | ForEach-Object { & $q $_ }) -join ',') + '],"left":' + $Model.Left + ',"batch":' + (& $q $Model.Batch) + ',"rows":[')
+    [void]$sb.Append('],"strings":[' + (($Model.Strings | ForEach-Object { & $q $_ }) -join ',') + '],"left":' + $Model.Left + ',"batch":' + (& $q $Model.Batch) + ',"base":' + (& $q $Model.LinkBase) + ',"rows":[')
     $lines = [string[]]::new($Model.Rows.Count)
     for ($n = 0; $n -lt $lines.Length; $n++) {
         $r = $Model.Rows[$n]
@@ -393,7 +406,8 @@ function ConvertTo-MbtJobOverviewHtml {
     & $addTile 'Data' (Format-MbtReportBytes ([double]$totals.Bytes))
 
     $cap = ''
-    if ($Model.Left -gt 0) { $cap = '<p class="caption">This page lists the ' + (Format-MbtReportNumber $Model.MaxJobs) + ' newest jobs. ' + $(if ($Model.Left -eq 1) { '1 older job is' } else { (Format-MbtReportNumber $Model.Left) + ' older jobs are' }) + ' not listed; their folders are in the jobs folder.</p>' }
+    if ($Model.Caption) { $cap = '<p class="caption">' + (& $enc $Model.Caption) + '</p>' }
+    if ($Model.Left -gt 0) { $cap += '<p class="caption">This page lists the ' + (Format-MbtReportNumber $Model.MaxJobs) + ' newest jobs. ' + $(if ($Model.Left -eq 1) { '1 older job is' } else { (Format-MbtReportNumber $Model.Left) + ' older jobs are' }) + ' not listed; their folders are in the jobs folder.</p>' }
     $json = ConvertTo-MbtOverviewJson -Model $Model
     $generated = 'Written ' + (Format-MbtReportTime ([datetime]::UtcNow)) + ' from the status.json of every job folder' + $(if ($Version) { ' by Mailbox Transfer ' + $Version } else { '' }) + '. The times in the table are in the time zone of the browser. The page needs no network.'
     $subtitle = (Format-MbtReportNumber $Model.Totals.Jobs) + $(if ($Model.Totals.Jobs -eq 1) { ' job' } else { ' jobs' }) + ' in ' + $Model.JobsFolder
@@ -416,6 +430,12 @@ function Write-MbtJobOverview {
         holds the file for a moment is waited for. The links to the reports of the jobs are relative to the jobs folder, so the page works where it is.
     .PARAMETER Batch
         Only the jobs of this batch (status.json: batch).
+    .PARAMETER JobFolderName
+        Only these job folders of the jobs folder (the report of a batch lists the jobs it started, whatever the number of other jobs).
+    .PARAMETER OutputPath
+        The page is written to this file instead of <jobs folder>\<FileName> (the report of a batch is in the folder of the batch); -LinkBase is then the path from that file to the jobs folder, with a slash at its end, for the links to the reports of the jobs.
+    .PARAMETER Caption
+        A sentence above the table (the batch report says how many mailboxes have not started).
     .PARAMETER TimeBudgetSeconds
         The build stops after this many seconds (0 = no limit). The page is then not written (the one that is there stays), what was read is kept for the next build, and $null is returned; -Info says how many job folders are left.
     .PARAMETER Info
@@ -427,7 +447,8 @@ function Write-MbtJobOverview {
     param(
         [Parameter(Mandatory, ParameterSetName = 'Work')][string]$WorkFolder,
         [Parameter(Mandatory, ParameterSetName = 'Job')][string]$JobFolder,
-        [string]$Batch, [string]$FileName = 'overview.html', [string]$TemplatePath, [string]$Version, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [ValidateRange(0, 86400)][int]$TimeBudgetSeconds = 0, [hashtable]$Info, [switch]$NoCache
+        [string]$Batch, [string[]]$JobFolderName, [string]$FileName = 'overview.html', [string]$OutputPath, [string]$LinkBase = './', [string]$Caption,
+        [string]$TemplatePath, [string]$Version, [ValidateRange(1, 1000000)][int]$MaxJobs = 20000, [ValidateRange(0, 86400)][int]$TimeBudgetSeconds = 0, [hashtable]$Info, [switch]$NoCache
     )
     Set-StrictMode -Version Latest
     if ($PSCmdlet.ParameterSetName -eq 'Job') {
@@ -449,15 +470,20 @@ function Write-MbtJobOverview {
     try {
         try { $held = $mutex.WaitOne(30000) } catch [Threading.AbandonedMutexException] { $held = $true }
         $clock = [Diagnostics.Stopwatch]::StartNew()
-        $model = Get-MbtJobOverviewModel -WorkFolder $WorkFolder -Batch $Batch -MaxJobs $MaxJobs -TimeBudgetSeconds $TimeBudgetSeconds -NoCache:$NoCache
+        $modelArgs = @{ WorkFolder = $WorkFolder; Batch = $Batch; MaxJobs = $MaxJobs; TimeBudgetSeconds = $TimeBudgetSeconds; NoCache = $NoCache }
+        if ($PSBoundParameters.ContainsKey('JobFolderName')) { $modelArgs.JobFolderName = $JobFolderName }
+        $model = Get-MbtJobOverviewModel @modelArgs
         if ($Info) { $Info.Complete = -not $model.Incomplete; $Info.Unread = $model.Unread; $Info.Folders = $model.Folders; $Info.Seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1) }
         if ($model.CacheDirty) { try { Write-MbtOverviewFile -Path (Join-Path $jobsFolder 'overview.cache.json') -Text (ConvertTo-MbtOverviewCacheJson -Model $model) } catch { Write-Verbose "overview cache not written: $($_.Exception.Message)" } }
         if ($model.Incomplete) {
             Write-MbtLog WARN ('The overview was not finished in {0} s: {1} of {2} job folders are left for the next build' -f $TimeBudgetSeconds, $model.Unread, $model.Folders)
             return $null
         }
+        $model.LinkBase = $LinkBase
+        $model.Caption = $Caption
         $html = ConvertTo-MbtJobOverviewHtml -Model $model -TemplatePath $TemplatePath -Version $Version
-        $target = Join-Path $jobsFolder $FileName
+        $target = if ($OutputPath) { [IO.Path]::GetFullPath($OutputPath) } else { Join-Path $jobsFolder $FileName }
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
         Write-MbtOverviewFile -Path $target -Text $html
         return $target
     } finally {

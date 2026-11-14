@@ -856,5 +856,9 @@ Describe 'The All jobs button' {
         $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
         $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport.*?\$reportDone = \{.*?\$g\.Engine\.JobOverview \$work'
     }
-
+    It 'a batch row of the jobs to continue opens its report and never continues anything' {
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match '(?s)function Resume-MbtGuiJob.*?\$Entry\.Task -eq ''batch''\) \{ Open-MbtGuiBatchReport \$Entry; return \}.*?\$reqFile'
+        $run | Should -Match '(?s)function Open-MbtGuiBatchReport.*?\$g\.Engine\.BatchReport \$g\.S\.WorkFolder'
+    }
 }

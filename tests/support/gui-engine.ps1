@@ -408,6 +408,30 @@ foreach ($case in @(
         }
     }
 }
+Check 'jobs: a batch is one line with its numbers and its report; the jobs of a batch that is complete are not listed, those of a batch that is not complete carry its name, three at most' {
+    $w = Join-Path $Work ('jobs-' + [guid]::NewGuid().ToString('N'))
+    foreach ($n in 1..2) { New-TestJobFolder $w "20261110-100$n-job" ('{"v":1,"jobId":"d' + $n + '","task":"export","title":"Export done' + $n + '","batch":"Done","state":"complete","updated":"2026-11-10T10:0' + $n + ':00.000Z"}') }
+    foreach ($n in 3..7) { New-TestJobFolder $w "20261110-100$n-job" ('{"v":1,"jobId":"o' + $n + '","task":"export","title":"Export open' + $n + '","batch":"Open","state":"stopped","updated":"2026-11-10T10:0' + $n + ':00.000Z","counts":{"done":4}}') }
+    New-TestJobFolder $w '20261110-1008-job' '{"v":1,"jobId":"plain","task":"import","title":"Import plain","state":"stopped","updated":"2026-11-10T10:08:00.000Z"}'
+    $rowOf = { param($Id, $State, $Job) [ordered]@{ n = 1; upn = "$Id@contoso.com"; location = 'Primary'; selection = ''; output = ''; store = ''; state = $State; job = $Job; attempts = 1 } }
+    $batchOf = { param($Id, $Rows) [ordered]@{ v = 1; id = $Id; name = $Id; created = '2026-11-10T09:00:00.000Z'; updated = '2026-11-10T09:00:00.000Z'; state = ''; mode = 'Export'; csv = ''; parallel = 1; options = @{}; counts = $null; rows = $Rows } }
+    Save-MbtBatch -Batch (& $batchOf 'Done' @((& $rowOf 'a' 'complete' '20261110-1001-job'), (& $rowOf 'b' 'complete' '20261110-1002-job'))) -Folder (Join-Path $w 'batches\Done')
+    Save-MbtBatch -Batch (& $batchOf 'Open' @((& $rowOf 'c' 'partial' '20261110-1003-job'), (& $rowOf 'd' 'failed' '20261110-1004-job'), (& $rowOf 'e' 'pending' ''))) -Folder (Join-Path $w 'batches\Open')
+    $jobs = @(& $engine.Jobs $w)
+    $lines = @($jobs | Where-Object Task -EQ 'batch')
+    Assert-That ($lines.Count -eq 2) "two batch lines, got $($lines.Count)"
+    foreach ($l in $lines) { Assert-Reads $l 'Task', 'Title', 'Sub', 'State', 'Button', 'Folder', 'Report', 'Batch' 'a batch line' }
+    $open = $lines | Where-Object Batch -EQ 'Open'
+    Assert-That ($open.Sub -like '0 of 3 mailboxes complete, 1 not complete, 1 failed, 1 not started*command line*') "the numbers: $($open.Sub)"
+    Assert-That ($open.State -eq 'warn' -and $open.Button -eq 'Open the report') 'a batch that is not complete is a warning with a button that opens the report'
+    $done = $lines | Where-Object Batch -EQ 'Done'
+    Assert-That ($done.State -eq 'ok' -and $done.Sub -like '2 of 2 mailboxes complete*' -and $done.Sub -notlike '*command line*') "a complete batch: $($done.Sub)"
+    $others = @($jobs | Where-Object Task -NE 'batch')
+    Assert-That (-not @($others | Where-Object { $_.Title -like 'Export done*' }).Count) 'the jobs of a complete batch are left out'
+    Assert-That (@($others | Where-Object { $_.Sub -like 'batch Open - *' }).Count -eq 3) 'the jobs of a batch that is not complete: three, with the name of the batch'
+    Assert-That (@($others | Where-Object Title -EQ 'Import plain').Count -eq 1) 'the other jobs are listed'
+    Assert-That ($jobs.Count -le 8) 'eight lines at most'
+}
 Check 'jobs: a job that stopped with an empty count says when it stopped' {
     $w = Join-Path $Work ('jobs-' + [guid]::NewGuid().ToString('N'))
     New-TestJobFolder $w '20261110-1000-job' '{"v":1,"jobId":"a1","task":"import","title":"t","state":"stopped","updated":"2026-11-10T10:00:00.000Z","counts":{}}'

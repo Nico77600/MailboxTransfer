@@ -609,6 +609,64 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 > [!NOTE]
 > **Keep awake.** Windows follows your company's power settings unless you tick **Keep this PC awake while it runs** (in **Expert mode**, at the bottom of the Verify page; it is off by default). If the PC goes to sleep, the job stops and **Continue** does what is left. Ticked, the tool asks Windows not to sleep because of inactivity; it still cannot stop a closed lid, a Sleep you choose yourself, or a restart. The Verify page says so before you start (**What if this PC sleeps, or I close the window?**).
 
+### Exporting many mailboxes
+
+If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a **CSV file** (one mailbox on each line) and start **one command**. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one **batch** that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the **command line**: the console shows a batch, read only, but does not start one. Only **export** works this way; a batch of imports is not part of this version.
+
+**1. The list.** A text file, saved as UTF-8 (Excel: *CSV UTF-8*). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:
+
+| Column | Needed | What it says |
+|---|---|---|
+| `UserPrincipalName` | yes | The address of the mailbox. |
+| `Location` | no | `Primary`, `Archive` or `Both` (the primary mailbox, the archive and, for an auto-expanding archive, its auxiliary archives). Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
+| `OutputPst` | no | Where this mailbox goes as PST: a `.pst` file, or a folder (the file is then named after the address). Empty: the `-OutputPst` of the command. A relative path starts from the folder of the CSV file. |
+| `SelectionFile` | no | A selection saved by the console or by `-Mode Browse -SaveSelection`: only what it ticks is exported, and its mailbox is the one it names (`Location` is not used). |
+| `Notes` | no | Anything you want. It is ignored, like any other column the tool does not know. |
+
+```text
+UserPrincipalName;Location;OutputPst;Notes
+adele.vance@contoso.com;Both;;Finance
+alex.wilber@contoso.com;Primary;;
+lee.gu@contoso.com;Archive;D:\Exports\legal\lee-gu.pst;legal hold
+grady.archie@contoso.com;;;uses the default
+```
+
+The whole file is checked **before anything starts**, and every problem is printed together, each with its line: an empty or wrong address, the same address twice (capitals do not matter), a wrong `Location`, a `SelectionFile` that does not exist, a file name Windows refuses, and two lines that would write **the same PST file**. The same address can be on two lines when they are for different places (its `Primary` mailbox on one, its `Archive` on the other, or two different `SelectionFile`s); their stores and PST files then carry the `Location` (or the number of the line) in their name. The same `Location` twice is refused, and `Both` already covers `Primary` and `Archive`. Nothing starts while one problem is left; fix the file and run the command again.
+
+**2. The command.** Run it with `-WhatIf` first: it checks the file and prints the plan, and writes nothing.
+
+```powershell
+.\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\Batch\mailboxes.csv -BatchName Wave1 -OutputPst D:\Exports -StorePath D:\Stores -WhatIf
+.\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\Batch\mailboxes.csv -BatchName Wave1 -OutputPst D:\Exports -StorePath D:\Stores -ParallelMailboxes 2 -AppOnly
+```
+
+- `-OutputPst D:\Exports`: one PST for each mailbox, `D:\Exports\<address>.pst` (a name such as `D:\Exports\mail.pst` gives `mail-<address>.pst`). Without it, a mailbox is exported to its store only.
+- `-StorePath D:\Stores`: the folder that holds one export store for each mailbox. A store can be as big as its mailbox: plan the disk. Default: the `stores` folder of the work folder.
+- `-BatchName Wave1`: the name of the batch (letters, digits, spaces, dots, dashes). Without a name the date and the time are used. The usual options of an export apply to every line (`-Concurrency`, `-PstMaxSizeGB`, `-SkipCheck`, `-IncludeRecoverableItems`, `-Folder`, `-RetryWaitSeconds`...).
+- `-ParallelMailboxes 1` to `4` (default 1): how many mailboxes run at the same time. Each one is a process of its own with its own requests, so the throttling of Microsoft (it is counted for each mailbox, and waited for exactly as always) never mixes two mailboxes. With more than one at a time, each uses 2 parallel requests unless you give `-Concurrency`. Start with 1 or 2 and look at the *Microsoft slowed us down* counts in the report before you go higher.
+- `-WorkFolder`: where the batch, its jobs and its stores live. Default: `%LOCALAPPDATA%\MailboxTransfer`, the folder of the console.
+
+**3. Sign-in, once.** The command signs in once, before the first mailbox, and says if it cannot. A mailbox **never asks** for a sign-in in the middle of a run (nobody is there at night): one that needs it is marked *failed* with that reason, and the batch goes on; after three in a row it stops starting mailboxes, since the others would fail the same way. Use the sign-in as **the application** (`-AppOnly`, chapter 2 and the reference guide, 4.6): it has no token to expire and reaches every mailbox of its scope. With a **delegated** sign-in (you), the account must have access to each mailbox (FullAccess), only its own mailbox can have its archive exported, and the sign-in must still be valid for the length of the run: sign in just before you start.
+
+**4. While it runs.** One line is printed as each mailbox ends, and the report of the batch is written again each time:
+
+```text
+      +  [1/500] adele.vance@contoso.com (Both) complete: 12,431 items, 4.2 GiB, 00:18:02
+      !  [2/500] alex.wilber@contoso.com (Primary) not complete: run the batch again to continue - 8,100 items, 3 failed
+      x  [3/500] lee.gu@contoso.com (Archive) failed: We cannot find this mailbox. Check the address.
+```
+
+To **stop**, press **Ctrl+C**, or create a file named `stop.request` in the folder of the batch (`<work folder>\batches\Wave1\`; or give `-StopFile`). The running mailboxes stop the way **Stop and keep progress** stops them, no other starts, and nothing is lost.
+
+**5. Continue.** Run **the same command again** (or `-ResumeBatch Wave1`, which needs nothing else). The mailboxes that are *complete* are skipped, the ones that were stopped or interrupted go on in **their own job folder** (only what is left is done), and the *failed* ones are tried again. A batch keeps the mailboxes it was made with: a different list needs another `-BatchName`. The options of the first run (sign-in, output folder, tuning) are kept unless you give them again.
+
+**6. The report of the batch.** `<work folder>\batches\<name>\report.html` is the page *All jobs* of the jobs of this batch, one row for each mailbox: the result, the items done (and failed), the data, the duration and a link to the **report of its job**. The tiles give the totals; the mailboxes that failed or are not complete come first; a line above the table says how many mailboxes have not started yet. The same folder holds `batch.json` (the list, the options, the state and the job of each mailbox) and `batch.log`. At the end the summary card prints the numbers, the paths of the report and the log, the **next steps** and the exit code: **0** every mailbox is complete, **2** not complete (stopped, or mailboxes left; nothing is lost; run the command again), **1** the file has problems or a mailbox failed. When one mailbox failed and others are not complete, the code is 1: a failure needs a look; the report tells which.
+
+**7. In the console.** The Task page, in **Continue a job**, shows a batch as one line (*Batch Wave1: 412 of 500 mailboxes complete, 3 failed...*) with a button that opens its report. The jobs of the batch that are not complete are listed with the name of the batch and continue like any job; the finished ones are not listed one by one. **All jobs** has a **Batch** list that shows one batch. The folders of a batch's jobs are never tidied away while the batch is not complete (see below).
+
+> [!NOTE]
+> **Limits.** Export only (no batch of imports yet). At most 4 mailboxes at a time; use `Both` on one line for the primary mailbox and the archive of the same address. Another mailbox than your own with a delegated sign-in: `Primary` only. The report lists the jobs of the batch, so a mailbox that has not started has no row until it starts. A batch that is never finished keeps the folders of its jobs for ever: remove the batch folder (`batches\<name>`) when you give it up.
+
 ### Many jobs: one page for all of them
 
 After a few dozen jobs the question is no longer "what did this job do" but "which of my jobs need me". The tool answers it with one page, **overview.html**, in the folder `jobs` of your work folder. It has one row for each job: when it started, the task, the mailbox or the source, the destination, the result, the items done (and failed), the data, the duration, and a link to the report of the job. The tiles at the top give the totals.
@@ -621,7 +679,7 @@ After a few dozen jobs the question is no longer "what did this job do" but "whi
 
 ### Old jobs are tidied away
 
-Each job leaves a folder in `jobs` (its report, its events, its status). After **90 days** the folder of a job that is **finished** (complete, or ended by an error) is removed, when the console starts and when a command line job starts; the overview is written again. The tool never removes a job that can still be continued (stopped, not complete, waiting for a decision, interrupted), a job whose folder it cannot read, or a folder that another job still names. The folders of the checks of a plan (**Check the plan**) write nothing and are removed after **one day**, whatever their state. The export stores, the selections you saved and the PST or EML files a job wrote are not in `jobs`: they are never touched. The names of the folders that were removed are in the log.
+Each job leaves a folder in `jobs` (its report, its events, its status). After **90 days** the folder of a job that is **finished** (complete, or ended by an error) is removed, when the console starts and when a command line job starts; the overview is written again. The tool never removes a job that can still be continued (stopped, not complete, waiting for a decision, interrupted), a job of a batch that is not complete, a job whose folder it cannot read, or a folder that another job still names. The folders of the checks of a plan (**Check the plan**) write nothing and are removed after **one day**, whatever their state. The export stores, the selections you saved and the PST or EML files a job wrote are not in `jobs`: they are never touched. The names of the folders that were removed are in the log.
 
 To change the delay, set `Jobs.RetentionDays` in `config\MailboxTransfer.config.local.psd1` (a number of days, from 1 to 3650; **0 keeps everything**):
 

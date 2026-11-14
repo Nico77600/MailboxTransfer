@@ -281,11 +281,25 @@ function Get-MbtGuiRunTitle {
     }
 }
 
+function Open-MbtGuiBatchReport {
+    <# The report of a batch: the file in its folder, written again by the worker when it is not there (the batch was made by an older version, or the file was removed). #>
+    param([Parameter(Mandatory)]$Entry)
+    $g = $script:Gui
+    $say = { param([string]$Title, [string]$Body) Show-MbtGuiDialog -Title $Title -Body $Body -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $open = { param($path) if ($path -and (Test-Path -LiteralPath ([string]$path))) { Start-Process -FilePath ([string]$path) } else { & $say 'Nothing to open here' 'No file was written: this is the demonstration.' } }.GetNewClosure()
+    $report = [string](Get-MbtGuiProp $Entry 'Report' '')
+    if ($report -and (Test-Path -LiteralPath $report)) { & $open $report; return }
+    $fail = { param($message) & $say 'The report of the batch could not be written' ([string]$message) }.GetNewClosure()
+    try { & $g.Engine.BatchReport $g.S.WorkFolder ([string]$Entry.Batch) $open $fail } catch { & $fail $_.Exception.Message }
+}
+
 function Resume-MbtGuiJob {
     <# Continue: the same request again, in the same job folder, so only what is left is done. #>
     param($Entry)
     $g = $script:Gui; $s = $g.S
     if ($g.Engine.Name -eq 'Fake' -and $Entry.PSObject.Properties['Demo'] -and $Entry.Demo) { & $Entry.Demo; return }
+    # a batch is run from the command line: the console shows its report, read only
+    if ($Entry.PSObject.Properties['Task'] -and $Entry.Task -eq 'batch') { Open-MbtGuiBatchReport $Entry; return }
     $reqFile = Join-Path $Entry.Folder 'request.json'
     if (-not (Test-Path -LiteralPath $reqFile)) { return }
     $req = Get-Content -LiteralPath $reqFile -Raw | ConvertFrom-Json

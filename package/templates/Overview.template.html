@@ -220,7 +220,7 @@ footer { color: var(--cp-text-muted); font-size: 12px; line-height: 1.6; margin-
         tr.appendChild(element("td", "num", bytes(r[col.bytes])));
         tr.appendChild(element("td", "num", r[col.code] === 7 ? "" : length(r[col.seconds])));
         const link = element("td");
-        if (r[col.link] > 0) { const a = element("a", "", r[col.link] === 1 ? "Report" : "CSV"); a.href = "./" + encodeURIComponent(r[col.id]) + "/" + (r[col.link] === 1 ? "report.html" : "report.csv"); link.appendChild(a); }
+        if (r[col.link] > 0) { const a = element("a", "", r[col.link] === 1 ? "Report" : "CSV"); a.href = (data.base || "./") + encodeURIComponent(r[col.id]) + "/" + (r[col.link] === 1 ? "report.html" : "report.csv"); link.appendChild(a); }
         tr.appendChild(link);
         body.appendChild(tr);
       });
