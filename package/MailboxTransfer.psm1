@@ -337,6 +337,7 @@ function Import-MbtConfiguration {
         Graph = @{ BaseUrl = 'https://graph.microsoft.com/v1.0'; MaxAttempts = 6; BaseBackoffSeconds = 2; MaxBackoffSeconds = 60; RequestTimeoutMinutes = 15; ExportBatchSize = 20; ItemPageSize = 0 }
         Auth  = @{ Scopes = @('https://graph.microsoft.com/.default'); RedirectUri = 'http://localhost'; CacheFile = ''; AppTenantId = ''; AppClientId = ''; CertificateThumbprint = ''; CertificatePath = '' }
         Output = @{ Root = '.\out' }
+        Jobs = @{ RetentionDays = 90 }
         Tenant = @{ TenantId = ''; ClientId = ''; UserPrincipalName = ''; PrimaryMailboxId = ''; ArchiveMailboxId = '' }
         Lab = @{
             TenantId = ''; ClientId = ''; UserPrincipalName = ''; UserObjectId = ''; PrimaryMailboxId = ''; ArchiveMailboxId = ''; SourceFolder = ''; TargetFolder = ''
@@ -363,6 +364,9 @@ function Import-MbtConfiguration {
         $cfg.Tenant[$key] = $value; $cfg.Lab[$key] = $value
     }
     if ($cfg.Graph.ExportBatchSize -lt 1 -or $cfg.Graph.ExportBatchSize -gt 20) { throw 'Graph.ExportBatchSize must be between 1 and 20 (limit of exportItems).' }
+    $retention = 0
+    if (-not [int]::TryParse([string]$cfg.Jobs.RetentionDays, [Globalization.NumberStyles]::Integer, [Globalization.CultureInfo]::InvariantCulture, [ref]$retention) -or $retention -lt 0 -or $retention -gt 3650) { throw 'Jobs.RetentionDays must be a whole number of days between 0 and 3650 (0 keeps the folders of all the jobs).' }
+    $cfg.Jobs.RetentionDays = $retention
     if ([string]::IsNullOrWhiteSpace($cfg.Auth.CacheFile)) { $cfg.Auth.CacheFile = Join-Path $env:LOCALAPPDATA 'MailboxTransfer\token.cache' }
     return [pscustomobject]$cfg
 }
@@ -3334,5 +3338,5 @@ Export-ModuleMember -Function @(
     'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
     'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
-    'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel'
+    'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
 )

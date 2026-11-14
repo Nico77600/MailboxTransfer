@@ -619,6 +619,16 @@ After a few dozen jobs the question is no longer "what did this job do" but "whi
 - A page of thousands of jobs opens at once: it shows 200 rows and **Show more** adds more. It lists the 20,000 newest jobs and says so when there are more. The checks of a plan (**Check the plan**) are not jobs and are left out.
 - The page is one file that needs no network. It follows the theme of your browser. It is rewritten at the end of every job; two jobs that end together cannot damage it. If it cannot be written, the job is not affected: a warning is shown. From PowerShell: `Write-MbtJobOverview -WorkFolder <work folder>`.
 
+### Old jobs are tidied away
+
+Each job leaves a folder in `jobs` (its report, its events, its status). After **90 days** the folder of a job that is **finished** (complete, or ended by an error) is removed, when the console starts and when a command line job starts; the overview is written again. The tool never removes a job that can still be continued (stopped, not complete, waiting for a decision, interrupted), a job whose folder it cannot read, or a folder that another job still names. The export stores, the selections you saved and the PST or EML files a job wrote are not in `jobs`: they are never touched. The names of the folders that were removed are in the log.
+
+To change the delay, set `Jobs.RetentionDays` in `config\MailboxTransfer.config.local.psd1` (a number of days, from 1 to 3650; **0 keeps everything**):
+
+```powershell
+@{ Jobs = @{ RetentionDays = 30 } }
+```
+
 <!-- icon: lifebuoy -->
 ## 9. When something goes wrong
 

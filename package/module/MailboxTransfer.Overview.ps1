@@ -13,7 +13,7 @@
         Get-MbtJobOverviewModel   what the overview says, as data
         Write-MbtJobOverview      overview.html in the jobs folder; returns the path. Two jobs that end at the same time never corrupt it
 
-    The command line and the console rewrite it at the end of every job.
+    The command line and the console rewrite it at the end of every job and after the job folders were purged (Invoke-MbtJobRetention).
 
 .NOTES
     Author  : Nicolas Fabert

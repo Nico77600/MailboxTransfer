@@ -107,6 +107,8 @@ if ($Demo) {
     if ($DocScenario) { Set-MbtGuiScenario -Name $DocScenario }
 } else {
     $engine = New-MbtGuiRealEngine -PackageRoot $packageRoot -EntryScript $entry -WorkFolder $WorkFolder
+    # the folders of the jobs that are finished and older than Jobs.RetentionDays go (in the background)
+    try { & $engine.Retention $WorkFolder } catch { Write-Verbose "job retention: $($_.Exception.Message)" }
     $window = New-MbtGuiWindow -Engine $engine -Theme $Theme -WorkFolder $WorkFolder -EntryScript $entry -Version $script:ConsoleVersion
 }
 [void]$window.ShowDialog()

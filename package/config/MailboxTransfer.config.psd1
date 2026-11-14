@@ -42,6 +42,12 @@
         Root = '.\out'
     }
 
+    Jobs = @{
+        # Days a finished job keeps its folder in <work folder>\jobs (its report, its events, its status). A job that can still be continued (stopped, not complete,
+        # waiting for a decision) is never removed. The stores, the selections and the PST or EML files a job wrote are never removed. 0 keeps everything.
+        RetentionDays = 90
+    }
+
     # Your tenant, your application (signing in as a user) and the mailbox to work on.
     # Placeholders only: keep the real values in config\MailboxTransfer.config.local.psd1.
     Tenant = @{

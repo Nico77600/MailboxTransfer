@@ -863,6 +863,11 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <li>A page of thousands of jobs opens at once: it shows 200 rows and <strong>Show more</strong> adds more. It lists the 20,000 newest jobs and says so when there are more. The checks of a plan (<strong>Check the plan</strong>) are not jobs and are left out.</li>
 <li>The page is one file that needs no network. It follows the theme of your browser. It is rewritten at the end of every job; two jobs that end together cannot damage it. If it cannot be written, the job is not affected: a warning is shown. From PowerShell: <code>Write-MbtJobOverview -WorkFolder &lt;work folder&gt;</code>.</li>
 </ul>
+<h3 id="old-jobs-are-tidied-away">Old jobs are tidied away</h3>
+<p>Each job leaves a folder in <code>jobs</code> (its report, its events, its status). After <strong>90 days</strong> the folder of a job that is <strong>finished</strong> (complete, or ended by an error) is removed, when the console starts and when a command line job starts; the overview is written again. The tool never removes a job that can still be continued (stopped, not complete, waiting for a decision, interrupted), a job whose folder it cannot read, or a folder that another job still names. The export stores, the selections you saved and the PST or EML files a job wrote are not in <code>jobs</code>: they are never touched. The names of the folders that were removed are in the log.</p>
+<p>To change the delay, set <code>Jobs.RetentionDays</code> in <code>config\MailboxTransfer.config.local.psd1</code> (a number of days, from 1 to 3650; <strong>0 keeps everything</strong>):</p>
+<div class="code"><div class="code-head"><span>PowerShell</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>@{ Jobs = @{ RetentionDays = 30 } }
+</code></pre></div>
 </div></section><section class="section" id="when-something-goes-wrong"><div class="section-head"><div class="section-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="m5.6 5.6 3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6"/></svg></div><div><div class="section-eyebrow">Chapter 9</div><h2>When something goes wrong</h2></div></div><div class="section-body">
 <div class="markdown-alert markdown-alert-warning">
 <p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor" version="1.1" width="16" height="16" aria-hidden="true"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
@@ -1231,7 +1236,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <hr />
 <p><strong>Next:</strong> the <a href="MailboxTransfer-Guide.html">reference guide</a> has every setting, the exact rights, the file formats, the exit codes and the limits.</p>
 </div></section>
-<footer>Mailbox Transfer 1.1.0 · Nicolas Fabert · generated 2026-11-14 10:57 from MailboxTransfer-UserGuide.md</footer></main>
+<footer>Mailbox Transfer 1.1.0 · Nicolas Fabert · generated 2026-11-14 11:05 from MailboxTransfer-UserGuide.md</footer></main>
 <button type="button" id="to-top" title="Back to top"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
 <dialog id="zoom"><img alt=""></dialog>
 <script>

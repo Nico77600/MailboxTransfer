@@ -183,8 +183,9 @@ function New-MbtGuiFakeEngine {
             [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } })
         if ($null -ne $script:FakeJobCount) { $jobs = @($jobs | Select-Object -First $script:FakeJobCount) }
         $jobs }
-    # the demonstration writes no overview
+    # the demonstration writes no overview and removes no folder
     $engine.JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null }
+    $engine.Retention = { param($Work) }
     $engine.FreeSpace ={ param($Path) 412GB }
     # what the check of the plan would count: the ticks, as the service counts them (an auxiliary archive and a PST give no size)
     $engine.Plan = { param($Request, $OnDone, $OnError)

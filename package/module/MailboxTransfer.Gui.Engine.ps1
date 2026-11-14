@@ -109,6 +109,15 @@ function New-MbtGuiRealEngine {
         Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($work) Write-MbtJobOverview -WorkFolder $work }
     }.GetNewClosure()
 
+    # when the console starts: the folders of the jobs that are finished and older than Jobs.RetentionDays are removed, in the background; a job that can still be continued never is
+    $e.Retention = { param($Work)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnError { param($message) Write-MbtGuiFault 'job retention' $message } -Script {
+            param($work)
+            try { $null = Start-MbtLog -Directory (Join-Path $work 'logs') } catch { Write-Verbose "no log: $_" }
+            $null = Invoke-MbtJobRetention -WorkFolder $work
+        }
+    }.GetNewClosure()
+
     $e.FreeSpace = { param($Path) try { $r = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)); return ([IO.DriveInfo]::new($r)).AvailableFreeSpace } catch { return $null } }
 
     # -Silent: only the cached token (no sign-in window, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)

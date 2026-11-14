@@ -613,6 +613,14 @@ function Write-MbtRunSummary {
     Write-MbtSummary -Title $title -Values $values -Status $status
 }
 
+# The folders of the jobs that are finished and older than Jobs.RetentionDays (90 days; 0 keeps everything) are removed before this job starts; a job that can still be continued never is.
+if ($EventsFile -and -not $dryRun) {
+    try {
+        $purge = Invoke-MbtJobRetention -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent) -RetentionDays $config.Jobs.RetentionDays
+        if ($purge -and @($purge.Removed).Count) { Write-MbtItem INFO "removed $(Format-MbtNumber @($purge.Removed).Count) old job $(if (@($purge.Removed).Count -eq 1) { 'folder' } else { 'folders' }) (finished more than $($purge.RetentionDays) days ago); the names are in the log" }
+        if ($purge -and @($purge.Failed).Count) { Write-MbtItem WARN "$(Format-MbtNumber @($purge.Failed).Count) old job $(if (@($purge.Failed).Count -eq 1) { 'folder' } else { 'folders' }) could not be removed (something holds a file); the next job tries again" }
+    } catch { Write-MbtItem WARN "the old job folders could not be removed: $($_.Exception.Message)" }
+}
 if ($StopFile) { Start-MbtStopWatch -Path $StopFile }
 if ($KeepAwake) { [void](Start-MbtKeepAwake) }
 if ($EventsFile) {

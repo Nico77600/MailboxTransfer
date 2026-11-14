@@ -285,6 +285,123 @@ function Get-MbtJob {
     @($found | Sort-Object Updated -Descending | Select-Object -First $Limit)
 }
 
+function Remove-MbtFolderTree {
+    <# Removes what is in a folder, the folder itself stays; a link (junction or symbolic link) is removed and never followed, so what it points to is never touched. -KeepFirst: a file of the folder that is left for the caller. #>
+    param([Parameter(Mandatory)][string]$Path, [string]$KeepFirst)
+    foreach ($entry in [IO.DirectoryInfo]::new($Path).EnumerateFileSystemInfos()) {
+        if ($KeepFirst -and $entry.Name -ieq $KeepFirst) { continue }
+        $link = [bool]($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        if ($entry -is [IO.DirectoryInfo]) {
+            if (-not $link) { Remove-MbtFolderTree -Path $entry.FullName }
+            [IO.Directory]::Delete($entry.FullName)
+        } else {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReadOnly) { $entry.Attributes = [IO.FileAttributes]::Normal }
+            $entry.Delete()
+        }
+    }
+}
+
+function Invoke-MbtJobRetention {
+    <#
+    .SYNOPSIS
+        Deletes the folders of the jobs that are finished and older than the retention (Jobs.RetentionDays of the configuration, 90 days; 0 keeps everything).
+    .DESCRIPTION
+        Only the direct subfolders of <WorkFolder>\jobs are ever looked at, and only a job whose status.json says that it is finished (state complete or error) and whose last
+        update is older than the retention is deleted. Kept, always: a job that can still be continued (not complete or error: stopped, partial, waiting for a decision, still
+        running, or that never wrote its end), a folder without a readable status.json, a folder that is a link to somewhere else, the folder named by -Keep (the job that
+        is starting), and a folder that a job that is kept names in its request (a store, an output, a file). The stores, the selections and the files a job wrote
+        (PST, EML) are not in the jobs folder: they are never touched. The overview of all the jobs is written again when something was removed. What was removed is written
+        to the log, one line for each folder. Returns RetentionDays, JobsFolder, Removed, Failed, Protected (names of folders) and Overview.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Work')][string]$WorkFolder,
+        [Parameter(Mandatory, ParameterSetName = 'Job')][string]$JobFolder,
+        [ValidateRange(0, 3650)][Nullable[int]]$RetentionDays,
+        [Parameter(ParameterSetName = 'Work')][string]$Keep
+    )
+    Set-StrictMode -Version Latest
+    if ($PSCmdlet.ParameterSetName -eq 'Job') {
+        # the entry script knows its own job folder only: its work folder is the one that holds its jobs folder, and the job that starts is never removed
+        $parent = Split-Path ([IO.Path]::GetFullPath($JobFolder)) -Parent
+        if (-not $parent -or (Split-Path $parent -Leaf) -ine 'jobs') { return $null }
+        $WorkFolder = Split-Path $parent -Parent
+        $Keep = $JobFolder
+    }
+    $days =if ($null -ne $RetentionDays) { [int]$RetentionDays } else { [int](Import-MbtConfiguration).Jobs.RetentionDays }
+    $jobsFolder = [IO.Path]::GetFullPath((Join-Path $WorkFolder 'jobs')).TrimEnd('\')
+    $result = [pscustomobject]@{ RetentionDays = $days; JobsFolder = $jobsFolder; Removed = @(); Failed = @(); Protected = @(); Overview = $null }
+    if ($days -le 0 -or -not [IO.Directory]::Exists($jobsFolder)) { return $result }
+    $limit = [datetime]::UtcNow.AddDays(-$days)
+    $limitSeconds = [long][math]::Floor(($limit - [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)).TotalSeconds)
+    $keepName = if ($Keep) { [IO.Path]::GetFileName([IO.Path]::GetFullPath($Keep).TrimEnd('\')) } else { '' }
+
+    # the folders of finished jobs that were last touched before the limit (a folder that was touched since cannot be old: its status.json is rewritten with every update)
+    $old = [Collections.Generic.List[IO.DirectoryInfo]]::new()
+    foreach ($dir in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) {
+        if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $dir.Name -ieq $keepName) { continue }
+        if ($dir.LastWriteTimeUtc -ge $limit) { continue }
+        $status = Read-MbtOverviewStatus -Path ([IO.Path]::Combine($dir.FullName, 'status.json'))
+        if ($null -eq $status -or -not $status.ContainsKey('state') -or [string]$status.state -notin 'complete', 'error') { continue }
+        $updated = ConvertTo-MbtOverviewSeconds $(if ($status.ContainsKey('updated')) { $status.updated } elseif ($status.ContainsKey('lastEvent')) { $status.lastEvent } else { $null })
+        if ($null -eq $updated -or $updated -ge $limitSeconds) { continue }
+        $old.Add($dir)
+    }
+    if (-not $old.Count) { return $result }
+
+    # a folder that a job that stays names in its request (a store, an output, a file) is not removed with its job
+    $own = @('events.jsonl', 'status.json', 'stop.request', 'stdout.txt', 'stderr.txt', 'request.json', 'report.json', 'report.csv', 'report.html', 'temp', 'choice.folders.txt', 'choice.items.txt')
+    $prefix = $jobsFolder + '\'
+    $oldNames = @{}
+    foreach ($dir in $old) { $oldNames[$dir.Name] = $true }
+    $named = @{}
+    $reads = {
+        param([string]$Folder, [bool]$IsOwn)
+        $leaf = [IO.Path]::GetFileName($Folder)
+        $file =[IO.Path]::Combine($Folder, 'request.json')
+        if (-not [IO.File]::Exists($file)) { return }
+        $text = $null
+        try { $text = [IO.File]::ReadAllText($file) } catch { return }
+        foreach ($m in [regex]::Matches($text, '"([^"]*[\\/][^"]*)"')) {
+            $path = $m.Groups[1].Value.Replace('\\', '\').Replace('/', '\')
+            if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $parts = $path.Substring($prefix.Length).Split('\')
+            if ($parts[0] -ine $leaf) { $named[$parts[0]] = $true }
+            elseif ($IsOwn -and $parts.Count -gt 1 -and $parts[1] -notin $own) { $named[$leaf] = $true }
+        }
+    }
+    foreach ($dir in [IO.Directory]::EnumerateDirectories($jobsFolder)) {
+        $leaf = [IO.Path]::GetFileName($dir)
+        if ($oldNames.ContainsKey($leaf)) { & $reads $dir $true } else { & $reads $dir $false }
+    }
+
+    $removed = [Collections.Generic.List[string]]::new(); $failed = [Collections.Generic.List[string]]::new(); $protected = [Collections.Generic.List[string]]::new()
+    foreach ($dir in $old) {
+        $name = $dir.Name
+        if ($named.ContainsKey($name)) { $protected.Add($name); continue }
+        # never anything but a direct subfolder of the jobs folder
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($dir.FullName), $jobsFolder, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not $PSCmdlet.ShouldProcess($dir.FullName, 'Remove the folder of a finished job')) { $removed.Add($name); continue }
+        try {
+            # status.json goes last: a folder that could not be removed whole still says that it is finished, and the next job tries again; a link is removed, never followed
+            Remove-MbtFolderTree -Path $dir.FullName -KeepFirst 'status.json'
+            [IO.File]::Delete([IO.Path]::Combine($dir.FullName, 'status.json'))
+            [IO.Directory]::Delete($dir.FullName)
+            $removed.Add($name)
+            Write-MbtLog INFO "Job folder removed (finished, older than $days days): $($dir.FullName)"
+        } catch {
+            $failed.Add($name)
+            Write-MbtLog WARN "Job folder not removed ($($dir.FullName)): $($_.Exception.Message)"
+        }
+    }
+    $result.Removed = $removed.ToArray(); $result.Failed = $failed.ToArray(); $result.Protected = $protected.ToArray()
+    if ($removed.Count -and -not $WhatIfPreference) {
+        try { $result.Overview = Write-MbtJobOverview -WorkFolder $WorkFolder }
+        catch { Write-MbtLog WARN "The overview of all the jobs could not be written: $($_.Exception.Message)" }
+    }
+    return $result
+}
+
 #endregion
 
 #region Stop request, keep awake -----------------------------------------------------------------
