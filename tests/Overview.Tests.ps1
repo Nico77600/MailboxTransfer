@@ -75,7 +75,7 @@ Describe 'The overview of all the jobs' {
         $b = $o.Rows | Where-Object id -EQ '20261112-1000-import-bbbb'
         $b.task | Should -Be 'Import'; $b.result | Should -Be 'Failed'; $b.code | Should -Be 1; $b.link | Should -Be 2 -Because 'no HTML: the CSV'
         $c = $o.Rows | Where-Object id -EQ '20261111-1000-exportpst-cccc'
-        $c.task | Should -Be 'Export (PST)'; $c.bytes | Should -Be 777; $c.link | Should -Be 0
+        $c.task | Should -Be 'Export (PST)'; $c.bytes | Should -Be 777; $c.link | Should -Be 3 -Because 'no report: the status of the job'
         $html | Should -Match 'Jobs</div><div class="tile-value">3</div>'
         $html | Should -Match 'Failed</div><div class="tile-value">1</div>'
         $html | Should -Match 'Items done</div><div class="tile-value">110</div>'

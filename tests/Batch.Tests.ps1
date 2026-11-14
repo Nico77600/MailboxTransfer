@@ -314,18 +314,19 @@ Describe 'Running a batch on stand-in child processes' {
         @($again.Batch.rows.state) | Should -Be @('complete', 'complete', 'complete')
         (Get-ChildItem -LiteralPath (Join-Path $w ('jobs\' + (Get-BatchRow $again.Batch 'asker-1@contoso.com').job)) -Filter 'run-*.txt').Count | Should -Be 1
     }
-    It 'a mailbox that needs a sign-in fails with that reason and the batch goes on (application); with a delegated sign-in three in a row end the run and leave the others for the next one' {
+    It 'a mailbox that needs a sign-in is not complete (it can be continued after signing in) and the batch goes on (application); with a delegated sign-in three in a row end the run and leave the others for the next one' {
         $w = New-Work 'signin'
         $b = New-TestBatch $w 'App' @('signin-1@contoso.com', 'ok-2@contoso.com', 'signin-3@contoso.com')
         $r = Invoke-StubBatch $w $b
-        @($r.Batch.rows.state) | Should -Be @('failed', 'complete', 'failed')
+        @($r.Batch.rows.state) | Should -Be @('partial', 'complete', 'partial')
         (Get-BatchRow $r.Batch 'signin-1@contoso.com').message | Should -Match '^sign-in required: .*run it again'
-        $r.ExitCode | Should -Be 1
+        (Get-BatchRow $r.Batch 'signin-1@contoso.com').reason | Should -Be 'signin-required'
+        $r.ExitCode | Should -Be 2
         $d = New-TestBatch $w 'Deleg' @('signin-1@contoso.com', 'signin-2@contoso.com', 'signin-3@contoso.com', 'ok-4@contoso.com', 'ok-5@contoso.com') -Option @{ AppOnly = $false; SignInUser = 'admin@contoso.com'; Pass = @{} }
         $rd = Invoke-StubBatch $w $d -Option @{ AppOnly = $false; SignInUser = 'admin@contoso.com'; Pass = @{} }
-        @($rd.Batch.rows.state) | Should -Be @('failed', 'failed', 'failed', 'pending', 'pending')
+        @($rd.Batch.rows.state) | Should -Be @('partial', 'partial', 'partial', 'pending', 'pending')
         $rd.Abandoned | Should -BeTrue
-        $rd.ExitCode | Should -Be 1
+        $rd.ExitCode | Should -Be 2
         $given = Get-Content -LiteralPath (Get-JobFile $w $rd.Batch.rows[0] 'args.json') -Raw | ConvertFrom-Json
         $given[($given.IndexOf('-MailboxId') + 1)] | Should -Be 'signin-1@contoso.com'
         $given[($given.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'admin@contoso.com'
@@ -365,6 +366,65 @@ Describe 'Running a batch on stand-in child processes' {
         $html | Should -Not -Match 'other@contoso.com'
         foreach ($row in $r.Batch.rows) { $html | Should -Match ([regex]::Escape($row.job)) }
         (Get-Content -LiteralPath (Join-Path $w 'jobs\overview.html') -Raw -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty -Because 'the overview of all the jobs is the command line''s to write, once, at the end'
+    }
+    It 'counts a mailbox the same way in the caption, the tiles, the chips, the row, the overview of all the jobs, the summary and the exit code: a sign-in needed is not complete, not failed' {
+        $w = New-Work 'agree'
+        $b = New-TestBatch $w 'Agree' @('ok-1@contoso.com', 'fail-2@contoso.com', 'partial-3@contoso.com', 'signin-4@contoso.com', 'ok-5@contoso.com')
+        $r = Invoke-StubBatch $w $b
+        $r.ExitCode | Should -Be 1
+        @($r.Batch.rows.state) | Should -Be @('complete', 'failed', 'partial', 'partial', 'complete')
+        $html = Get-Content -LiteralPath $r.Report -Raw
+        $html | Should -Match '5 mailboxes in the CSV file \(2 complete, 2 not complete, 1 failed\)\.'
+        $html | Should -Match 'Complete</div><div class="tile-value">2</div>'
+        $html | Should -Match 'Failed</div><div class="tile-value">1</div>'
+        $html | Should -Match 'Need a look</div><div class="tile-value">3</div>'
+        $data = [Text.Json.JsonDocument]::Parse([regex]::Match($html, '<script type="application/json" id="mbt-overview-data">(.*?)</script>', 'Singleline').Groups[1].Value)
+        $codes = @($data.RootElement.GetProperty('rows').EnumerateArray() | ForEach-Object { $_[7].GetInt32() })
+        @($codes | Where-Object { $_ -eq 0 }).Count | Should -Be 2
+        @($codes | Where-Object { $_ -eq 1 }).Count | Should -Be 1
+        @($codes | Where-Object { $_ -eq 2 }).Count | Should -Be 2 -Because 'the mailbox that needs a sign-in is Not complete in the page, as in the caption'
+        $all = Get-Content -LiteralPath (Write-MbtJobOverview -WorkFolder $w) -Raw
+        $all | Should -Match 'Failed</div><div class="tile-value">1</div>'
+        $all | Should -Match 'Need a look</div><div class="tile-value">3</div>'
+        $text = (& { Write-MbtBatchSummary -ExitCode $r.ExitCode -Batch $r.Batch -Folder $r.Folder -Report $r.Report } *>&1 | Out-String)
+        $text | Should -Match 'Mailboxes\s+5 in Agree: 2 complete, 2 not complete, 1 failed, 0 not started'
+    }
+    It 'a mailbox that could not be started is failed in its job as well, not left running' {
+        $w = New-Work 'nostart'
+        $b = New-TestBatch $w 'NoStart' @('ok-1@contoso.com')
+        $a = @{ WorkFolder = $w; Batch = $b; EntryScript = $script:Stub; Option = @{ AppOnly = $true; SignInUser = ''; Pass = @{} }; PollMilliseconds = 50; StartGapMilliseconds = 0; Launcher = { throw 'no process' } }
+        $r = Invoke-MbtBatch @a 6>&1 | Where-Object { $_ -isnot [string] -and $_ -isnot [System.Management.Automation.InformationRecord] }
+        $r.Batch.rows[0].state | Should -Be 'failed'
+        $s = Get-JobStatus $w $r.Batch.rows[0]
+        $s.state | Should -Be 'error'
+        $s.batch | Should -Be 'NoStart'
+        $r.ExitCode | Should -Be 1
+    }
+    It 'every link of the report of a batch and of the overview of all the jobs leads to a file: the report of the job, else its CSV, else its status' {
+        $w = New-Work 'links'
+        $b = New-TestBatch $w 'Links' @('ok-1@contoso.com', 'fail-2@contoso.com', 'ok-3@contoso.com')
+        $r = Invoke-StubBatch $w $b
+        $jobs = Join-Path $w 'jobs'
+        Set-Content -LiteralPath (Join-Path $jobs ($r.Batch.rows[0].job + '\report.html')) -Value '<html></html>'
+        Set-Content -LiteralPath (Join-Path $jobs ($r.Batch.rows[1].job + '\report.csv')) -Value 'a,b'
+        $page = Write-MbtBatchReport -WorkFolder $w -Batch $r.Batch -Folder $r.Folder
+        $all = Write-MbtJobOverview -WorkFolder $w
+        $want = @{ ($r.Batch.rows[0].job) = 'report.html'; ($r.Batch.rows[1].job) = 'report.csv'; ($r.Batch.rows[2].job) = 'status.json' }
+        foreach ($file in $page, $all) {
+            $html = Get-Content -LiteralPath $file -Raw
+            $d = [Text.Json.JsonDocument]::Parse([regex]::Match($html, '<script type="application/json" id="mbt-overview-data">(.*?)</script>', 'Singleline').Groups[1].Value).RootElement
+            $base = $d.GetProperty('base').GetString()
+            $columns = @($d.GetProperty('columns').EnumerateArray() | ForEach-Object { $_.GetString() })
+            $rows = @($d.GetProperty('rows').EnumerateArray())
+            $rows.Count | Should -Be 3
+            foreach ($row in $rows) {
+                $id = $row[$columns.IndexOf('id')].GetString()
+                $kind = $row[$columns.IndexOf('link')].GetInt32()
+                $name = switch ($kind) { 1 { 'report.html' } 2 { 'report.csv' } 3 { 'status.json' } default { '' } }
+                $name | Should -Be $want[$id]
+                [IO.Path]::GetFullPath([IO.Path]::Combine((Split-Path $file -Parent), $base.Replace('/', '\'), $id, $name)) | Should -Exist
+            }
+        }
     }
     It 'one failed mailbox does not stop the others, and the command line summary is the house card with the numbers, the report and the next steps' {
         $w = New-Work 'summary'

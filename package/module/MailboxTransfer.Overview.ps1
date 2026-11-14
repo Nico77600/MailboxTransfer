@@ -161,7 +161,7 @@ function Get-MbtJobOverviewModel {
     if (-not $NoCache -and [IO.File]::Exists($cacheFile)) {
         try {
             $loaded = [IO.File]::ReadAllText($cacheFile) | ConvertFrom-Json -AsHashtable -Depth 4 -NoEnumerate
-            if ($loaded -is [hashtable] -and $loaded['format'] -eq 1) { foreach ($r in $loaded['rows']) { $cache[[string]$r[1]] = $r } }
+            if ($loaded -is [hashtable] -and $loaded['format'] -eq 2) { foreach ($r in $loaded['rows']) { $cache[[string]$r[1]] = $r } }
         } catch { $cache = @{} }
     }
     $cacheRows = [Collections.Generic.List[object]]::new()
@@ -272,7 +272,7 @@ function Get-MbtJobOverviewModel {
             $v = $counts['bytes']; if ($null -eq $v) { $v = $counts['fileBytes'] }
             if ($null -ne $v) { $bytes = [long]$v }
 
-            $link = if ([IO.File]::Exists($dir + '\report.html')) { 1 } elseif ([IO.File]::Exists($dir + '\report.csv')) { 2 } else { 0 }
+            $link = if ([IO.File]::Exists($dir + '\report.html')) { 1 } elseif ([IO.File]::Exists($dir + '\report.csv')) { 2 } elseif ($hasStatus) { 3 } else { 0 }
             $source = [string]$status['source']; $destination = [string]$status['destination']
             if (-not $source -and -not $destination) { $ends = Get-MbtJobEndpoint -Title ([string]$status['title']) -Mode $mode -Store ([string]$status['store']) -Source '' -Destination ''; $source = [string]$ends.Source; $destination = [string]$ends.Destination }
             $taskKey = "$task|$mode"
@@ -376,7 +376,7 @@ function ConvertTo-MbtOverviewCacheJson {
         $r = $Model.CacheRows[$n]
         $lines[$n] = if ($r.Count -lt 3) { '[' + $r[0] + ',"' + [Text.Json.JsonEncodedText]::Encode([string]$r[1]).ToString() + '"]' } else { ConvertTo-MbtOverviewRowJson -Row $r -TextColumns 1, 4, 5, 6, 7, 13 }
     }
-    return '{"format":1,"rows":[' + [string]::Join(',', $lines) + ']}'
+    return '{"format":2,"rows":[' + [string]::Join(',', $lines) + ']}'
 }
 
 function ConvertTo-MbtJobOverviewHtml {

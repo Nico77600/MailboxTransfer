@@ -572,7 +572,7 @@ function Write-MbtBatchReport {
     param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)]$Batch, [Parameter(Mandatory)][string]$Folder, [int]$TimeBudgetSeconds = 0, [hashtable]$Info)
     $counts = Get-MbtBatchCount $Batch
     $notStarted = @($Batch.rows | Where-Object { -not $_.job }).Count
-    $caption = '{0} {1} in the CSV file ({2} complete, {3} not complete, {4} failed)' -f (Format-MbtNumber $counts.Total), $(if ($counts.Total -eq 1) { 'mailbox' } else { 'mailboxes' }), (Format-MbtNumber $counts.Complete), (Format-MbtNumber ($counts.Partial + $counts.Running)), (Format-MbtNumber $counts.Failed)
+    $caption = '{0} {1} in the CSV file ({2} complete, {3}{4} not complete, {5} failed)' -f (Format-MbtNumber $counts.Total), $(if ($counts.Total -eq 1) { 'mailbox' } else { 'mailboxes' }), (Format-MbtNumber $counts.Complete), $(if ($counts.Running) { (Format-MbtNumber $counts.Running) + ' running, ' } else { '' }), (Format-MbtNumber $counts.Partial), (Format-MbtNumber $counts.Failed)
     if ($notStarted) { $caption += '; ' + (Format-MbtNumber $notStarted) + $(if ($notStarted -eq 1) { ' has' } else { ' have' }) + ' not started yet' }
     $caption += '.'
     $names = @($Batch.rows | ForEach-Object { [string]$_.job } | Where-Object { $_ })
@@ -597,7 +597,7 @@ function Complete-MbtBatchRow {
     $hasResult = $null -ne $status -and $status.Contains('exitCode') -and $null -ne $status.exitCode
     $message = ''
     if ($exit -eq 0) { $state = 'complete' }
-    elseif ($exit -eq 2 -and $reason -eq 'signin-required') { $state = 'failed'; $message = 'sign-in required: no valid sign-in is cached, so nothing could be asked in the middle of a run. Sign in once (run the command again without -NoPrompt) and run it again.' }
+    elseif ($exit -eq 2 -and $reason -eq 'signin-required') { $state = 'partial'; $message = 'sign-in required: no valid sign-in is cached, so nothing could be asked in the middle of a run. Sign in once (run the command again without -NoPrompt) and run it again.' }
     elseif ($exit -eq 2) { $state = 'partial'; $message = if ($reason -eq 'stopped' -or $StopAsked) { 'stopped: run the batch again to continue' } else { 'not complete: run the batch again to continue' } }
     else { $state = 'failed' }
     if ($state -eq 'failed' -and -not $message) { $message = Get-MbtBatchFailureText -Job $job -ExitCode $exit }
@@ -697,7 +697,7 @@ function Invoke-MbtBatch {
                     Close-MbtBatchHandle -Handle $item.Handle
                     $finishedNow++
                     Complete-MbtBatchRow -Batch $Batch -Item $item -Folder $folder -StopAsked $stopping -BatchId $id -Position ([array]::IndexOf(@($Batch.rows), $item.Row) + 1) -Of $of
-                    if ($item.Row.state -eq 'failed' -and [string]$item.Row.message -like 'sign-in required*') { $signinStreak++ } else { $signinStreak = 0 }
+                    if ([string]$item.Row.reason -eq 'signin-required') { $signinStreak++ } else { $signinStreak = 0 }
                     Save-MbtBatch -Batch $Batch -Folder $folder
                     try { $info = @{}; [void](Write-MbtBatchReport -WorkFolder $WorkFolder -Batch $Batch -Folder $folder -TimeBudgetSeconds $ReportBudgetSeconds -Info $info) } catch { Write-MbtItem WARN "the report of the batch could not be written: $($_.Exception.Message)" }
                 }
@@ -714,6 +714,11 @@ function Invoke-MbtBatch {
                         try { $running.Add((& $startRow $row)) }
                         catch {
                             $row.state = 'failed'; $row.message = "the mailbox could not be started: $($_.Exception.Message)"; $row.finished = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z')
+                            $startedFolder = if ($row.job) { [IO.Path]::Combine($WorkFolder, 'jobs', [string]$row.job) } else { '' }
+                            if ($startedFolder -and [IO.Directory]::Exists($startedFolder)) {
+                                try { Write-MbtJobStatus -JobFolder $startedFolder -State error -Task export -Mode Export -Source ([string]$row.upn) -Batch $id -ExitCode 1 -Reason 'start-failed' -Next retry }
+                                catch { Write-Verbose "status: $($_.Exception.Message)" }
+                            }
                             Write-MbtItem FAIL ('[{0}/{1}] {2} ({3}) failed: {4}' -f ([array]::IndexOf(@($Batch.rows), $row) + 1), $of, $row.upn, $row.location, $row.message)
                             Write-MbtBatchLog -Folder $folder -Text "$($row.upn) not started: $($_.Exception.Message)"
                             Save-MbtBatch -Batch $Batch -Folder $folder
