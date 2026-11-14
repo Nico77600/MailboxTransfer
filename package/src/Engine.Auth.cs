@@ -310,7 +310,7 @@ namespace MailboxTransfer
         public IPublicClientApplication WindowApp { get { return _brokerApp; } }
         /// <summary>The application that holds the DPAPI cache and runs the device code flow.</summary>
         public IPublicClientApplication CacheApp { get { return _app; } }
-        /// <summary>How an interactive sign-in is done now: "window" (Windows sign-in window) or "code" (device code).</summary>
+        /// <summary>How an interactive sign-in is done: "window" (Windows sign-in window) or "code" (device code).</summary>
         public string SignInMethod { get { return DeviceCode || _brokerApp == null ? "code" : "window"; } }
 
         /// <summary>

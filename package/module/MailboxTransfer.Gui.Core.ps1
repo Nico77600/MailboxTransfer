@@ -711,4 +711,3 @@ function Stop-MbtGuiWorker {
 }
 
 #endregion
-

@@ -29,7 +29,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.2.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -40,7 +40,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ToolVersion = '1.1.0'
+$script:ToolVersion = '1.2.0'
 $script:ToolRoot = $PSScriptRoot
 # Package integrity. A release package carries the owner-signed PackageIntegrity.psd1 manifest; when it is present, the signed
 # verifier (src\Test-PackageIntegrity.ps1) must accept the tree before any engine code is compiled. A source tree without a manifest

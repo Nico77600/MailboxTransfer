@@ -196,4 +196,3 @@ function New-MbtGuiFakeEngine {
         & $OnDone ([pscustomobject]@{ Ok = $true; Message = ''; Totals = $totals }) }
     return [pscustomobject]$engine
 }
-

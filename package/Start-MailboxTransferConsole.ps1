@@ -28,7 +28,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0 (console)
+    Version : 1.2.0 (console)
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -87,7 +87,7 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     # The module does not repeat this warning in the same process.
     [AppDomain]::CurrentDomain.SetData('MailboxTransfer.UnverifiedTreeWarned', $true)
 }
-$script:ConsoleVersion = '1.1.0'
+$script:ConsoleVersion = '1.2.0'
 $packageRoot = $PSScriptRoot
 foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') {
     . (Join-Path $packageRoot "module\MailboxTransfer.Gui.$f.ps1")
@@ -112,4 +112,3 @@ if ($Demo) {
     $window = New-MbtGuiWindow -Engine $engine -Theme $Theme -WorkFolder $WorkFolder -EntryScript $entry -Version $script:ConsoleVersion
 }
 [void]$window.ShowDialog()
-

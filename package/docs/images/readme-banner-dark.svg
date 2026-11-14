@@ -19,7 +19,7 @@
     <text x="55" y="252" fill="#d1d1d1" font-size="23">Verified and resumable, with a guided Windows console.</text>
     <text x="55" y="286" fill="#d1d1d1" font-size="23">Checks and repairs PST files, without Outlook.</text>
     <rect x="55" y="335" width="212" height="48" rx="24" fill="#ff89a5"/>
-    <text x="161" y="365" text-anchor="middle" fill="#242424" font-size="19" font-weight="600">1.1.0 release</text>
+    <text x="161" y="365" text-anchor="middle" fill="#242424" font-size="19" font-weight="600">1.2.0 release</text>
     <rect x="280" y="335" width="195" height="48" rx="24" fill="#262626" stroke="#535353"/>
     <text x="378" y="365" text-anchor="middle" fill="#d1d1d1" font-size="19">PowerShell 7.5+</text>
     <rect x="488" y="335" width="227" height="48" rx="24" fill="#262626" stroke="#535353"/>

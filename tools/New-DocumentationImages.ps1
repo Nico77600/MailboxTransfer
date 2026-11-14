@@ -85,6 +85,7 @@ $screens = [ordered]@{
     DoneImportDecision = 'console-done-import-decision'; DoneImportError = 'console-done-import-error'
     RepairFromDamaged = 'console-repair-from-damaged'; RepairFromClean = 'console-repair-from-clean'; RepairTo = 'console-repair-to'
     RepairPlan = 'console-verify-repair'; DoneRepair = 'console-repair-done'; Open = 'console-open'
+    ExportPlanChecking = 'console-verify-export-checking'; RunExportPreparing = 'console-run-export-preparing'
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.
 $callouts = @{

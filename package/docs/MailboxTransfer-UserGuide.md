@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: User guide
-version: 1.1.0
+version: 1.2.0
 author: Nicolas Fabert
 updated: 2026-11-12
 runtime: PowerShell 7.5+ (engine and window)
@@ -178,7 +178,7 @@ This section is for the administrator. It is done **once for the whole company**
 **Do:** download the tool, then put it on the PC.
 
 1. Open **https://github.com/Nico77600/MailboxTransfer/releases/latest** in your browser.
-2. Under **Assets**, click **`MailboxTransfer-1.1.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
+2. Under **Assets**, click **`MailboxTransfer-1.2.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
 3. Extract the ZIP into a folder such as `C:\Tools\MailboxTransfer` (right-click, *Extract All*). Write the files directly in that folder: `Start-MailboxTransferConsole.cmd` must be inside it, not one level deeper.
 4. Unblock the folder (one command, once):
 
@@ -342,6 +342,8 @@ Click **Continue to Verify**.
 
 **While it waits:** the first check, *Checking the plan with the service*, says what it is doing (for example *1,240 folders read, 34 s*), and the line at the bottom says *Start unlocks when the plan is checked.* On a big mailbox this takes a few seconds to a minute. Microsoft gives no size for calendar, contact and task folders in advance: the check reads the items of a small one to find it, and the size of a larger one shows as *size unknown* until the export runs. After you click **Start**, the button reads *Starting...* and the Run page opens with *Preparing* and the same progress until the first item is counted.
 
+![The Verify page while the plan is checked: Checking the plan with the service, with the folders read so far and the time. Start waits](images/console-verify-export-checking-light.png)
+
 **If not:** an amber line is a warning to read, not a stop. A red line means something does not fit: go **Back**. If the plan check says *Microsoft did not answer correctly (a temporary problem)*, click **Check again**: it is a hiccup of the service, not a problem with your choice.
 
 > [!NOTE]
@@ -357,6 +359,10 @@ Click **Continue to Verify**.
 **You should see:** the **Run** page: a bar, the number of items, the size, the time elapsed, and **About 5 min left**. Below: the **Steps** with a tick, a triangle or a clock, and the **Folders** with their counts.
 
 ![The run. 1: the summary and the bar. 2: the steps. 3: the folders. 4: the details of the folder you clicked. 5: Stop and keep progress](images/console-run-export-light.png)
+
+Before the first item is counted, the page says **Preparing** with the folders read so far:
+
+![The Run page while an export prepares: the folder tree is being read, 1,240 folders so far](images/console-run-export-preparing-light.png)
 
 What the steps mean:
 

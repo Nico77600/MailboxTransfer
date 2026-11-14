@@ -62,7 +62,7 @@
         ArchiveMailboxId  = ''
     }
 
-    # Only for the developer scripts (tools\*.ps1). The keys of Tenant are accepted here too, as in earlier versions.
+    # Only for the developer scripts (tools\*.ps1). The keys of Tenant are accepted here too.
     Lab = @{
         UserObjectId      = ''     # only for a developer script of tools\ when the directory cannot be read
         # Folders of the developer scripts (tools\Invoke-Phase0.ps1).

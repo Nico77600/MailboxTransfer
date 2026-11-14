@@ -2,36 +2,28 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
-## 1.2.0 — unreleased
-
-### Changed
-- **A simpler console, in five steps**: Setup, Task (What, From, To), Verify, Run, Next steps. The new Setup page shows the lights of the computer, the sign-in (**Me** or **The application**, with the values read from the configuration file; a value changed in the window applies to that run only) and the work folder.
-- **Import confirmation**: instead of typing a word, you tick a box that names the target mailbox, the folder and the number of items. Start stays grey until you do, and the tick clears if the plan changes.
-- **The command line is shown** on the Verify and Next steps pages, with a Copy button, and the Next steps page offers the logical next buttons.
-- Tries per item are 3 in the console, as on the command line.
-- The configuration section an operator fills in is now **`Tenant`**; a file that still says `Lab` keeps working.
-- **Sign-in in a Windows window (no browser tab)**: a Microsoft sign-in window opens over the console and you type the account. The code stays as the alternative. Your administrator adds one redirect address to the application (user guide, chapter 2).
-- **Keep this PC awake** is off by default and moved to the Expert mode of the Verify pages; Setup no longer has it.
-- **An export prepares faster and says what it does**: the folder tree of a large mailbox is read by up to 4 requests at once, 1,000 folders to the page, and once per run. The Verify page shows what it is doing ("1,240 folders read", with the time), Start says why it waits, then shows "Starting...", and the Run page shows "Preparing" with the same progress before the first item. The disk check says "There is enough disk space."
-- **The plan check is quicker and more reliable**: a folder with subfolders is counted from the folder down, not from the tree of the whole mailbox (about 6 s instead of a minute on an archive of 4,443 folders); calendar, contact and task folders show their real size when they are small; a temporary Microsoft error (HTTP 502) is tried again, and a check that still fails says so in plain words with a **Check again** button.
-- **An export of a few folders no longer reads the whole mailbox tree**: the folders chosen, those below them and the ones above them are read (9 s instead of 77 s for 3 folders of an archive of 4,443 folders). The store gets the same folders and items. Recoverable Items and auxiliary archives still read the whole tree.
+## 1.2.0 — 2026-11-14
 
 ### Added
-- **An HTML report with a chronology** at the end of every job (`report.html` in the job folder, path on the `Report` line of the summary card): the result, the numbers, each step with its start, end and duration, the waits for Microsoft, the sleeps of the PC, the warnings and the errors in time order, one row for each folder and the next step. One file, no network. **Open the report** opens it; `report.csv` stays, and a job of an older version still opens its CSV.
-- **The report of a very large job stays small and quick**: the folders and the chronology are capped at 2,000 rows each (the folders that are not done come first), the page says how many rows were left out and where they are, and a job of 50,000 folders and 195,000 events is reported in under a minute in a page of about 1 MB.
-- **One page for all your jobs**: `jobs\overview.html` has one row for each job (started, task, mailbox, destination, result, items, data, duration, link to its report), totals, the jobs that failed, stopped or wait for a decision first, filters by result, task and period, a search and sortable columns; it opens in thousands of jobs at once. It is rewritten at the end of every job (the summary card gives its path on the `All jobs` line), and the new **All jobs** button of the console opens it.
-- **Old job folders are tidied away**: the folder of a finished job is removed after 90 days (`Jobs.RetentionDays`, 0 keeps everything) when a job or the console starts; a job that can still be continued, the stores, the selections and your PST or EML files are never touched.
-- **Export many mailboxes from a list**: `-Mode Export -MailboxCsv list.csv` (columns `UserPrincipalName`, `Location`, `OutputPst`, `SelectionFile`) exports the mailboxes of a CSV file, one ordinary job for each (own folder, events, report), one after the other or up to 4 at a time (`-ParallelMailboxes`). The whole file is checked first and every problem is printed together (the same address may be on two lines for its primary mailbox and its archive); sign-in is done once and a mailbox never asks again; the same command again (or `-ResumeBatch`) skips the complete mailboxes, goes on with the stopped ones and tries the failed ones again; Ctrl+C or a `stop.request` file stops it cleanly. `batches\<name>\report.html` is the report of the batch, the console lists batches (read only), and the old-job tidy-up never removes a job of a batch that is not complete. Export only; no batch of imports yet.
-- **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by a single `-SelectionFile` command. New `-RetryWaitSeconds`.
+- **Export many mailboxes from a list**: `-Mode Export -MailboxCsv list.csv` exports the mailboxes of a CSV file, one ordinary job for each, one after the other or up to 4 at a time (`-ParallelMailboxes`). The file is checked first and every problem is printed together; sign-in is done once; the same command again (or `-ResumeBatch`) continues what is not complete. A mailbox that needs a sign-in counts as not complete, not failed. `batches\<name>\report.html` is the report of the batch. Export only.
+- **An HTML report for every job**, with a chronology: the result, the numbers, each step with its duration, the waits for Microsoft, the warnings and the errors in time order. One file, no network; `report.csv` stays. A job of 50,000 folders is reported in under a minute in a page of about 1 MB.
+- **One page for all your jobs**: `jobs\overview.html` lists every job with its result, items, data and duration, the ones that need a look first, filters and a search. It is rewritten at the end of every job, and the **All jobs** button of the console opens it. A job links to its report, else its CSV, else its status.
+- **Old job folders are tidied away** after 90 days (`Jobs.RetentionDays`, 0 keeps everything); a job that can still be continued, your stores, selections, PST and EML files are never touched.
+- **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by one `-SelectionFile` command. New `-RetryWaitSeconds`.
+
+### Changed
+- **A simpler console, in five steps**: Setup, Task (What, From, To), Verify, Run, Next steps. Setup shows the lights of the computer, the sign-in (**Me** or **The application**) and the work folder.
+- **Import confirmation**: you tick a box that names the target mailbox, the folder and the number of items, instead of typing a word.
+- **The command line is shown** on the Verify and Next steps pages, with a Copy button.
+- **Sign-in in a Windows window** over the console, no browser tab; the code stays as the alternative. Your administrator adds one redirect address to the application (user guide, chapter 2).
+- **An export prepares faster and says what it does**: the folder tree of a large mailbox is read by several requests at once, and the console shows the progress while it waits. An export of a few folders reads only those folders.
+- **The plan check is quicker and more reliable**: a folder is counted from the folder down, a temporary Microsoft error is tried again, and a check that fails says so with a **Check again** button.
+- The configuration section an operator fills in is now **`Tenant`**; a file that still says `Lab` keeps working. **Keep this PC awake** moved to the Expert mode of the Verify pages. Tries per item are 3 in the console, as on the command line.
 
 ### Fixed
-- **No more freeze at the end of a very large job in the console**: the report of the job is written in the background, and **Open the report** says so while it is.
-- **The overview never makes a job wait**: the command line gives it 20 seconds; what it has read is kept for the next job or the console, which finish it (a virus scanner can make the first read of thousands of job folders take minutes).
-- The folders of the checks of a plan are removed after one day, whatever their state, so they do not pile up.
+- The console no longer freezes at the end of a very large job.
 - Works with **PowerShell 7.6** (the console of 1.1.0 closed at the first click).
-- The Setup page shows the work folder and its free space with the real engine. The certificate sign-in uses the tenant of the configuration when it has none of its own.
-- Every number is written the same way (en-US), whatever the language of Windows.
-- Names, addresses, paths and job names are **not case sensitive**: resuming a job, or importing again, no longer creates duplicates because of a capital letter.
+- Names, addresses, paths and job names are **not case sensitive**: resuming or importing again no longer creates duplicates because of a capital letter. Every number is written the same way (en-US), whatever the language of Windows.
 
 ## 1.1.0 — 2026-11-10
 

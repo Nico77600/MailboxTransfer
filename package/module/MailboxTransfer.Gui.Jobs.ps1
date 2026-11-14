@@ -563,4 +563,3 @@ function Get-MbtGuiReportPath {
     if ($Folder) { return [IO.Path]::Combine($Folder, 'report.csv') }
     return $null
 }
-

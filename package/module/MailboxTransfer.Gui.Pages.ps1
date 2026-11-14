@@ -338,4 +338,3 @@ function Initialize-MbtGuiTask {
 }
 
 #endregion
-

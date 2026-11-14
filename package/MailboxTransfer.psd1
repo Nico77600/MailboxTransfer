@@ -8,7 +8,7 @@
 #
 @{
     RootModule        = 'MailboxTransfer.psm1'
-    ModuleVersion     = '1.1.0'
+    ModuleVersion     = '1.2.0'
     GUID              = 'e3b6a1f4-5d0c-4a8e-9b2f-7c41d8a05e63'
     Author            = 'Nicolas Fabert'
     Description       = 'Mailbox Transfer: exports Exchange Online mailboxes (primary and archive) to local storage and imports them into another mailbox with the Microsoft Graph mailbox import and export API. Phase 0: feasibility (folder tree, exportItems, FastTransfer reader, importItem).'

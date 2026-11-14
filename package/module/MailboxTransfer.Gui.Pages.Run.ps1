@@ -178,7 +178,7 @@ function New-MbtGuiPreviewJob {
 }
 
 function Save-MbtGuiSelectionFile {
-    <# The selection of the export (one selection per location, in one file). Calls OnDone with the path in an array, as the earlier one-file-per-location version did. #>
+    <# The selection of the export (one selection per location, in one file). Calls OnDone with the path in an array. #>
     param([Parameter(Mandatory)]$Selection, [Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][scriptblock]$OnDone, [scriptblock]$OnError)
     $g = $script:Gui
     $groups = @($Selection.Entries | Group-Object { (Get-MbtGuiRootNode $_.Node).Id } | ForEach-Object { @{ Root = (Get-MbtGuiRootNode $_.Group[0].Node); Entries = @($_.Group) } })
@@ -974,4 +974,3 @@ function New-MbtGuiRepairDone {
 }
 
 #endregion
-

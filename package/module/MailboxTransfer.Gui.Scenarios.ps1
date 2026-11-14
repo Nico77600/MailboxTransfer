@@ -365,4 +365,3 @@ function Initialize-MbtGuiScenarioSignIn {
     $s.Token = [pscustomobject]@{ Access = 'Delegated (you, with your rights)'; CanReadMail = $true; Missing = @() }
     & $g.Engine.Locations $s.Mailbox '' { param($l) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds } | ForEach-Object { if ($_.Kind -eq 'Archive') { $_ | Add-Member Quota ([long](110GB)) -PassThru | Add-Member Used ([long](35.3GB)) -PassThru } else { $_ } }) } { }
 }
-
