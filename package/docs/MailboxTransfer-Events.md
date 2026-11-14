@@ -106,7 +106,7 @@ Written in the job folder at the start (`running`), refreshed while the job runs
   "started": "2026-11-09T14:02:11.000Z", "updated": "2026-11-09T22:41:03.000Z", "lastEvent": "2026-11-09T22:41:03.000Z", "pid": 10432 }
 ```
 
-`source` and `destination` say in a few words what the job reads from and writes to (the report of the job shows them).
+`source` and `destination` say in a few words what the job reads from and writes to (the report of the job shows them). `batch` is optional: the name of the batch the job belongs to (`Open-MbtEventLog -Batch`); the overview of all the jobs (`<work folder>\jobs\overview.html`, `Write-MbtJobOverview`) lists it and filters by it, and ignores a job that has none.
 
 `state`: `running`, `stopped` (stop request), `resumable` (exit 2), `needs-decision` (exit 3), `complete` (exit 0, and a check that ended, whatever it found), `error` (exit 1). `Get-MbtJob` adds `EffectiveState`: a job `running` whose process is gone (crash, power loss, killed) is `resumable` with `Interrupted = $true`; `Alive` is true when the process is still there ("running elsewhere").
 

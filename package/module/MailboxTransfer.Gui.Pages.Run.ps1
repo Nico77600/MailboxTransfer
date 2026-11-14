@@ -652,6 +652,8 @@ function Complete-MbtGuiRun {
     }
     $s.Outcome = $run.State
     try { $g.Reports = @(Write-MbtGuiRunReport -Run $run -Folder $g.Job.Folder -Task $s.Task -RepairDestination $s.RpDest) } catch { Add-MbtGuiLog $run 'warn' "The report could not be written: $($_.Exception.Message)" ([datetime]::UtcNow) }
+    # this job is one more row of the overview of all the jobs (written by the worker, so the page does not wait for it)
+    try { & $g.Engine.JobOverview $s.WorkFolder { param($path) } { param($message) Write-MbtGuiFault 'job overview' $message } } catch { Write-MbtGuiFault 'job overview' $_ }
     Set-MbtGuiStep ($script:Flows[$s.Task].IndexOf('done'))
 }
 
@@ -763,6 +765,7 @@ function New-MbtGuiReportsCard {
     $bar.Children.Add((New-GuiButton -Text 'Open the report' -Small -Icon doc -OnClick { & $open $reportPath }.GetNewClosure())) | Out-Null
     $bar.Children.Add((New-GuiButton -Text 'Open the log' -Small -Icon clip -OnClick { & $open $logPath }.GetNewClosure())) | Out-Null
     $bar.Children.Add((New-GuiButton -Text 'Open the folder' -Small -Icon open -OnClick { & $open $dir }.GetNewClosure())) | Out-Null
+    $bar.Children.Add((New-GuiButton -Text 'All jobs' -Small -Icon doc -OnClick { Open-MbtGuiJobOverview })) | Out-Null
     return (New-GuiCard -Title 'Reports and log' -Content @($bar))
 }
 

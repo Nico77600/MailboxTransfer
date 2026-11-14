@@ -31,7 +31,7 @@
         'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
         'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
         'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
-        'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel'
+        'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

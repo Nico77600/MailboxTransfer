@@ -780,3 +780,55 @@ Describe 'What a step that is done shows' {
         Get-MbtGuiStepSub $r.Steps[0] | Should -Be '53 items'
     }
 }
+
+Describe 'The All jobs button' {
+    BeforeAll {
+        # the callbacks of the button run in a scope of their own: the stand-ins of the dialog and of the browser are global for the length of these tests
+        function global:Show-MbtGuiDialog { param($Title, $Body, $Buttons) $global:MbtTestSaid = @{ Title = $Title; Body = $Body } }
+        function global:Start-Process { param($FilePath) $global:MbtTestStarted = $FilePath }
+        function New-OverviewGui($Engine) { $script:Gui = @{ S = @{ WorkFolder = 'W:\work' }; Engine = $Engine } }
+    }
+    AfterAll {
+        Remove-Item -Path Function:\Show-MbtGuiDialog, Function:\Start-Process -ErrorAction SilentlyContinue
+        Remove-Variable -Name MbtTestSaid, MbtTestStarted -Scope Global -ErrorAction SilentlyContinue
+    }
+    It 'asks the engine for the overview of the work folder and opens the page it gives' {
+        $global:MbtTestStarted = $null
+        $page = Join-Path $TestDrive 'overview.html'
+        Set-Content -LiteralPath $page -Value '<html></html>'
+        $seen = @{}
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) $seen.Work = $Work; & $OnDone $page }.GetNewClosure() })
+        Open-MbtGuiJobOverview
+        $seen.Work | Should -Be 'W:\work'
+        $global:MbtTestStarted | Should -Be $page
+    }
+    It 'says so when no file was written (the demonstration), and when the page could not be written' {
+        $global:MbtTestStarted = $null
+        $global:MbtTestSaid = $null
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null } })
+        Open-MbtGuiJobOverview
+        $global:MbtTestSaid.Title | Should -Be 'Nothing to open here'
+        $global:MbtTestSaid = $null
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) & $OnError 'The disk is full.' } })
+        Open-MbtGuiJobOverview
+        $global:MbtTestSaid.Title | Should -Be 'The overview of all the jobs could not be written'
+        $global:MbtTestSaid.Body | Should -Be 'The disk is full.'
+        $global:MbtTestSaid = $null
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) throw 'boom' } })
+        Open-MbtGuiJobOverview
+        $global:MbtTestSaid.Body | Should -Be 'boom'
+        $global:MbtTestStarted | Should -BeNullOrEmpty
+    }
+    It 'is on the page of the jobs to continue and in the card Reports and log of the Next steps page, and the engines answer it' {
+        $pages = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.ps1') -Raw
+        $pages | Should -Match "(?s)-Title 'Continue a job'.*?-Right \(New-GuiButton -Text 'All jobs'.*?Open-MbtGuiJobOverview"
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match "(?s)function New-MbtGuiReportsCard.*?New-GuiButton -Text 'All jobs'.*?Open-MbtGuiJobOverview.*?-Title 'Reports and log'"
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1') -Raw) | Should -Match '(?s)\$e\.JobOverview = .*?Write-MbtJobOverview -WorkFolder \$work'
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Fake.ps1') -Raw) | Should -Match '\$engine\.JobOverview = \{ param\(\$Work, \$OnDone, \$OnError\) & \$OnDone \$null \}'
+    }
+    It 'the overview is written again when a run ends' {
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport.*?\& \$g\.Engine\.JobOverview \$s\.WorkFolder'
+    }
+}

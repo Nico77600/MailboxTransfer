@@ -330,6 +330,11 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'next steps: the command line of the run is shown, with the buttons to copy it and to open the reports' {
         Reset-State; Set-MbtGuiScenario 'DoneExportComplete'; Measure-Window $window
         (Find-Text $g.C.Page.Content 'The same from the command line') -and (Get-CommandLineText) -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Export' -and (Find-Text $g.C.Page.Content 'Copy') -and (Find-Text $g.C.Page.Content 'Open the report') -and $g.C.PrimaryLabel.Text -eq 'Start another task' }
+    Check 'the buttons All jobs: beside Continue a job on the Task page, and in Reports and log of the Next steps page' {
+        Reset-State; Set-MbtGuiScenario 'Start'; Measure-Window $window
+        $task = (Find-Text $g.C.Page.Content 'Continue a job') -and (Find-Text $g.C.Page.Content 'All jobs')
+        Reset-State; Set-MbtGuiScenario 'DoneExportComplete'; Measure-Window $window
+        $task -and (Find-Text $g.C.Page.Content 'Reports and log') -and (Find-Text $g.C.Page.Content 'All jobs') }
     Check 'plan: a shared mailbox and an auxiliary archive are worded as unknown, not as 0 B' {
         Reset-State; Set-MbtGuiScenario 'ExportPlanShared'; Measure-Window $window
         (Find-Text $g.C.Page.Content 'Shared mailbox projects@contoso.com') -and -not (Find-Text $g.C.Page.Content '0 B') -and (Find-Text $g.C.Page.Content 'of unknown size') }

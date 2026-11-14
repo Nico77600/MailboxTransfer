@@ -3311,6 +3311,8 @@ function Get-MbtPstPreview {
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Events.ps1')
 # The HTML report of a job: written at the end of every job from events.jsonl and status.json of the job folder.
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Report.ps1')
+# The overview of all the jobs of a work folder: <work folder>\jobs\overview.html, rewritten at the end of every job.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.Overview.ps1')
 
 # An engine left in this process by an older build of the module is refused here, before any network or store operation.
 [void](Assert-MbtEngineCurrent -Name Engine -Root $script:ToolRoot)
@@ -3332,5 +3334,5 @@ Export-ModuleMember -Function @(
     'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
     'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
-    'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel'
+    'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel'
 )

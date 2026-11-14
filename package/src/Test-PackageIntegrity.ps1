@@ -48,6 +48,7 @@ $signed = @(
     'module\MailboxTransfer.Eml.ps1'
     'module\MailboxTransfer.Events.ps1'
     'module\MailboxTransfer.Report.ps1'
+    'module\MailboxTransfer.Overview.ps1'
     'module\MailboxTransfer.Gui.Browse.ps1'
     'module\MailboxTransfer.Gui.Core.ps1'
     'module\MailboxTransfer.Gui.DemoJob.ps1'

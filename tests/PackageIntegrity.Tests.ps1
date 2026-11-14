@@ -65,7 +65,7 @@ Describe 'Static package contract' {
         $listed = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
         $actual = Get-SignedPaths
         $listed | Should -Be $actual
-        $actual.Count | Should -Be 21
+        $actual.Count | Should -Be 22
     }
     It 'keeps the signed files ASCII (the signature must read the same in Windows PowerShell 5.1 and PowerShell 7)' {
         foreach ($relative in Get-SignedPaths) {

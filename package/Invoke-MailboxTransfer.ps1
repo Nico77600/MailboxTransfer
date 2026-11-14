@@ -606,6 +606,9 @@ function Write-MbtRunSummary {
     if ($EventsFile -and -not $dryRun -and $Mode -in 'Export', 'ExportPst', 'Import', 'ImportPst', 'ExportEml', 'ImportEml', 'CheckPst', 'RepairPst') {
         try { $values.Report = @('Report', [string](Write-MbtJobHtmlReport -Folder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent))) }
         catch { Write-MbtItem WARN "the HTML report could not be written: $($_.Exception.Message)" }
+        # the overview of all the jobs of the work folder (<work folder>\jobs\overview.html): this job is one more row of it
+        try { $overviewPath = Write-MbtJobOverview -JobFolder (Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent); if ($overviewPath) { $values['All jobs'] = @('Report', [string]$overviewPath) } }
+        catch { Write-MbtItem WARN "the overview of all the jobs could not be written: $($_.Exception.Message)" }
     }
     Write-MbtSummary -Title $title -Values $values -Status $status
 }

@@ -304,7 +304,7 @@ function Build-MbtGuiStartPage {
         Add-MbtGuiHandler $card 'Click' { param($sender, $e) $script:Gui.S.Sel = [string]$sender.Tag; Show-MbtGuiPage }
         $grid.Children.Add($card) | Out-Null
     }
-    $left = New-GuiCard -Title 'Continue a job' -Info ('Found in your work folder ' + $s.WorkFolder) -Content @((New-MbtGuiJobList))
+    $left = New-GuiCard -Title 'Continue a job' -Info ('Found in your work folder ' + $s.WorkFolder) -Right (New-GuiButton -Text 'All jobs' -Small -Icon doc -OnClick { Open-MbtGuiJobOverview }) -Content @((New-MbtGuiJobList))
     $right = if ($sel) {
         $t = $script:Tasks[$sel]
         $ol = [Windows.Controls.StackPanel]::new()

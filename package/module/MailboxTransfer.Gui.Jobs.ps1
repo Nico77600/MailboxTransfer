@@ -17,8 +17,9 @@
 #>
 Set-StrictMode -Version Latest
 
-# The HTML report of a job (the same writer as the command line: report.html in the job folder).
+# The HTML report of a job (the same writer as the command line: report.html in the job folder) and the overview of all the jobs.
 . (Join-Path $PSScriptRoot 'MailboxTransfer.Report.ps1')
+. (Join-Path $PSScriptRoot 'MailboxTransfer.Overview.ps1')
 
 function New-MbtGuiJobId { return -join ((1..4) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] }) }
 
@@ -529,6 +530,19 @@ function Write-MbtGuiRunReport {
         try { $written.Add((Write-MbtJobHtmlReport -Folder $Folder)) } catch { Write-Verbose "The HTML report could not be written: $($_.Exception.Message)" }
     }
     return $written.ToArray()
+}
+
+function Open-MbtGuiJobOverview {
+    <#
+        "All jobs": writes <work folder>\jobs\overview.html again from the status of every job (the worker does it, the window stays alive), then opens it in the browser. The
+        demonstration writes nothing, and the dialog says so.
+    #>
+    $g = $script:Gui
+    $say = { param([string]$Title, [string]$Body) Show-MbtGuiDialog -Title $Title -Body $Body -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $open = { param($path) if ($path -and (Test-Path -LiteralPath ([string]$path))) { Start-Process -FilePath ([string]$path) } else { & $say 'Nothing to open here' 'No file was written: this is the demonstration.' } }.GetNewClosure()
+    $fail = { param($message) & $say 'The overview of all the jobs could not be written' ([string]$message) }.GetNewClosure()
+    try { & $g.Engine.JobOverview $g.S.WorkFolder $open $fail }
+    catch { & $fail $_.Exception.Message }
 }
 
 function Get-MbtGuiReportPath {

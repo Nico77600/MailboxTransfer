@@ -104,6 +104,11 @@ function New-MbtGuiRealEngine {
         @($out)
     }.GetNewClosure()
 
+    # "All jobs": the overview page of the work folder, written by the worker; OnDone gets its path
+    $e.JobOverview = { param($Work, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($work) Write-MbtJobOverview -WorkFolder $work }
+    }.GetNewClosure()
+
     $e.FreeSpace = { param($Path) try { $r = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)); return ([IO.DriveInfo]::new($r)).AvailableFreeSpace } catch { return $null } }
 
     # -Silent: only the cached token (no sign-in window, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)

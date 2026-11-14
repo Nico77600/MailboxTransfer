@@ -609,6 +609,16 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 > [!NOTE]
 > **Keep awake.** Windows follows your company's power settings unless you tick **Keep this PC awake while it runs** (in **Expert mode**, at the bottom of the Verify page; it is off by default). If the PC goes to sleep, the job stops and **Continue** does what is left. Ticked, the tool asks Windows not to sleep because of inactivity; it still cannot stop a closed lid, a Sleep you choose yourself, or a restart. The Verify page says so before you start (**What if this PC sleeps, or I close the window?**).
 
+### Many jobs: one page for all of them
+
+After a few dozen jobs the question is no longer "what did this job do" but "which of my jobs need me". The tool answers it with one page, **overview.html**, in the folder `jobs` of your work folder. It has one row for each job: when it started, the task, the mailbox or the source, the destination, the result, the items done (and failed), the data, the duration, and a link to the report of the job. The tiles at the top give the totals.
+
+- **Open it**: press **All jobs** on the Task page (next to **Continue a job**) or on the Next steps page (in **Reports and log**). The button writes the page again from the status of every job and opens it in your browser. On the command line, the summary card of every job ends with an **All jobs** line that gives its path.
+- **The jobs that need you come first**: failed, then waiting for a decision, interrupted, not complete, items refused; the finished ones come after. Click a column title to sort by it; **Reset the filters and the order** goes back.
+- **Filter and search**: the buttons above the table filter by result, the lists by task and by period (today, 7, 30 or 90 days), and the box finds a mailbox, a folder or a job name.
+- A page of thousands of jobs opens at once: it shows 200 rows and **Show more** adds more. It lists the 20,000 newest jobs and says so when there are more. The checks of a plan (**Check the plan**) are not jobs and are left out.
+- The page is one file that needs no network. It follows the theme of your browser. It is rewritten at the end of every job; two jobs that end together cannot damage it. If it cannot be written, the job is not affected: a warning is shown. From PowerShell: `Write-MbtJobOverview -WorkFolder <work folder>`.
+
 <!-- icon: lifebuoy -->
 ## 9. When something goes wrong
 
