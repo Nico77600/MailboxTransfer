@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: [{"engine":"PowerShell 7","shell":"pwsh","package":true,"pwsh":"7.5","pwshVersion":"7.5.13","exact":false},{"engine":"PowerShell 7.6 advisory","shell":"pwsh","package":true,"pwsh":"7.6","pwshVersion":"7.6.10","exact":true}]
+        include: [{"engine":"PowerShell 7","shell":"pwsh","package":true,"pwsh":"7.5","pwshVersion":"7.5.13","exact":false}]
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -56,6 +56,30 @@ jobs:
       - name: Build with the existing package tool (PowerShell ${{ matrix.pwsh }})
         shell: pwsh
         run: .\.github\scripts\Invoke-CI.ps1 -Stage Package -OutputDirectory "$env:RUNNER_TEMP\ci-results"
+
+      - name: Add PowerShell 7.6.10 for the console checks
+        shell: pwsh
+        run: .\.github\scripts\Install-PowerShell.ps1 -Version '7.6.10' -Exact
+
+      - name: Run the console tests (PowerShell 7.6)
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.ToString() -ne '7.6.10') { throw 'PowerShell 7.6.10 is required for this step.' }
+          $env:PSModulePath = $env:CI_MODULE_PATH + [IO.Path]::PathSeparator + $env:PSModulePath
+          Import-Module Pester -RequiredVersion 6.1.0 -Force -ErrorAction Stop
+          $out = Join-Path $env:RUNNER_TEMP 'ci-results\powershell-7.6'
+          $null = New-Item -ItemType Directory -Force -Path $out
+          $pester = New-PesterConfiguration
+          $pester.Run.Path = @('tests/Gui.Smoke.Tests.ps1', 'tests/Gui.ClickThrough.Tests.ps1', 'tests/Gui.CommandLine.Tests.ps1')
+          $pester.Run.PassThru = $true
+          $pester.Output.Verbosity = 'Normal'
+          $pester.TestResult.Enabled = $true
+          $pester.TestResult.OutputFormat = 'NUnitXml'
+          $pester.TestResult.OutputPath = Join-Path $out 'pester-results.xml'
+          $result = Invoke-Pester -Configuration $pester
+          if ($null -eq $result -or $result.PassedCount -le 0 -or $result.FailedCount -gt 0 -or $result.FailedContainersCount -gt 0 -or [string]$result.Result -ne 'Passed') {
+            throw 'The console tests did not pass on PowerShell 7.6.'
+          }
 
       - name: Retain public CI evidence
         if: always()

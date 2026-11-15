@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     CI only. Makes sure that the pwsh used by the next steps is PowerShell 7.5 or later (the engine requires 7.5+).
@@ -8,7 +8,7 @@
     appears in the hashes.sha256 asset of the release), it is extracted under RUNNER_TEMP and put first on PATH for the
     following steps. A full extracted copy keeps pwsh.exe inside $PSHOME, which the engine needs to start its child processes.
     With -Exact the pwsh on PATH is kept only when it is exactly the pinned version; otherwise the pinned release is installed.
-    Two releases are pinned, one per CI leg: 7.5.13 (default) and 7.6.10. Pass -Version to choose; the SHA-256 of each is in $pins
+    Two releases are pinned: 7.5.13 (default, every test) and 7.6.10 (the console tests run again). Pass -Version to choose; the SHA-256 of each is in $pins
     (the values of the hashes.sha256 asset of the release). A version that is not pinned here needs an explicit -Sha256.
     It does not connect to a lab or use publication credentials.
 #>
