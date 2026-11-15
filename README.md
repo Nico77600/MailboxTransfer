@@ -348,7 +348,7 @@ An export store and PST files contain **complete mail**: protect them like the m
 Invoke-Pester -Path .\tests -Output Detailed        # no network, no tenant, no mailbox needed
 ```
 
-The tests drive the real engine against a fake Microsoft Graph and synthetic PST files, the console in a headless WPF window on a fake engine, and the package integrity logic on a copy of the package. Large real-data corpora (kept outside the repository) add checks when they are present and are skipped otherwise. The cloud checks (a test tenant) are run by the maintainer with the scripts in `tools\`; nothing in the automated tests contacts the cloud. The engine was validated offline and on one Microsoft 365 test tenant (version 1.0.0; 1.1.0 only renames a folder of the PST export), including writing into a shared mailbox with a certificate.
+The tests drive the real engine against a fake Microsoft Graph and synthetic PST files, the console in a headless WPF window on a fake engine, and the package integrity logic on a copy of the package. Large real-data corpora (kept outside the repository) add checks when they are present and are skipped otherwise. The cloud checks (a test tenant) are run by the maintainer with the scripts in `tools\`; nothing in the automated tests contacts the cloud. The engine and the console were validated offline and on one Microsoft 365 test tenant: exports, imports, and writing into a shared mailbox with a certificate.
 
 ## License
 
