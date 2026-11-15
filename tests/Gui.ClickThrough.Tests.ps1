@@ -12,7 +12,8 @@ BeforeAll {
         $work = Join-Path ([IO.Path]::GetTempPath()) ('mbt-gui-click-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $stdout = Join-Path $work 'stdout.json'
         $null = New-Item -ItemType Directory -Force -Path $work
-        $process = Start-Process -FilePath $script:Pwsh -ArgumentList @('-NoProfile', '-STA', '-File', $script:Script, '-Package', $script:Package, '-Work', (Join-Path $work 'w'), '-Part', $part, '-Parts', $script:Parts) -RedirectStandardOutput $stdout -RedirectStandardError (Join-Path $work 'stderr.txt') -WindowStyle Hidden -PassThru
+        # Start-Process does not quote the elements of -ArgumentList: each path is quoted (a path may contain a space)
+        $process = Start-Process -FilePath $script:Pwsh -ArgumentList @('-NoProfile', '-STA', '-File', "`"$($script:Script)`"", '-Package', "`"$($script:Package)`"", '-Work', "`"$(Join-Path $work 'w')`"", '-Part', $part, '-Parts', $script:Parts) -RedirectStandardOutput $stdout -RedirectStandardError (Join-Path $work 'stderr.txt') -WindowStyle Hidden -PassThru
         [pscustomobject]@{ Part = $part; Work = $work; Stdout = $stdout; Process = $process }
     }
     foreach ($run in $script:Runs) {

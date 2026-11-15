@@ -10,7 +10,8 @@ BeforeDiscovery {
     $work = Join-Path ([IO.Path]::GetTempPath()) ('mbt-gui-engine-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $stdout = Join-Path ([IO.Path]::GetTempPath()) ('mbt-gui-engine-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
     $stderr = $stdout + '.err'
-    $process = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-STA', '-File', $script, '-Package', $package, '-Work', (Join-Path $work 'w')) -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+    # Start-Process does not quote the elements of -ArgumentList: each path is quoted (a path may contain a space)
+    $process = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-STA', '-File', "`"$script`"", '-Package', "`"$package`"", '-Work', "`"$(Join-Path $work 'w')`"") -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
     $null = $process.WaitForExit(900000)
     $raw = if (Test-Path -LiteralPath $stdout) { ([string](Get-Content -LiteralPath $stdout -Raw)).Trim() } else { '' }
     $err = if (Test-Path -LiteralPath $stderr) { [string](Get-Content -LiteralPath $stderr -Raw) } else { '' }
