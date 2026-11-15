@@ -149,15 +149,15 @@ namespace MailboxTransfer
             if (Before != null) sb.AppendLine("  before: " + Before.Errors + " error(s), " + Before.Warnings + " warning(s), " + Before.Infos + " information(s)");
             if (!PlanOnly)
             {
-                sb.AppendLine("  items: " + ItemsRecovered.ToString("N0") + " recovered, " + ItemsPartial.ToString("N0") + " partial, " + ItemsLost.ToString("N0") + " lost" +
-                    (OrphanItems > 0 ? ", " + OrphanItems.ToString("N0") + " orphan(s) put in the recovered folder" : "") + (DanglingDropped > 0 ? ", " + DanglingDropped.ToString("N0") + " dangling reference(s) dropped" : ""));
-                if (NameMapSource != PstNameMapSource.None) sb.AppendLine("  name map: " + NameMapSource + (NameMapSource == PstNameMapSource.Original ? "" : " - " + NameMapDetail) + (NamedIdsUnresolved > 0 ? "; " + NamedIdsUnresolved + " named-property id(s) without entry, " + NamedPropsDropped.ToString("N0") + " propert" + (NamedPropsDropped == 1 ? "y" : "ies") + " dropped" : ""));
-                if (AttachmentsKeptDamaged > 0) sb.AppendLine("  damaged attachments kept: " + AttachmentsKeptDamaged.ToString("N0") + " (" + DamagedBytes.ToString("N0") + " bytes zero-filled)");
+                sb.AppendLine("  items: " + ItemsRecovered.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " recovered, " + ItemsPartial.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " partial, " + ItemsLost.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " lost" +
+                    (OrphanItems > 0 ? ", " + OrphanItems.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " orphan(s) put in the recovered folder" : "") + (DanglingDropped > 0 ? ", " + DanglingDropped.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " dangling reference(s) dropped" : ""));
+                if (NameMapSource != PstNameMapSource.None) sb.AppendLine("  name map: " + NameMapSource + (NameMapSource == PstNameMapSource.Original ? "" : " - " + NameMapDetail) + (NamedIdsUnresolved > 0 ? "; " + NamedIdsUnresolved + " named-property id(s) without entry, " + NamedPropsDropped.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " propert" + (NamedPropsDropped == 1 ? "y" : "ies") + " dropped" : ""));
+                if (AttachmentsKeptDamaged > 0) sb.AppendLine("  damaged attachments kept: " + AttachmentsKeptDamaged.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " (" + DamagedBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " bytes zero-filled)");
                 if (After != null) sb.AppendLine("  after: " + After.Errors + " error(s), " + After.Warnings + " warning(s), " + After.Infos + " information(s)");
                 if (Error != null) sb.AppendLine("  error: " + Error);
                 if (Cancelled) sb.AppendLine("  cancelled");
             }
-            sb.Append("  " + Actions.Count + " action(s) in " + Elapsed.TotalSeconds.ToString("N1") + " s");
+            sb.Append("  " + Actions.Count + " action(s) in " + Elapsed.TotalSeconds.ToString("N1", System.Globalization.CultureInfo.InvariantCulture) + " s");
             return sb.ToString();
         }
     }
@@ -810,7 +810,7 @@ namespace MailboxTransfer
             }
             _rep.NamedIdsUsed = _reader.NamedIdsUsed.Count; _rep.NamedIdsUnresolved = _reader.NamedIdsUnresolved.Count; _rep.NamedPropsDropped = _reader.NamedPropsDropped;
             if (_reader.NamedIdsUnresolved.Count > 0)
-                Event("NAMEMAP-IDS-LOST", _reader.NamedIdsUnresolved.Count + " of " + _reader.NamedIdsUsed.Count + " named-property id(s) used by the messages have no entry in the name map: " + _reader.NamedPropsDropped.ToString("N0") + " propert" + (_reader.NamedPropsDropped == 1 ? "y" : "ies") + " dropped", null, PstFormat.NidNameToIdMap);
+                Event("NAMEMAP-IDS-LOST", _reader.NamedIdsUnresolved.Count + " of " + _reader.NamedIdsUsed.Count + " named-property id(s) used by the messages have no entry in the name map: " + _reader.NamedPropsDropped.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " propert" + (_reader.NamedPropsDropped == 1 ? "y" : "ies") + " dropped", null, PstFormat.NidNameToIdMap);
             _writer.Close();
             _writer = null;
             Report("repair", null, null, true);
@@ -1097,7 +1097,7 @@ namespace MailboxTransfer
                 if (sb == null) { lost.Add(where + "property " + Tag(p.Id, p.Type) + " (value damaged: " + x.Message + ")"); return null; }
                 damaged = new PstDamagedAttachment { Where = where.TrimEnd(), Length = sb.Length, BadBytes = sb.BadBytes };
                 damaged.BadRanges.AddRange(sb.BadRanges);
-                lost.Add(where + "data damaged, kept with zeros in place of the unreadable blocks: " + (sb.Length - sb.BadBytes).ToString("N0") + " of " + sb.Length.ToString("N0") + " bytes read; zero-filled " + string.Join(", ", sb.BadRanges.Take(8)) + (sb.BadRanges.Count > 8 ? ", ... (" + (sb.BadRanges.Count - 8) + " more)" : ""));
+                lost.Add(where + "data damaged, kept with zeros in place of the unreadable blocks: " + (sb.Length - sb.BadBytes).ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " of " + sb.Length.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " bytes read; zero-filled " + string.Join(", ", sb.BadRanges.Take(8)) + (sb.BadRanges.Count > 8 ? ", ... (" + (sb.BadRanges.Count - 8) + " more)" : ""));
                 return FxProperty.CreateLazy(0x3701, 0x0102, sb);
             }
         }

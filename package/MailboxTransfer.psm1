@@ -4,13 +4,13 @@
     Mailbox Transfer - PowerShell module.
 
 .DESCRIPTION
-    Helper functions used by Invoke-MailboxTransfer.ps1 and by the lab scripts in tools\, organised in regions in
+    Helper functions used by Invoke-MailboxTransfer.ps1 and by the scripts of the repository in tools\, organised in regions in
     the order of an execution:
 
         1. Console                 Write-Mbt* and Format-Mbt* functions (what the administrator sees)
         2. Configuration           Import-MbtConfiguration
         3. Engine                  Initialize-MbtEngine (SQLite from lib\sqlite + C# compiled in memory), Initialize-MbtAuthEngine
-        4. Sign-in                 Connect-MbtGraph (browser, -DeviceCode, or app-only with -CertificateThumbprint / -CertificatePath), Get-MbtAccessToken, Get-MbtTokenInfo, Get-MbtCertificate, Disconnect-MbtGraph
+        4. Sign-in                 Connect-MbtGraph (Windows sign-in window, -DeviceCode, or app-only with -CertificateThumbprint / -CertificatePath), Get-MbtAccessToken, Get-MbtTokenInfo, Get-MbtCertificate, Disconnect-MbtGraph
         5. Mailbox                 Test-MbtMailboxId, ConvertTo-MbtMailboxId, Get-MbtPrimaryMailboxId, Get-MbtMailboxLocation (primary, archive, auxiliary
                                    archives of an auto-expanding archive), Read-MbtMailboxLocationFile, Get-MbtMailboxTree, Resolve-MbtFolder,
                                    Get-MbtFolderItems, New-MbtFolderPath (creates missing folders, create only)
@@ -29,7 +29,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0
+    Version : 1.2.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -40,7 +40,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ToolVersion = '1.1.0'
+$script:ToolVersion = '1.2.0'
 $script:ToolRoot = $PSScriptRoot
 # Package integrity. A release package carries the owner-signed PackageIntegrity.psd1 manifest; when it is present, the signed
 # verifier (src\Test-PackageIntegrity.ps1) must accept the tree before any engine code is compiled. A source tree without a manifest
@@ -79,7 +79,7 @@ function Assert-MbtPackageIntegrity {
     }
     $signature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $verifier -ErrorAction Stop
     if ([string]$signature.Status -cne 'Valid' -or $null -eq $signature.SignerCertificate -or
-        $signature.SignerCertificate.Thumbprint -cne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
+        $signature.SignerCertificate.Thumbprint -ne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
         $null -eq $signature.TimeStamperCertificate) {
         throw 'Package integrity: verifier must have the trusted, timestamped owner signature.'
     }
@@ -110,14 +110,14 @@ function Get-MbtIconSet {
     switch ($Style) {
         'Emoji' { return @{
                 Logo = & $u 0x1F4EC; Ok = & $u 0x2705; Warn = (& $u 0x26A0) + [char]0xFE0F; Fail = & $u 0x274C; Info = & $u 0x1F539; Skip = & $u 0x23E9
-                Plan = & $u 0x1F50E; Mode = & $u 0x1F3AF; Store = & $u 0x1F4BE; Folder = & $u 0x1F4C1; Log = & $u 0x1F4DD; Done = & $u 0x1F389; Clock = & $u 0x23F3
+                Plan = & $u 0x1F50E; Mode = & $u 0x1F3AF; Store = & $u 0x1F4BE; Folder = & $u 0x1F4C1; Log = & $u 0x1F4DD; Done = & $u 0x1F389; Clock = & $u 0x23F3; Report = & $u 0x1F4CA
             } }
         'Symbols' { return @{
                 Logo = & $u 0x2666; Ok = & $u 0x221A; Warn = & $u 0x25B2; Fail = & $u 0x00D7; Info = & $u 0x2022; Skip = & $u 0x00BB
-                Plan = & $u 0x25BA; Mode = & $u 0x25D9; Store = & $u 0x25A0; Folder = & $u 0x2302; Log = & $u 0x00B6; Done = & $u 0x221A; Clock = & $u 0x25CB
+                Plan = & $u 0x25BA; Mode = & $u 0x25D9; Store = & $u 0x25A0; Folder = & $u 0x2302; Log = & $u 0x00B6; Done = & $u 0x221A; Clock = & $u 0x25CB; Report = & $u 0x2261
             } }
         default { return @{
-                Logo = '*'; Ok = '+'; Warn = '!'; Fail = 'x'; Info = '-'; Skip = '>'; Plan = '?'; Mode = 'o'; Store = '#'; Folder = '>'; Log = '='; Done = '*'; Clock = '~'
+                Logo = '*'; Ok = '+'; Warn = '!'; Fail = 'x'; Info = '-'; Skip = '>'; Plan = '?'; Mode = 'o'; Store = '#'; Folder = '>'; Log = '='; Done = '*'; Clock = '~'; Report = '='
             } }
     }
 }
@@ -296,22 +296,24 @@ function Format-MbtBytes {
     $units = 'B', 'KiB', 'MiB', 'GiB', 'TiB'
     $i = 0
     while ($Bytes -ge 1024 -and $i -lt $units.Count - 1) { $Bytes /= 1024; $i++ }
-    if ($i -eq 0) { return ('{0:0} B' -f $Bytes) }
-    return ('{0:0.0} {1}' -f $Bytes, $units[$i])
+    $en = [Globalization.CultureInfo]::InvariantCulture
+    if ($i -eq 0) { return [string]::Format($en, '{0:0} B', $Bytes) }
+    return [string]::Format($en, '{0:0.0} {1}', $Bytes, $units[$i])
 }
 
 function Format-MbtDuration {
     param([Parameter(Mandatory)][double]$Seconds)
-    if ($Seconds -lt 1) { return ('{0:0} ms' -f ($Seconds * 1000)) }
-    if ($Seconds -lt 120) { return ('{0:0.0} s' -f $Seconds) }
-    return ([TimeSpan]::FromSeconds($Seconds)).ToString('hh\:mm\:ss')
+    $en = [Globalization.CultureInfo]::InvariantCulture
+    if ($Seconds -lt 1) { return [string]::Format($en, '{0:0} ms', ($Seconds * 1000)) }
+    if ($Seconds -lt 120) { return [string]::Format($en, '{0:0.0} s', $Seconds) }
+    return ([TimeSpan]::FromSeconds($Seconds)).ToString('hh\:mm\:ss', $en)
 }
 
 function Format-MbtRate {
     <# Throughput in MiB/s. #>
     param([Parameter(Mandatory)][double]$Bytes, [Parameter(Mandatory)][double]$Seconds)
     if ($Seconds -le 0) { return '-' }
-    return ('{0:0.00} MiB/s' -f ($Bytes / 1MB / $Seconds))
+    return [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.00} MiB/s', ($Bytes / 1MB / $Seconds))
 }
 
 #endregion
@@ -324,8 +326,8 @@ function Import-MbtConfiguration {
         Reads config\MailboxTransfer.config.psd1 (or another file) over the built-in defaults, then the private local file when there is one.
     .DESCRIPTION
         Config\MailboxTransfer.config.local.psd1 is read after the shipped file (same sections and keys). It is
-        git-ignored and never part of a package: it holds the private defaults of one machine, typically the Lab section (tenant,
-        application, user, mailbox ids) of the lab scripts in tools\. The environment variable MAILBOXTRANSFER_LOCAL_CONFIG names another
+        git-ignored and never part of a package: it holds the private defaults of one machine, typically the Tenant section (tenant,
+        application, user, mailbox ids; a file that still calls it Lab is read the same way) and the keys of the developer scripts in tools\. The environment variable MAILBOXTRANSFER_LOCAL_CONFIG names another
         local file (a missing file means none); the tests use it so that no private value can reach them. It is read after any
         file given with -Path too, so that the jobs the console starts keep the same defaults.
     #>
@@ -335,6 +337,8 @@ function Import-MbtConfiguration {
         Graph = @{ BaseUrl = 'https://graph.microsoft.com/v1.0'; MaxAttempts = 6; BaseBackoffSeconds = 2; MaxBackoffSeconds = 60; RequestTimeoutMinutes = 15; ExportBatchSize = 20; ItemPageSize = 0 }
         Auth  = @{ Scopes = @('https://graph.microsoft.com/.default'); RedirectUri = 'http://localhost'; CacheFile = ''; AppTenantId = ''; AppClientId = ''; CertificateThumbprint = ''; CertificatePath = '' }
         Output = @{ Root = '.\out' }
+        Jobs = @{ RetentionDays = 90 }
+        Tenant = @{ TenantId = ''; ClientId = ''; UserPrincipalName = ''; PrimaryMailboxId = ''; ArchiveMailboxId = '' }
         Lab = @{
             TenantId = ''; ClientId = ''; UserPrincipalName = ''; UserObjectId = ''; PrimaryMailboxId = ''; ArchiveMailboxId = ''; SourceFolder = ''; TargetFolder = ''
         }
@@ -353,7 +357,16 @@ function Import-MbtConfiguration {
             }
         }
     }
+    # Tenant is the section an operator fills in; Lab is the older name of the same keys (and holds the keys of the developer scripts). A value written in one
+    # of them is seen in both, Tenant first, so a file that still says Lab keeps working and those scripts keep reading Lab.
+    foreach ($key in @($cfg.Tenant.Keys)) {
+        $value = if (-not [string]::IsNullOrEmpty([string]$cfg.Tenant[$key])) { $cfg.Tenant[$key] } else { $cfg.Lab[$key] }
+        $cfg.Tenant[$key] = $value; $cfg.Lab[$key] = $value
+    }
     if ($cfg.Graph.ExportBatchSize -lt 1 -or $cfg.Graph.ExportBatchSize -gt 20) { throw 'Graph.ExportBatchSize must be between 1 and 20 (limit of exportItems).' }
+    $retention = 0
+    if (-not [int]::TryParse([string]$cfg.Jobs.RetentionDays, [Globalization.NumberStyles]::Integer, [Globalization.CultureInfo]::InvariantCulture, [ref]$retention) -or $retention -lt 0 -or $retention -gt 3650) { throw 'Jobs.RetentionDays must be a whole number of days between 0 and 3650 (0 keeps the folders of all the jobs).' }
+    $cfg.Jobs.RetentionDays = $retention
     if ([string]::IsNullOrWhiteSpace($cfg.Auth.CacheFile)) { $cfg.Auth.CacheFile = Join-Path $env:LOCALAPPDATA 'MailboxTransfer\token.cache' }
     return [pscustomobject]$cfg
 }
@@ -457,6 +470,62 @@ function Find-MbtMsal {
     return [pscustomobject]@{ Msal = Join-Path $deps 'Core\Microsoft.Identity.Client.dll'; Abstractions = Join-Path $deps 'Microsoft.IdentityModel.Abstractions.dll' }
 }
 
+function Get-MbtWindowsSignIn {
+    <#
+    .SYNOPSIS
+        Whether the Windows sign-in window (the Windows account broker) can be used: Available, Reason (plain words, empty when available) and Directory
+        (where the broker and its native runtime are, next to the MSAL in use).
+    .DESCRIPTION
+        The broker is not shipped with the tool: it comes from the Microsoft.Graph.Authentication module that holds MSAL, and must be of the same version
+        as that MSAL. Nothing is loaded here (the files are only looked at), so the answer is quick; Initialize-MbtAuthEngine and New-MbtAuth do the loading.
+        When the answer is no, the sign-in uses a code. -MsalPath looks next to another Microsoft.Identity.Client.dll than the one in use.
+    #>
+    [CmdletBinding()]
+    param([string]$Root = $script:ToolRoot, [string]$MsalPath)
+    $no = { param($why) [pscustomobject]@{ Available = $false; Reason = $why; Directory = $null } }
+    if (-not [OperatingSystem]::IsWindows()) { return (& $no 'the Windows sign-in window exists only on Windows') }
+    $loaded = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'Microsoft.Identity.Client' -and $_.Location } | Select-Object -First 1
+    $msalPath = if ($MsalPath) { $MsalPath } elseif ($loaded) { $loaded.Location } else { try { (Find-MbtMsal -Root $Root).Msal } catch { $null } }
+    if (-not $msalPath -or -not (Test-Path -LiteralPath $msalPath)) { return (& $no 'the sign-in component (MSAL) was not found') }
+    $dir = Split-Path -Parent $msalPath
+    if ((Split-Path -Leaf $dir) -eq 'Core') { $dir = Split-Path -Parent $dir }
+    $broker = Join-Path $dir 'Microsoft.Identity.Client.Broker.dll'
+    $nativeName = switch ([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture) { 'Arm64' { 'msalruntime_arm64.dll' } 'X86' { 'msalruntime_x86.dll' } default { 'msalruntime.dll' } }
+    if (-not (Test-Path -LiteralPath $broker)) { return (& $no 'the installed Microsoft.Graph.Authentication module has no Windows sign-in component: update it (Update-Module Microsoft.Graph.Authentication)') }
+    if (-not (Test-Path -LiteralPath (Join-Path $dir $nativeName))) { return (& $no "the Windows sign-in component is incomplete ($nativeName is missing): update Microsoft.Graph.Authentication") }
+    try {
+        $m = [Reflection.AssemblyName]::GetAssemblyName($msalPath).Version
+        $b = [Reflection.AssemblyName]::GetAssemblyName($broker).Version
+    } catch { return (& $no "the Windows sign-in component cannot be read ($($_.Exception.Message))") }
+    if ($m.Major -ne $b.Major -or $m.Minor -ne $b.Minor) { return (& $no "the Windows sign-in component ($b) is not of the same version as MSAL ($m): update Microsoft.Graph.Authentication") }
+    return [pscustomobject]@{ Available = $true; Reason = ''; Directory = $dir }
+}
+
+function Get-MbtWorkFolderStatus {
+    <#
+    .SYNOPSIS
+        The folder where the console keeps its jobs, stores and logs: Path, FreeBytes ($null when the drive cannot tell), Ok and Problem (plain words, empty when Ok).
+    .DESCRIPTION
+        The folder is created when it does not exist, a file is written in it and removed, and the free space of its drive must be above -MinimumFreeBytes
+        (5 GiB, as the checks of the disks). Nothing else is written.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [long]$MinimumFreeBytes = 5GB)
+    $result = { param($ok, $full, $free, $problem) [pscustomobject]@{ Ok = $ok; Path = $full; FreeBytes = $free; Problem = $problem } }
+    try { $full = [IO.Path]::GetFullPath($Path) } catch { return (& $result $false $Path $null 'is not a valid folder path. Choose another folder.') }
+    try { $null = [IO.Directory]::CreateDirectory($full) }
+    catch { return (& $result $false $full $null "cannot be created ($($_.Exception.Message)). Choose another folder.") }
+    $probe = Join-Path $full ('.write-test-' + [guid]::NewGuid().ToString('N'))
+    try { [IO.File]::WriteAllText($probe, ''); [IO.File]::Delete($probe) }
+    catch { return (& $result $false $full $null "cannot be written to ($($_.Exception.Message)). Choose another folder.") }
+    $free = $null
+    try { $free = ([IO.DriveInfo]::new([IO.Path]::GetPathRoot($full))).AvailableFreeSpace } catch { $free = $null }
+    if ($null -ne $free -and $free -le $MinimumFreeBytes) {
+        return (& $result $false $full $free ('has only {0} free: at least {1} is needed. Free some space or choose another folder.' -f (Format-MbtBytes $free), (Format-MbtBytes $MinimumFreeBytes)))
+    }
+    return (& $result $true $full $free '')
+}
+
 function Initialize-MbtAuthEngine {
     <#
     .SYNOPSIS
@@ -479,7 +548,7 @@ function Initialize-MbtAuthEngine {
     $references = @($msalPath, 'System.Security.Cryptography.ProtectedData', 'System.Text.Json', 'System.Linq', 'System.Runtime', 'System.Threading',
         'System.Threading.Tasks', 'System.Collections', 'System.Memory', 'netstandard', 'System.Security.Cryptography',
         'System.Text.Encoding.Extensions', 'System.Runtime.Extensions', 'System.IO.FileSystem', 'System.Console', 'System.Private.Uri',
-        'System.ComponentModel.Primitives', 'System.Security.Cryptography.X509Certificates')
+        'System.ComponentModel.Primitives', 'System.Security.Cryptography.X509Certificates', 'System.Runtime.InteropServices', 'System.Reflection')
     $authSource = Join-Path $Root 'src\Engine.Auth.cs'
     Add-Type -LiteralPath $authSource -ReferencedAssemblies $references -IgnoreWarnings -WarningAction SilentlyContinue
     [AppDomain]::CurrentDomain.SetData('MailboxTransfer.Auth.SourceHash', (Get-MbtSourceHash -Path $authSource))
@@ -501,25 +570,33 @@ function New-MbtGraphOptions {
 }
 
 function New-MbtAuth {
-    <# The MSAL.NET sign-in object (not exported): browser, or device code with the line written to the console and to a file. #>
+    <#
+        The MSAL.NET sign-in object (not exported): the Windows sign-in window over -ParentWindow (a window handle; none: the console window), or a device code
+        (asked with -DeviceCode, or used when the Windows sign-in component cannot be loaded) with the line written to the console and to a file.
+    #>
     param(
         [Parameter(Mandatory)][string]$TenantId, [Parameter(Mandatory)][string]$ClientId, [Parameter(Mandatory)][string[]]$Scopes,
-        [Parameter(Mandatory)][string]$CacheFile, [Parameter(Mandatory)]$Configuration, [switch]$DeviceCode, [string]$DeviceCodeFile
+        [Parameter(Mandatory)][string]$CacheFile, [Parameter(Mandatory)]$Configuration, [switch]$DeviceCode, [string]$DeviceCodeFile, [long]$ParentWindow
     )
     Initialize-MbtAuthEngine
-    if ($DeviceCode -and -not $DeviceCodeFile) { $DeviceCodeFile = Join-Path (Join-Path (Get-Location).Path $Configuration.Output.Root) 'device-code.txt' }
-    return [MailboxTransfer.GraphAuth]::new($ClientId, $TenantId, $Scopes, $CacheFile, $Configuration.Auth.RedirectUri, [bool]$DeviceCode, $(if ($DeviceCode) { $DeviceCodeFile }))
+    if (-not $DeviceCodeFile) { $DeviceCodeFile = Join-Path (Join-Path (Get-Location).Path $Configuration.Output.Root) 'device-code.txt' }
+    $window = if ($DeviceCode) { $null } else { Get-MbtWindowsSignIn }
+    $auth = [MailboxTransfer.GraphAuth]::new($ClientId, $TenantId, $Scopes, $CacheFile, $Configuration.Auth.RedirectUri, [bool]$DeviceCode, $DeviceCodeFile,
+        $(if ($window -and $window.Available) { $window.Directory }), $(if ($window -and -not $window.Available) { $window.Reason }))
+    if ($ParentWindow) { $auth.ParentWindow = [IntPtr]$ParentWindow }
+    $auth.Log = [Action[string]] { param($Line) Write-MbtLog -Level INFO -Message $Line }
+    return $auth
 }
 
 function Get-MbtAccessToken {
     <#
     .SYNOPSIS
-        An access token of a public client application (delegated), from the token cache, else after a sign-in in the browser
-        or with -DeviceCode. Used by tools\Grant-LabConsent.ps1 for the administrator (Connect-MgGraph -DeviceCode stops
-        waiting after 120 seconds, this one waits until the code expires). Returns AccessToken, Account and ExpiresOn.
+        An access token of a public client application (delegated), from the token cache, else after a sign-in in the Windows
+        sign-in window or with -DeviceCode. Used by the tools of the repository for an administrator (Connect-MgGraph -DeviceCode
+        stops waiting after 120 seconds, this one waits until the code expires). Returns AccessToken, Account and ExpiresOn.
     .DESCRIPTION
         Same engine and same DPAPI cache protection as Connect-MbtGraph; give -CacheFile to keep the cache of another account
-        apart (the administrator's one is not the lab user's).
+        apart (the administrator's one is not the one of the user who runs the transfer).
     #>
     [CmdletBinding()]
     param(
@@ -684,8 +761,9 @@ function Connect-MbtGraph {
         Signs in (delegated, interactive the first time, then silent with the refresh token; or app-only with a certificate) and prepares the Graph
         client of the module. Returns the session.
     .DESCRIPTION
-        Delegated: MSAL.NET, public client, redirect URI http://localhost. The first time the sign-in opens the system browser, or with
-        -DeviceCode shows a code: the line "DEVICE CODE: <code> URL: <url>" is written to the console at once and to
+        Delegated: MSAL.NET, public client. The first time the sign-in opens the Windows sign-in window over -ParentWindow (a window handle;
+        none: the console window, else the foreground window); with -DeviceCode, or when that window cannot be used (the Windows sign-in component of
+        Microsoft.Graph.Authentication is missing or not of the version of MSAL: the line before the code says so), it shows a code: the line "DEVICE CODE: <code> URL: <url>" is written to the console at once and to
         -DeviceCodeFile (default: out\device-code.txt, overwritten), then the call waits until the code expires (about 15
         minutes). The token cache is protected by DPAPI (current user) and serves both modes, so a later run of a script does
         not ask again until the refresh token expires.
@@ -704,8 +782,11 @@ function Connect-MbtGraph {
         [securestring]$CertificatePassword,
         [switch]$DeviceCode,
         [string]$DeviceCodeFile,
+        [long]$ParentWindow,
+        # Cancelling it stops the wait for the sign-in window or the code.
+        [Threading.CancellationToken]$CancellationToken = [Threading.CancellationToken]::None,
         [switch]$ForceRefresh,
-        # Never prompts (no browser, no device code): fails at once when no valid token is cached.
+        # Never prompts (no sign-in window, no device code): fails at once when no valid token is cached.
         [switch]$NoPrompt,
         $Configuration = (Import-MbtConfiguration)
     )
@@ -725,8 +806,9 @@ function Connect-MbtGraph {
         }
         return $script:Session
     }
-    $auth = New-MbtAuth -TenantId $TenantId -ClientId $ClientId -Scopes ([string[]]$Configuration.Auth.Scopes) -CacheFile $Configuration.Auth.CacheFile -Configuration $Configuration -DeviceCode:$DeviceCode -DeviceCodeFile $DeviceCodeFile
-    $first = $auth.GetToken($(if ($UserPrincipalName) { $UserPrincipalName }), (-not $NoPrompt),[Threading.CancellationToken]::None, [bool]$ForceRefresh)
+    $auth = New-MbtAuth -TenantId $TenantId -ClientId $ClientId -Scopes ([string[]]$Configuration.Auth.Scopes) -CacheFile $Configuration.Auth.CacheFile -Configuration $Configuration -DeviceCode:$DeviceCode -DeviceCodeFile $DeviceCodeFile -ParentWindow $ParentWindow
+    Write-MbtLog -Level INFO -Message ('sign-in: {0}, tenant {1}, application {2}, {3}' -f $(if ($UserPrincipalName) { $UserPrincipalName } else { 'no account given' }), $TenantId, $ClientId, $(if ($NoPrompt) { 'no prompt' } elseif ($auth.SignInMethod -eq 'code') { 'with a code' + $(if ($auth.BrokerProblem) { " ($($auth.BrokerProblem))" }) } else { 'with the Windows sign-in window' }))
+    $first = $auth.GetToken($(if ($UserPrincipalName) { $UserPrincipalName }), (-not $NoPrompt), $CancellationToken, [bool]$ForceRefresh)
     $graph = [MailboxTransfer.GraphClient]::new($auth.Provider($(if ($UserPrincipalName) { $UserPrincipalName })), (New-MbtGraphOptions -Configuration $Configuration))
     $script:Session = [pscustomobject]@{
         Auth = $auth; Graph = $graph; Api = [MailboxTransfer.MailboxApi]::new($graph); Configuration = $Configuration
@@ -870,8 +952,16 @@ function ConvertTo-MbtMailboxId {
     param([Parameter(Mandatory)][string]$Value, [Parameter(Mandatory)][string]$TenantId)
     $v = $Value.Trim()
     $guid = [guid]::Empty
-    if ($v -match '^MBX:(?<m>[^@]+)@(?<t>.+)$' -and [guid]::TryParse($Matches.m, [ref]$guid) -and [guid]::TryParse($Matches.t, [ref]$guid)) { return $v }
-    if ([guid]::TryParse($v, [ref]$guid)) { return "MBX:$($guid.ToString())@$TenantId" }
+    $tenantGuid = [guid]::Empty
+    # The canonical form is lower case, so the same mailbox always gets the same id whatever the operator typed.
+    if ($v -match '^(?i:MBX):(?<m>[^@]+)@(?<t>.+)$' -and [guid]::TryParse($Matches.m, [ref]$guid) -and [guid]::TryParse($Matches.t, [ref]$tenantGuid)) {
+        return "MBX:$($guid.ToString())@$($tenantGuid.ToString())"
+    }
+    if ([guid]::TryParse($v, [ref]$guid)) {
+        $tenant = $TenantId.Trim()
+        if ([guid]::TryParse($tenant, [ref]$tenantGuid)) { $tenant = $tenantGuid.ToString() } else { $tenant = $tenant.ToLowerInvariant() }
+        return "MBX:$($guid.ToString())@$tenant"
+    }
     throw "'$Value' is not a mailbox id: expected MBX:<mailbox guid>@<tenant id> (or the bare mailbox guid; an SMTP address / UPN is resolved by Resolve-MbtMailboxAddress). Get it with Exchange Online PowerShell: Get-MailboxLocation -User <upn>."
 }
 
@@ -880,7 +970,7 @@ function Get-MbtPrimaryMailboxId {
     .SYNOPSIS
         Primary mailbox id of a user through GET /users/{upn}/settings/exchange (primaryMailboxId).
     .DESCRIPTION
-        Needs the delegated permission User.Read.All (not part of the lab consent). Without it the error says so and asks for
+        Needs the delegated permission User.Read.All (not part of the consent given to the application). Without it the error says so and asks for
         the id to be given (-PrimaryMailboxId). The archive mailbox id has no such API: it comes from Get-MailboxLocation.
     #>
     [CmdletBinding()]
@@ -943,7 +1033,7 @@ function Get-MbtAccessHint {
         signed-in user on that mailbox (FullAccess; it can take up to 60 minutes to apply) and the delegated permissions in the token.
         Mail API: Mail.Read only opens the signed-in user's own mailbox, another one needs Mail.Read.Shared (browse then falls back to the
         import-export listing). Import-export API: MailboxFolder.Read and MailboxItem.Read to browse and export, MailboxFolder.ReadWrite
-        to create folders, MailboxItem.ImportExport to import. Observed in the lab (FullAccess granted, the five permissions in the token):
+        to create folders, MailboxItem.ImportExport to import. Observed with Full Access granted and the five permissions in the token:
         reads answer, creating a folder and importItem are refused with 403.
     #>
     [CmdletBinding()]
@@ -960,10 +1050,10 @@ function Get-MbtAccessHint {
     $missing = @($needs | Where-Object { $group = $_; -not @($group | Where-Object { $_ -in $Scopes }).Count } | ForEach-Object { $_[0] })
     $text = ' Access denied on a mailbox that is not the signed-in user''s.'
     if ($Message -match "requires the following permissions: '(?<p>[^']+)'") {
-        $text += " The service says this delegated call needs: $($Matches.p). The .Shared variants do not exist as delegated permissions on Microsoft Graph (checked in the lab tenant), so delegated writes to another user's mailbox through the import-export API are not possible:" +
+        $text += " The service says this delegated call needs: $($Matches.p). The .Shared variants do not exist as delegated permissions on Microsoft Graph (checked on a test tenant), so delegated writes to another user's mailbox through the import-export API are not possible:" +
             ' use application permissions (.All) with a certificate for a shared mailbox (-CertificateThumbprint, docs\MailboxTransfer-Guide.md, chapter 4.6).'
     }
-    elseif ($missing -and $Scopes) { $text += ' Missing in the token: ' + ($missing -join ', ') + ' (an administrator grants it to the application, tools\Grant-LabConsent.ps1; then sign in again).' }
+    elseif ($missing -and $Scopes) { $text += ' Missing in the token: ' + ($missing -join ', ') + ' (an administrator grants it to the application with admin consent; then sign in again).' }
     elseif ($Scopes) { $text += ' The permissions needed are in the token, so the refusal comes from Exchange.' }
     $text += ' The signed-in user needs the Exchange right FullAccess on that mailbox (Add-MailboxPermission -Identity <mailbox> -User <user> -AccessRights FullAccess; it can take up to 60 minutes to apply).'
     if ($Mode -eq 'Browse') { $text += ' The Mail API opens another mailbox only with Mail.Read.Shared (browse falls back to the import-export listing).' }
@@ -975,7 +1065,7 @@ function Resolve-MbtMailboxAddress {
     .SYNOPSIS
         The physical id MBX:<guid>@<tenant> of the mailbox of an SMTP address / UPN (a shared mailbox, another user's mailbox).
     .DESCRIPTION
-        1. GET /users/{address}/settings/exchange (primaryMailboxId; needs User.Read.All, which the lab consent does not carry).
+        1. GET /users/{address}/settings/exchange (primaryMailboxId; needs User.Read.All, which the consent given to the application does not carry).
         2. Else the import-export API, which accepts the address in place of the id: the first folder of GET /admin/exchange/mailboxes/{address}/folders
            carries parentMailboxUrl, which holds the physical id. Needs the Exchange right of the signed-in user on that mailbox (FullAccess).
         The error says which call failed and how, and what is missing.
@@ -1247,7 +1337,7 @@ function Get-MbtMailboxTree {
 function Resolve-MbtFolder {
     <#
     .SYNOPSIS
-        Finds a folder of a tree by id, by full path, or by the end of its path ("Attachments", "Lab/Attachments").
+        Finds a folder of a tree by id, by full path, or by the end of its path ("Attachments", "Projects/Attachments").
         Several matches is an error that lists them: the script never guesses. No match is an error too, or $null
         with -NullIfMissing.
     #>
@@ -1531,6 +1621,47 @@ function Read-MbtBrowseSelection {
     return [MailboxTransfer.BrowseSelection]::Load($full)
 }
 
+function Save-MbtBrowseSelectionSet {
+    <#
+    .SYNOPSIS
+        Writes the selections of several mailboxes (the locations ticked in the browse view) as one file that -Mode Export -SelectionFile reads.
+    .DESCRIPTION
+        The selection of a single mailbox is written exactly as Save-MbtBrowseSelection writes it. Several selections are written as
+        { "Version": 1, "Selections": [ one selection per mailbox ] }.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object[]]$Selection, [Parameter(Mandatory)][string]$Path)
+    if ($Selection.Count -eq 1) { return Save-MbtBrowseSelection -Selection $Selection[0] -Path $Path }
+    Initialize-MbtEngine
+    $full = if ([IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path (Get-Location).Path $Path }
+    [MailboxTransfer.FileNaming]::Require($full, $true, 'Selection file')
+    $dir = Split-Path $full -Parent
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Force -Path $dir }
+    $body = ($Selection | ForEach-Object { $_.ToJson().TrimEnd() }) -join ",`n"
+    [IO.File]::WriteAllText($full, "{`n  `"Version`": 1,`n  `"Selections`": [`n$body`n  ]`n}`n", [Text.UTF8Encoding]::new($false))
+    return $full
+}
+
+function Read-MbtBrowseSelectionSet {
+    <# Reads a selection file of one mailbox or of several (Save-MbtBrowseSelectionSet): returns one selection per mailbox (use @() around the call). #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    Initialize-MbtEngine
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Selection file not found: $Path" }
+    $text = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $Path).Path, [Text.Encoding]::UTF8)
+    try { $doc = [Text.Json.JsonDocument]::Parse($text) } catch { throw "The selection is not valid JSON: $($_.Exception.Message)" }
+    try {
+        $parts = @()
+        if ($doc.RootElement.ValueKind -eq [Text.Json.JsonValueKind]::Object) {
+            foreach ($property in $doc.RootElement.EnumerateObject()) {
+                if ($property.Name -ceq 'Selections') { foreach ($element in $property.Value.EnumerateArray()) { $parts += $element.GetRawText() } }
+            }
+        }
+        if (-not $parts) { return [MailboxTransfer.BrowseSelection]::FromJson($text) }
+        return $parts | ForEach-Object { [MailboxTransfer.BrowseSelection]::FromJson($_) }
+    } finally { $doc.Dispose() }
+}
+
 function Resolve-MbtBrowsePlan {
     <#
     .SYNOPSIS
@@ -1550,7 +1681,8 @@ function Resolve-MbtBrowsePlan {
     $b = Get-MbtBrowser -RecoverableItemsFolders ([MailboxTransfer.RecoverableItems]::Chosen([string[]]@($RecoverableItemsFolders | Where-Object { $_ })))
     $others = [System.Collections.Generic.List[MailboxTransfer.BrowseLocation]]::new()
     foreach ($l in @($AlsoSearch | Where-Object { $_ })) { $others.Add($l) }
-    return $b.ResolvePlan($Selection, -not $NoVerify, $CancellationToken, $null, $others)
+    $progress = if ($script:PhaseProgress) { $script:PhaseProgress.Browse() }
+    return $b.ResolvePlan($Selection, -not $NoVerify, $CancellationToken, $progress, $others)
 }
 
 function Add-MbtBrowseMoveInfo {
@@ -2006,7 +2138,7 @@ function Show-MbtFxReport {
             Value = $_.Display
         }
     })
-    $shown = if ($AllProperties) { $rows } else { $rows | Select-Object -First $MaxProperties }
+    $shown = @(if ($AllProperties) { $rows } else { $rows | Select-Object -First $MaxProperties })
     $shown | Format-Table -AutoSize -Wrap | Out-String -Width 220 | ForEach-Object { $_.TrimEnd() } | Write-Host
     if ($rows.Count -gt $shown.Count) { Write-MbtDetail "... $($rows.Count - $shown.Count) more elements (use -AllProperties)" }
     $named = @($r.Elements | Where-Object { $_.IsNamed })
@@ -2117,20 +2249,23 @@ function Resolve-MbtMailboxId {
 function Get-MbtConfiguredMailboxId {
     <#
     .SYNOPSIS
-        The Primary and Archive mailbox ids of the configuration (Lab section), for the user of the configuration only.
+        The Primary and Archive mailbox ids of the configuration (Tenant section, or Lab in a configuration that still uses that name), for the user of the configuration only.
     .DESCRIPTION
         An id written in the configuration is the id of one mailbox. It is returned only when -UserPrincipalName is the user the configuration
-        names (Lab.UserPrincipalName); for any other user both are $null and the ids are discovered (Graph for the primary mailbox, the locations
+        names (Tenant.UserPrincipalName); for any other user both are $null and the ids are discovered (Graph for the primary mailbox, the locations
         of the store or -LocationsFile, an explicit -PrimaryMailboxId / -ArchiveMailboxId), so that a request for one user never lands in the
         mailbox of another.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Configuration, [string]$UserPrincipalName)
     $r = [pscustomobject]@{ Primary = $null; Archive = $null }
-    $lab = if ($Configuration -and $Configuration.PSObject.Properties['Lab']) { $Configuration.Lab } else { $null }
-    if ($lab -and $UserPrincipalName -and $lab.UserPrincipalName -and $lab.UserPrincipalName -ieq $UserPrincipalName) {
-        if ($lab.PrimaryMailboxId) { $r.Primary = [string]$lab.PrimaryMailboxId }
-        if ($lab.ArchiveMailboxId) { $r.Archive = [string]$lab.ArchiveMailboxId }
+    $owner = $null
+    foreach ($name in 'Tenant', 'Lab') {
+        if ($Configuration -and $Configuration.PSObject.Properties[$name] -and $Configuration.$name -and $Configuration.$name.UserPrincipalName) { $owner = $Configuration.$name; break }
+    }
+    if ($owner -and $UserPrincipalName -and $owner.UserPrincipalName -and $owner.UserPrincipalName -ieq $UserPrincipalName) {
+        if ($owner.PrimaryMailboxId) { $r.Primary = [string]$owner.PrimaryMailboxId }
+        if ($owner.ArchiveMailboxId) { $r.Archive = [string]$owner.ArchiveMailboxId }
     }
     return $r
 }
@@ -2149,7 +2284,7 @@ function Assert-MbtSignInSettings {
     if (-not $ClientId) { $problems += 'the application (client) id of the app registration' }
     elseif ($ClientId -notmatch $guid) { $problems += "a valid application (client) id (a GUID, not '$ClientId')" }
     if ($problems) {
-        throw ('Sign-in needs ' + ($problems -join ' and ') + '. Give -TenantId and -ClientId, or write TenantId and ClientId in the Lab section of the configuration file (-ConfigPath); ' +
+        throw ('Sign-in needs ' + ($problems -join ' and ') + '. Give -TenantId and -ClientId, or write TenantId and ClientId in the Tenant section of the configuration file (-ConfigPath); ' +
             'keep that file out of version control (config\*.local.psd1). The application is the one registered for this tool in the tenant (public client, delegated permissions).')
     }
 }
@@ -2172,6 +2307,7 @@ function Wait-MbtTransferJob {
     param([Parameter(Mandatory)]$Job, [int]$IntervalSeconds = 5)
     $next = [DateTime]::UtcNow.AddSeconds($IntervalSeconds)
     $lastPhase = ''
+    $nextDetail = [DateTime]::MinValue
     $stopSaid = $false
     try {
         # a stop request made before the job began (the file was there at the start) is honoured at once
@@ -2194,6 +2330,7 @@ function Wait-MbtTransferJob {
                 Write-MbtDetail ($Job.Snapshot().ToString())
                 Update-MbtJobProgress -Job $Job -Messages $messages
             } elseif ($messages.Count) { Update-MbtJobProgress -Job $Job -Messages $messages }
+            elseif ($Job.PSObject.Properties['Metrics'] -and $Job.Metrics.Detail -and [DateTime]::UtcNow -ge $nextDetail) { $nextDetail = [DateTime]::UtcNow.AddSeconds(1); Update-MbtJobProgress -Job $Job -Messages @() }
         }
     } finally {
         if (-not $Job.IsCompleted) { Write-MbtItem WARN 'stopping: the requests in flight finish first, run the command again to resume'; $Job.Cancel(); [void]$Job.Wait(120000) }
@@ -2264,7 +2401,7 @@ function Export-MbtMailbox {
     $null = Wait-MbtTransferJob -Job $job -IntervalSeconds $IntervalSeconds
     $r = $job.Result
     if ($job.Error) { Write-MbtItem FAIL "export stopped: $($job.Error.Message)" }
-    Write-MbtItem $(if ($r.Failed -eq 0 -and $r.Completed) { 'OK' } else { 'WARN' }) ("export {0}: {1} items exported ({2}), {3} failed, {4} folders, {5} items listed, {6} previews with a warning" -f
+    Write-MbtItem $(if ($r.Failed -eq 0 -and $r.Completed) { 'OK' } else { 'WARN' }) ("export {0}: {1} items exported ({2}), {3} failed, {4} folders read, {5} items listed, {6} previews with a warning" -f
         $(if ($r.Completed) { 'finished' } else { 'NOT finished' }), $r.Exported, (Format-MbtBytes $r.Bytes), $r.Failed, $r.Folders, $r.Inventoried, $r.PreviewWarnings)
     if ($r.Final) { Write-MbtDetail $r.Final.ToString() }
     if ($r.RecoverableFolders -gt 0) { Write-MbtItem INFO ("Recoverable Items: {0} folder(s) recorded under '{1}'. An import puts them in a normal folder named '{2}', never back into Recoverable Items." -f $r.RecoverableFolders, [MailboxTransfer.RecoverableItems]::TopName, [MailboxTransfer.RecoverableItems]::RestoredName) }
@@ -2506,7 +2643,7 @@ function Import-MbtPst {
     Write-MbtItem INFO ("reading the PST file(s) and the folder tree of the {0} mailbox {1}" -f $Mailbox, $targetId)
     $sink = [MailboxTransfer.PstProgressSink]::new([Action[MailboxTransfer.PstProgress]]{
             param($e)
-            if ($e.BytesTotal -gt 0) { Write-Progress -Activity 'Import-MbtPst' -Status ("{0}: {1:N0} / {2:N0} bytes" -f $e.Phase, $e.BytesDone, $e.BytesTotal) -PercentComplete ([math]::Min(100, [int](100 * $e.BytesDone / $e.BytesTotal))) -Id 7 }
+            if ($e.BytesTotal -gt 0) { Write-Progress -Activity 'Import-MbtPst' -Status ([string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0}: {1:N0} / {2:N0} bytes', $e.Phase, $e.BytesDone, $e.BytesTotal)) -PercentComplete ([math]::Min(100, [int](100 * $e.BytesDone / $e.BytesTotal))) -Id 7 }
             elseif ($e.Items -gt 0) { Write-Progress -Activity 'Import-MbtPst' -Status ("{0}: {1} items {2}" -f $e.Phase, $e.Items, $e.CurrentFolder) -Id 7 }
         })
     $plan = [MailboxTransfer.PstImportPlanner]::Build($o, $s.Api.GetFolderTree($targetId), $sink, [Threading.CancellationToken]::None)
@@ -2846,7 +2983,7 @@ function Repair-MbtPst {
                 param($e)
                 if ($hookSink) { $hookSink.Report($e) }
                 if ($e.ItemsTotal -gt 0) { Write-Progress -Activity 'Repair-MbtPst' -Status ("{0}: {1} / {2} {3}" -f $e.Phase, $e.Items, $e.ItemsTotal, $e.CurrentFolder) -PercentComplete ([math]::Min(100, [int](100 * $e.Items / $e.ItemsTotal))) }
-                elseif ($e.BytesTotal -gt 0) { Write-Progress -Activity 'Repair-MbtPst' -Status ("{0}: {1:N0} / {2:N0} bytes" -f $e.Phase, $e.BytesDone, $e.BytesTotal) -PercentComplete ([math]::Min(100, [int](100 * $e.BytesDone / $e.BytesTotal))) }
+                elseif ($e.BytesTotal -gt 0) { Write-Progress -Activity 'Repair-MbtPst' -Status ([string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0}: {1:N0} / {2:N0} bytes', $e.Phase, $e.BytesDone, $e.BytesTotal)) -PercentComplete ([math]::Min(100, [int](100 * $e.BytesDone / $e.BytesTotal))) }
             })
         $r = [MailboxTransfer.PstRepair]::Repair($src, $dst, $o, $sink, $CancellationToken)
         Write-Progress -Activity 'Repair-MbtPst' -Completed
@@ -2873,7 +3010,7 @@ function Resolve-MbtPstDestination {
         return [IO.Path]::GetFullPath($full)
     }
     [MailboxTransfer.FileNaming]::Require($full, $false, 'PST destination folder')
-    $user = if ($Store) { @($Store.GetMailboxes() | ForEach-Object Upn | Where-Object { $_ })[0] } else { $null }
+    $user = if ($Store) { $Store.GetMailboxes() | ForEach-Object Upn | Where-Object { $_ } | Select-Object -First 1 } else { $null }
     $stem = if ($Store) { [MailboxTransfer.PstExporter]::DefaultStem($Store, $(if ($Options) { $Options } else { [MailboxTransfer.PstExportOptions]::new() })) } else { 'mailbox' }
     $plain = if ($user) { ($user -split '@')[0] -replace '[^\w\.\-]', '_' } else { 'mailbox' }
     if ([MailboxTransfer.FileNaming]::IsReservedDeviceName($plain)) {
@@ -3008,12 +3145,16 @@ function Export-MbtPst {
         $first = Resolve-MbtPstDestination -Destination $Destination -Store $st -Options $o
         $o.Destination = $first
         if ($SelectionFile) {
-            $sel = Read-MbtBrowseSelection -Path $SelectionFile
-            $r = [MailboxTransfer.PstExportSelection]::Resolve($st, $sel)
-            foreach ($p in $r.Problems) { Write-MbtItem WARN $p }
-            if ($r.EntriesMatched -eq 0) { throw "None of the $($sel.Entries.Count) entr(ies) of the selection $SelectionFile is in the store." }
-            $o.FolderKeys = $r.FolderKeys
-            if ($r.ItemKeys.Count) { $o.ItemKeys = $r.ItemKeys }
+            $folderKeys = [Collections.Generic.HashSet[long]]::new(); $itemKeys = [Collections.Generic.HashSet[long]]::new(); $entryCount = 0; $matched = 0
+            foreach ($sel in @(Read-MbtBrowseSelectionSet -Path $SelectionFile)) {
+                $r = [MailboxTransfer.PstExportSelection]::Resolve($st, $sel)
+                foreach ($p in $r.Problems) { Write-MbtItem WARN $p }
+                $entryCount += $sel.Entries.Count; $matched += $r.EntriesMatched
+                $folderKeys.UnionWith($r.FolderKeys); $itemKeys.UnionWith($r.ItemKeys)
+            }
+            if ($matched -eq 0) { throw "None of the $entryCount entr(ies) of the selection $SelectionFile is in the store." }
+            $o.FolderKeys = $folderKeys
+            if ($itemKeys.Count) { $o.ItemKeys = $itemKeys }
         }
         try { $plan = [MailboxTransfer.PstExporter]::Plan($st, $o, $CancellationToken) }
         catch {
@@ -3172,6 +3313,12 @@ function Get-MbtPstPreview {
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Eml.ps1')
 # Events of a job (JSON lines), stop request, keep awake, job status, capabilities.
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Events.ps1')
+# The HTML report of a job: written at the end of every job from events.jsonl and status.json of the job folder.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.Report.ps1')
+# The overview of all the jobs of a work folder: <work folder>\jobs\overview.html, rewritten at the end of every job.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.Overview.ps1')
+# The export of a list of mailboxes (a batch): the CSV, the batch folder, the child processes, the batch report, what the retention keeps.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.Batch.ps1')
 
 # An engine left in this process by an older build of the module is refused here, before any network or store operation.
 [void](Assert-MbtEngineCurrent -Name Engine -Root $script:ToolRoot)
@@ -3179,27 +3326,29 @@ function Get-MbtPstPreview {
 
 Export-ModuleMember -Function @(
     'Write-MbtStep', 'Write-MbtItem', 'Write-MbtDetail', 'Write-MbtBanner', 'Write-MbtSummary', 'Write-MbtLog', 'Start-MbtLog', 'Stop-MbtLog', 'Get-MbtLogPath', 'Format-MbtBytes', 'Format-MbtNumber', 'Format-MbtDuration', 'Format-MbtRate',
-    'Import-MbtConfiguration', 'Initialize-MbtEngine', 'Initialize-MbtAuthEngine', 'Find-MbtMsal',
+    'Import-MbtConfiguration', 'Initialize-MbtEngine', 'Initialize-MbtAuthEngine', 'Find-MbtMsal', 'Get-MbtWindowsSignIn', 'Get-MbtWorkFolderStatus',
     'Connect-MbtGraph', 'Get-MbtAccessToken', 'Disconnect-MbtGraph', 'Get-MbtSession', 'Set-MbtSession', 'Get-MbtTokenInfo', 'Get-MbtCertificate', 'Get-MbtAppPermission', 'Get-MbtMissingAppPermission', 'Test-MbtAppOnly', 'Get-MbtSessionUser', 'Get-MbtExchangeSettingsPath',
     'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath',
     'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem',
     'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
     'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
     'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
-    'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
+    'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
     'Show-MbtBrowseTree', 'Show-MbtBrowseItems', 'Show-MbtBrowsePreview', 'Show-MbtExportPlan'
     'Test-MbtPst', 'Repair-MbtPst', 'Export-MbtPst', 'Copy-MbtPst', 'Get-MbtPstPreview', 'Show-MbtPstExportPlan', 'Resolve-MbtPstDestination', 'Show-MbtLiveExportPlan',
     'Export-MbtEml', 'Import-MbtEml', 'Resolve-MbtEmlUnknown', 'Compare-MbtEml',
     'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
-    'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
+    'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
+    'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
+    'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken'
 )
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB0/wuqkOoEpl41
-# PFHP1Wm/xkLBerzQ0CynmRca9j8QPaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAA6xTfa+8zexek
+# IOJuCxU/UQJoYQsuKwoUvRiT3HRyW6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -3271,28 +3420,28 @@ Export-ModuleMember -Function @(
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBVUj7C4IjA
-# MCty/S3j1UTWP4ltuG+EZ3A6egMXJEcoJzANBgkqhkiG9w0BAQEFAASCAgBmxABR
-# Q9GW0s+AXkBn0O4WtLRZbMa/TC2BKjdYup7ZbBCWFAgNvBC56HNxepVxvewyFQFL
-# lOm9Dpgn30YTvNef8AY9hPUiEu4JxCcFdLUrLdGIw/ImB1JFPoEl/bZud78k8q0q
-# S70z01E2LfcabVqvL4IHeFjOdb4AyhCqavqhd3CN/Tuqccye9SeQEh4TOmJZPWxH
-# czhhyULWHXWBhLAeNQ9pBfOw3n8w6xeykNETavvkqJ6aAcIXe5UW+TYoh5ACr+Yo
-# qKv2RXf83TDe15N3V6iNogpvlfcussp63jWBx/fdfi36ApaOOJbqt6uk9x1MOd3b
-# XgjgFQV4uqCPv/p5pN4zSXQec2mOh1W9pzfBUsmI7NUxmAPLO/bsKJss2i9p08PM
-# ac1xoCkApBHPmKKAh6wELvnQwJIeVm2MMgj0AKO9Snrmb50gFOehbWtDeaDc/LS8
-# b9ZVafPc71mvgKHUGB7gDdh3OmEza1KXU2OcwVWkiebWDivhJKYkgLBg9KfeL6+O
-# PBtDxS5/SIVEQhjYHjR+qZNzYloehqBS4pmh+nsT/MSrYH57+GmmHTrD1naQkH0N
-# /yFO/IECfnk3oBWpYdTYDA+alvY+ozBdpSMBRUVqp8v7B+iz668c1N3b2668rZFu
-# 4yWl59PQGcrhX/qO5BuPhIfTc0CNtTeaYO83n6GCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA4v3a4BpDc
+# v5xRPSpH7sLFUOPPQvOHTEE3QWpKSTo/8zANBgkqhkiG9w0BAQEFAASCAgA9WXVR
+# 8l9+5O073OyyERjqT609mRIGWVxVV8uM/72nJETnKV5rorOOR5Y20Gad1grsVKNk
+# p17ORX8+5+8AmdBo0tdp7xmrw3no/YK484Sd+ISEx2WQ+2fQvk6eZrlaxr0xSeDK
+# 1mXF3cz35TqA9B+uJ6/aRTTR+18lmX0lYxcbdG5s3SYTYd3usTj+vQMHu5Y1c8ae
+# Cnnp8JJBClijcmw6Oe8CTTU8nEaM7a3j+vaVxtC0gpEecqGGmiCcUPqLIdohjf6W
+# bu2Wrw9FpGL0PGB3tMG7Hvswwsd4jpiWWKdSxHOUaMY1ouVMtmrKiWvapxK1w/T9
+# v2lseDdvnKuJqYo4SaKSUOdcvh90M44huCRT6uA4jWi+5qa3vSk55iRww5QolHq7
+# 9XdxoiimL5HwHKgBowfUwlCrCIs5/vSn7S9SCBBheQQn/irkTeEvHFI9PvFYvvW+
+# njEjgOHjD8IvMtcV7dd2lJgagtnDaIOtOW7xYdEvOE8wBppxxUb/EsTmnqppDdw2
+# FAfdr+8htnJIWYZUYGjiAQwY7CyjsZ3AYhMhFMITdLjoP1XdbFp65qr5Nps6XRkk
+# /qaJBB7VoNmum+8SnjbsC6DGamBYL+xZRSiB5fVxwlNG2Pcd16ZYEz05j3lVEr29
+# XrPHz2cGYVmH7zfYq7x0f20Rwg8RY2T6tHiuhqGCFM0wghTJBgorBgEEAYI3AwMB
+# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIL3EXSl8elqINpu5jNslWOlMiKUYWFRub+fzDmQms5WQAghjo+CmfwHu
-# XhgPMjAyNjExMTAxNDA5MDdaMAMCAQECEE2e7h+mvEOnOAdtlzLtZkWgghGnMIIE
+# BAIBBQAEILLMQ0LkZgwvkR5ZQE+h+nT0v/w/AXqpgXecYZLobkEnAggCAIvrYWHk
+# yhgPMjAyNjExMTUxNDM0MjFaMAMCAQECEDGrHXaZ55o12yUoLfG4QXOgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -3387,17 +3536,17 @@ Export-ModuleMember -Function @(
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkwN1owKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEILcK
-# rsG4LLQgpb2t4xFYyxadE5j17j7hgR5SaK1NHqchMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQyMVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIA6x
+# 1Tj4X2PPUb4UR0u2ImNyp6opZDI/4Ok5NgD59E3eMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEA5yM/X7FXpd6+2Z0PsEe6pPJNXqXxJOktLtK/sUtxPeICIQCW
-# RYywY80zcWCbSV5G/khbLJU+uASGIweLLI5HBOdWQQ==
+# zj0EAwIERjBEAiBlLMjuDia+eKmoYXRn8v+wcFtE17hWjoX6PN0nZwmyrQIgUQsb
+# DF3aD8OL+sMzOczDSg773V/7mXJmBT0xajePfWg=
 # SIG # End signature block

@@ -21,10 +21,10 @@
 </p>
 
 **Author:** Nicolas Fabert  
-**Version:** 1.1.0 ([changelog](CHANGELOG.md))
+**Version:** 1.2.0 ([changelog](CHANGELOG.md))
 
 > [!TIP]
-> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.1.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
+> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.2.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
 
 > [!IMPORTANT]
 > Windows marks files downloaded from the Internet. After you extract the ZIP, check the publisher first (right-click a `.ps1`, for example `Invoke-MailboxTransfer.ps1`, Properties, Digital Signatures: `Nicolas Fabert`), then unblock the extracted folder once:
@@ -61,7 +61,7 @@ Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC slee
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-start-dark.png">
-  <img alt="The guided path. Get ready once: 1 get your rights, 2 put the tool on the PC, 3 write your two numbers, 4 open the console. Then task A, browse and export: 5 sign in and pick the mailbox, 6 tick, choose where to save, read the plan, 7 read the result. Or task B, import: 5 pick the file and the mailbox, 6 read the plan and type IMPORT, 7 read the result. Or task C, check and repair a PST: 5 pick the file, 6 check then repair into a new file, 7 read before and after" src="package/docs/images/readme-start-light.png">
+  <img alt="The guided path. Get ready once: 1 get your rights, 2 put the tool on the PC, 3 write your two numbers, 4 open the console. Then task A, browse and export: 5 sign in and pick the mailbox, 6 tick, choose where to save, read the checks and the plan, 7 read the result. Or task B, import: 5 pick the file and the mailbox, 6 read the checks and tick the box that names the target, 7 read the result. Or task C, check and repair a PST: 5 pick the file, 6 check then repair into a new file, 7 read before and after" src="package/docs/images/readme-start-light.png">
 </picture>
 
 One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. A fourth task, *Open an export or a PST*, reads a file like a mailbox and needs no step of its own. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
@@ -73,7 +73,7 @@ One path for everyone. Set the tool up once (**1 to 4**), then take task **A** t
 #     Checking and repairing a PST needs no right at all.
 
 # 2 · On the PC, in PowerShell 7.5+: put the tool in its folder and unblock it.
-#     Download MailboxTransfer-1.1.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
+#     Download MailboxTransfer-1.2.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
 Get-ChildItem C:\Tools\MailboxTransfer -Recurse -File -Force | Unblock-File
 
 # 3 · Write your two numbers: tenant id and application id, in a file you create (the user guide, chapter 3, shows how)
@@ -86,12 +86,14 @@ cd C:\Tools\MailboxTransfer
 ```
 
 <details>
-<summary><b>What you see</b> · the first page: the four tasks, the jobs to continue, the lights of this computer</summary>
+<summary><b>What you see</b> · the first two pages: Setup (is this computer ready?) and Task (what do you want to do?)</summary>
 <br>
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/console-task-dark.png">
-  <img alt="The first page of the console: the stepper Task, From, To, Plan, Run, Done; the four task cards (1 the stepper, 2 the cards Browse and export, Import, Check and repair a PST, Open an export or a PST, 3 the jobs you can continue, 4 the box This computer, Ready)" src="package/docs/images/console-task-light.png">
-</picture>
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="package/docs/images/console-setup-light.png"><img alt="The Setup page of the console: the stepper Setup, Task, Verify, Run, Next steps; 1 the box This computer with its lights, 2 the box Sign-in with Me or The application and the values read from the configuration file, 3 the box Files and folders, 4 the button Choose a task" src="package/docs/images/console-setup-light.png"></a><br><sub><b>Setup</b> &middot; the lights of this computer, the sign-in and the configuration file</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-task-light.png"><img alt="The Task page of the console: the stepper with What, From and To under Task; the four task cards Browse and export, Import, Check and repair a PST, Open an export or a PST; the jobs you can continue; what will happen" src="package/docs/images/console-task-light.png"></a><br><sub><b>Task</b> &middot; the four tasks and the jobs to continue</sub></td>
+  </tr>
+</table>
 </details>
 
 ### A · Browse and export · 5 to 7
@@ -100,14 +102,14 @@ cd C:\Tools\MailboxTransfer
 # 5 · Sign in and look inside the mailbox. Console: the card Browse and export, then Sign in. Reads only.
 .\Invoke-MailboxTransfer.ps1 -Mode Browse -Mailbox Archive
 
-# 6 · Tick what to keep, choose where to save, read the plan, press Start. Command line: the same, in one line.
+# 6 · Tick what to keep, choose where to save, read the checks and the plan on the Verify page, press Start. Command line: the same, in one line.
 .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store -OutputPst D:\pst\adele.pst
 
-# 7 · Read the result: the Done page (or the summary card) says what was written. Exit code 2: run it again, only what is left is done.
+# 7 · Read the result: the Next steps page (or the summary card) says what was written. Exit code 2: run it again, only what is left is done.
 ```
 
 <details>
-<summary><b>What you see</b> · Browse, Save, Plan, Run for one export to PST files</summary>
+<summary><b>What you see</b> · From, To, Verify, Run for one export to PST files</summary>
 <br>
 <table>
   <tr>
@@ -115,7 +117,7 @@ cd C:\Tools\MailboxTransfer
     <td width="50%" valign="top"><a href="package/docs/images/console-to-pst-light.png"><img alt="The To page: the format PST files, the folder, the file name and the disk space needed" src="package/docs/images/console-to-pst-light.png"></a><br><sub><b>To</b> &middot; PST files, EML files or an export store, and the room they need</sub></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><a href="package/docs/images/console-plan-export-light.png"><img alt="The Plan page of an export: what will be done, the time as a range, what is in it, the Start button" src="package/docs/images/console-plan-export-light.png"></a><br><sub><b>Plan</b> &middot; what will be done, the time as a range, read before Start</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-verify-export-light.png"><img alt="The Verify page of an export: the checks, what will be done, the time as a range, what is in it, the same from the command line, the Start button" src="package/docs/images/console-verify-export-light.png"></a><br><sub><b>Verify</b> &middot; the checks, what will be done, the time as a range, the command line</sub></td>
     <td width="50%" valign="top"><a href="package/docs/images/console-run-export-light.png"><img alt="The Run page of an export: the progress bar, the six steps, the folders being downloaded and a folder not ready at Microsoft" src="package/docs/images/console-run-export-light.png"></a><br><sub><b>Run</b> &middot; the steps, the folders, Stop and keep progress</sub></td>
   </tr>
 </table>
@@ -125,7 +127,7 @@ cd C:\Tools\MailboxTransfer
 
 ```powershell
 # 5 · Pick the file (a PST, an export store or EML files) and the mailbox. Try a TEST mailbox first: an import cannot be undone by the tool.
-# 6 · Read the plan (nothing is written), then import. In the console you type IMPORT to start.
+# 6 · Read the plan (nothing is written), then import. In the console you tick a box that names the mailbox, the folder and the number of items; Start stays grey until you do.
 .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -PstPath D:\old\archive.pst -TargetRoot Imported/archive -WhatIf
 .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -PstPath D:\old\archive.pst -TargetRoot Imported/archive
 
@@ -133,7 +135,7 @@ cd C:\Tools\MailboxTransfer
 ```
 
 <details>
-<summary><b>What you see</b> · Source, Destination, Plan, Run for one import</summary>
+<summary><b>What you see</b> · From, To, Verify, Run for one import</summary>
 <br>
 <table>
   <tr>
@@ -141,7 +143,7 @@ cd C:\Tools\MailboxTransfer
     <td width="50%" valign="top"><a href="package/docs/images/console-import-to-light.png"><img alt="The To page of an import: the mailbox, the new folder name and the room in the archive" src="package/docs/images/console-import-to-light.png"></a><br><sub><b>To</b> &middot; the mailbox, the new folder, the room</sub></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><a href="package/docs/images/console-import-plan-light.png"><img alt="The Plan page of an import: what will be done, the box where IMPORT is typed, the Start button grey until then" src="package/docs/images/console-import-plan-light.png"></a><br><sub><b>Plan</b> &middot; type <code>IMPORT</code> to unlock Start</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-verify-import-light.png"><img alt="The Verify page of an import: the target in big letters, the box that names what, where and how much, the Start button grey until the box is ticked" src="package/docs/images/console-verify-import-light.png"></a><br><sub><b>Verify</b> &middot; the target, and the box to tick to unlock Start</sub></td>
     <td width="50%" valign="top"><a href="package/docs/images/console-run-import-light.png"><img alt="The Run page of an import: the bar and the time range, the steps and the folders" src="package/docs/images/console-run-import-light.png"></a><br><sub><b>Run</b> &middot; the bar, an honest time range, the folders</sub></td>
   </tr>
 </table>
@@ -160,16 +162,16 @@ cd C:\Tools\MailboxTransfer
 ```
 
 <details>
-<summary><b>What you see</b> · the check, the plan, the run, before and after</summary>
+<summary><b>What you see</b> · the check, Verify, the run, before and after</summary>
 <br>
 <table>
   <tr>
     <td width="50%" valign="top"><a href="package/docs/images/console-repair-from-damaged-light.png"><img alt="The check of a damaged PST in words: the file and its size, what was found, the level that repairs it, the button Repair into a new file" src="package/docs/images/console-repair-from-damaged-light.png"></a><br><sub><b>Check</b> &middot; what was found, in words, and which level repairs it</sub></td>
-    <td width="50%" valign="top"><a href="package/docs/images/console-repair-plan-light.png"><img alt="The Plan page of a repair: the new file, the level, the room needed" src="package/docs/images/console-repair-plan-light.png"></a><br><sub><b>Plan</b> &middot; the new file and the level; the original stays</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-verify-repair-light.png"><img alt="The Verify page of a repair: what will be done, the new file, the command line" src="package/docs/images/console-verify-repair-light.png"></a><br><sub><b>Verify</b> &middot; the new file and the level; the original stays</sub></td>
   </tr>
   <tr>
     <td width="50%" valign="top"><a href="package/docs/images/console-run-repair-light.png"><img alt="The Run page of a repair: the steps and the progress" src="package/docs/images/console-run-repair-light.png"></a><br><sub><b>Run</b> &middot; the repair, step by step</sub></td>
-    <td width="50%" valign="top"><a href="package/docs/images/console-repair-done-light.png"><img alt="The repair report: the result, the before and after, the messages kept" src="package/docs/images/console-repair-done-light.png"></a><br><sub><b>Done</b> &middot; before and after, what was kept</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-repair-done-light.png"><img alt="The repair report: the result, the before and after, the messages kept" src="package/docs/images/console-repair-done-light.png"></a><br><sub><b>Next steps</b> &middot; before and after, what was kept</sub></td>
   </tr>
 </table>
 </details>
@@ -188,11 +190,11 @@ cd C:\Tools\MailboxTransfer
 | **Check and repair a PST** | Test a PST, write a repaired copy; the original is never changed | No |
 | **Open an export or a PST** | Read it like a mailbox | No |
 
-Every task goes **Task, From, To, Plan, Run, Done**. One question per page, the safe choice is the default and says *recommended*, and the plan is read before anything starts. Only an import asks you to type `IMPORT`. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
+Every task goes through the same five pages: **Setup, Task (What, From, To), Verify, Run, Next steps**. One question per page, the safe choice is the default and says *recommended*, and the checks and the plan are read before anything starts. An import also asks you to tick a box that names the target: the mailbox, the folder and the number of items. The console shows the same job as one command line that you can copy. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-path-dark.png">
-  <img alt="The path of the console in six pages: 1 Task, pick what to do; 2 From, choose the source; 3 To, choose where it goes; 4 Plan, read before you start; 5 Run, wait, stop, continue; 6 Done, read the result" src="package/docs/images/readme-path-light.png">
+  <img alt="The path of the console in five pages: 1 Setup, check the computer and the sign-in; 2 Task, say what, from where and to where; 3 Verify, read the checks and the plan; 4 Run, wait, stop, continue; 5 Next steps, read the result" src="package/docs/images/readme-path-light.png">
 </picture>
 
 ### How it stays safe
@@ -228,11 +230,11 @@ Every task goes **Task, From, To, Plan, Run, Done**. One question per page, the 
 | Import into one mailbox | about **4 GiB per hour** | Microsoft throttles imports per mailbox; more workers do not help |
 | Export from a mailbox | **30 to 150 GiB per hour** (observed up to about 150) | varies with Microsoft's load |
 | Write a PST, check, repair | local disk speed | measured by the window once it runs |
-| Disk needed | store plus PST is about twice the data; a repair needs one more PST | said on the Plan page before you start |
+| Disk needed | store plus PST is about twice the data; a repair needs one more PST | said on the Verify page before you start |
 
 ## Console
 
-The console is the guided way: one question per page, the lights of this computer on the first page, a plan before every run, and a Run page that says in words what is happening. It is a real WPF window; the pictures of this page and of the guides are taken from it with made-up data only (`contoso.com` names).
+The console is the guided way: one question per page, the lights of this computer on the first page, the checks and the plan before every run, the exact command line to copy, and a Run page that says in words what is happening. It is a real WPF window; the pictures of this page and of the guides are taken from it with made-up data only (`contoso.com` names).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/console-run-export-dark.png">
@@ -245,18 +247,18 @@ Every run tells you what happened, in the same words on screen and on disk.
 
 <table>
   <tr>
-    <td width="50%" valign="top"><a href="package/docs/images/console-done-export-complete-light.png"><img alt="The Done page of an export that is complete: the result in words, the files written, the counts and the duration" src="package/docs/images/console-done-export-complete-light.png"></a><br><sub><b>Done</b> &middot; an export, complete: the result in words, the files, the counts</sub></td>
-    <td width="50%" valign="top"><a href="package/docs/images/console-done-export-partial-light.png"><img alt="The Done page of an export that is not finished: a folder was not ready at Microsoft, with the button Continue" src="package/docs/images/console-done-export-partial-light.png"></a><br><sub><b>Done</b> &middot; not finished: nothing is lost, press Continue later</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-done-export-complete-light.png"><img alt="The Next steps page of an export that is complete: the result in words, the files written, the counts, what to do next and the command line" src="package/docs/images/console-done-export-complete-light.png"></a><br><sub><b>Next steps</b> &middot; an export, complete: the result in words, the files, the counts</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-done-export-partial-light.png"><img alt="The Next steps page of an export that is not finished: a folder was not ready at Microsoft, with the button Continue" src="package/docs/images/console-done-export-partial-light.png"></a><br><sub><b>Next steps</b> &middot; not finished: nothing is lost, press Continue later</sub></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><a href="package/docs/images/console-done-import-decision-light.png"><img alt="The Done page of an import that needs a decision: one item that needs your decision: two items could be the one, with the buttons It arrived and Send it again" src="package/docs/images/console-done-import-decision-light.png"></a><br><sub><b>Done</b> &middot; an import that needs a decision: the tool never guesses</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-done-import-decision-light.png"><img alt="The Next steps page of an import that needs a decision: one item that needs your decision: two items could be the one, with the buttons It arrived and Send it again" src="package/docs/images/console-done-import-decision-light.png"></a><br><sub><b>Next steps</b> &middot; an import that needs a decision: the tool never guesses</sub></td>
     <td width="50%" valign="top"><a href="package/docs/images/console-repair-done-light.png"><img alt="The repair report: the result, the check before and after, the messages kept" src="package/docs/images/console-repair-done-light.png"></a><br><sub><b>Repair report</b> &middot; the check before and after</sub></td>
   </tr>
 </table>
 
 | You get | Where | What it holds |
 |---|---|---|
-| **The Done page** (console) or **the summary card** (command line) | the window, or the end of the command | the result in words, the counts, the duration, what to do next, and the exit code rule: `0` complete, `1` error or items refused for good, `2` not complete (run again to continue), `3` uncertain items |
+| **The Next steps page** (console) or **the summary card** (command line) | the window, or the end of the command | the result in words, the counts, the duration, what to do next, the command that was run, and the exit code rule: `0` complete, `1` error or items refused for good, `2` not complete (run again to continue), `3` uncertain items |
 | **The log file** | `logs\MailboxTransfer_<date>.log` in the work folder (command line: `out\logs`, or `-LogFolder`) | one line per message with a time and a level (`INFO`, `OK`, `WARN`, `FAIL`), no colours, no secret; the runs of a day append to one file, files older than 14 days are deleted |
 | **The list of refused items** | `report.csv` and `report.json` in the job folder; `<job>-not-imported.csv` for an import | one line per item that Microsoft refuses for good, with the reason (opens in a spreadsheet; formulas are neutralised) |
 | **The PST manifest** | `<name>.manifest.json` next to the PST parts | the parts, their folders and items, the size of each, the items that could not be written |
@@ -268,7 +270,7 @@ Every run tells you what happened, in the same words on screen and on disk.
 | | |
 |---|---|
 | Windows | 10 or 11, x64 or arm64 |
-| PowerShell | **7.5** for the console, 7.4 for the command line (`pwsh.exe`, not Windows PowerShell 5.1) |
+| PowerShell | **7.5** or later (7.6 works) for the console, 7.4 for the command line (`pwsh.exe`, not Windows PowerShell 5.1) |
 | Module | `Microsoft.Graph.Authentication` (the tool borrows its MSAL library to sign you in) |
 | Disk | about twice the size of the data |
 | Not needed | Outlook, Exchange Online PowerShell, any third-party PST tool |
@@ -320,7 +322,7 @@ There is no unsigned mode. A source checkout of this repository (no manifest) is
 | `package\lib\sqlite\` | SQLite for the export store (see `THIRD-PARTY-NOTICES.md`) |
 | `package\PackageIntegrity.psd1`, `product.json` | The signed manifest of the files, and the identity of the product |
 | `tests\` | Pester tests, no network |
-| `tools\` | The package builder, the signing helpers, the pictures of the documentation, and lab scripts for the maintainer |
+| `tools\` | The package builder, the signing helpers, the pictures of the documentation, and developer scripts for the maintainer |
 
 ## Documentation
 
@@ -346,7 +348,7 @@ An export store and PST files contain **complete mail**: protect them like the m
 Invoke-Pester -Path .\tests -Output Detailed        # no network, no tenant, no mailbox needed
 ```
 
-The tests drive the real engine against a fake Microsoft Graph and synthetic PST files, the console in a headless WPF window on a fake engine, and the package integrity logic on a copy of the package. Large real-data corpora (kept outside the repository) add checks when they are present and are skipped otherwise. The cloud checks (a test tenant) are run by the maintainer with the scripts in `tools\`; nothing in the automated tests contacts the cloud. The engine was validated offline and on one Microsoft 365 test tenant (version 1.0.0; 1.1.0 only renames a folder of the PST export), including writing into a shared mailbox with a certificate.
+The tests drive the real engine against a fake Microsoft Graph and synthetic PST files, the console in a headless WPF window on a fake engine, and the package integrity logic on a copy of the package. Large real-data corpora (kept outside the repository) add checks when they are present and are skipped otherwise. The cloud checks (a test tenant) are run by the maintainer with the scripts in `tools\`; nothing in the automated tests contacts the cloud. The engine and the console were validated offline and on one Microsoft 365 test tenant: exports, imports, and writing into a shared mailbox with a certificate.
 
 ## License
 

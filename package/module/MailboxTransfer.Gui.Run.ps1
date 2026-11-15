@@ -26,7 +26,7 @@ function Get-MbtGuiProp {
 }
 
 function New-MbtGuiRun {
-    param([string]$Task = 'export', [string]$Title = '', [string]$Unit = 'items')
+    param([string]$Task = 'export', [string]$Title = '', [string]$Unit = 'item')
     [ordered]@{
         Task = $Task; Title = $Title; Unit = $Unit; State = 'running'; Planned = $false
         Steps = [Collections.Generic.List[hashtable]]::new()
@@ -61,6 +61,34 @@ function Find-MbtGuiStep {
     param($Run, [string]$Id)
     foreach ($s in $Run.Steps) { if ($s.Id -eq $Id) { return $s } }
     return $null
+}
+
+function Get-MbtGuiRunningNote {
+    <# What the engine says it is doing right now: the message of the step that runs ("1,240 folders read"), or '' when it says nothing. #>
+    param($Run)
+    if (-not $Run) { return '' }
+    $note = ''
+    foreach ($s in $Run.Steps) { if ($s.State -eq 'running' -and $s.Msg) { $note = [string]$s.Msg } }
+    return $note
+}
+
+function Get-MbtGuiPlanProgressText {
+    <# The line of the plan check while it runs: what the service is being asked, then how long it has been going ("1,240 folders read, 34 s"). #>
+    param($Run, $Started, [datetime]$Now = [datetime]::UtcNow)
+    $note = Get-MbtGuiRunningNote $Run
+    if (-not $note) { $note = 'nothing is changed' }
+    if (-not $Started) { return $note }
+    return ('{0}, {1}' -f $note, (Format-MbtGuiDuration (($Now - [datetime]$Started).TotalSeconds) -WithSeconds))
+}
+
+function Get-MbtGuiPreparingText {
+    <# Before the first item the job connects and reads the folders: what it does then, or '' when it is past that (items are counted, the job ended). #>
+    param($Run)
+    if (-not $Run -or $Run.Result -or $Run.Total -gt 0 -or $Run.State -ne 'running') { return '' }
+    $note = Get-MbtGuiRunningNote $Run
+    if ($note) { return "**Preparing.** $note." }
+    foreach ($s in $Run.Steps) { if ($s.State -eq 'running' -and $s.Title) { return "**Preparing.** $($s.Title)." } }
+    return '**Preparing.** Connecting to Microsoft and reading what you chose.'
 }
 
 function Update-MbtGuiRunTotals {
@@ -107,7 +135,7 @@ function Add-MbtGuiEvent {
             $s.Total = [long](Get-MbtGuiProp $Event 'total' $s.Total)
             $s.Bytes = [long](Get-MbtGuiProp $Event 'bytes' $s.Bytes)
             $s.BytesTotal = [long](Get-MbtGuiProp $Event 'bytesTotal' $s.BytesTotal)
-            $s.Msg = [string](Get-MbtGuiProp $Event 'msg' $s.Msg)
+            $s.Msg = if ($state -eq 'done') { [string](Get-MbtGuiProp $Event 'msg' '') } else { [string](Get-MbtGuiProp $Event 'msg' $s.Msg) }
             if ($state -eq 'done') { Add-MbtGuiLog $Run 'ok' "$($s.Title) done." $at }
             elseif ($state -eq 'failed') { Add-MbtGuiLog $Run 'bad' "$($s.Title) failed. $($s.Msg)" $at }
             elseif ($state -eq 'running' -and $s.Done -eq 0 -and $Run.Log.Count -lt 400) { Add-MbtGuiLog $Run 'run' "$($s.Title) started." $at }
@@ -131,7 +159,7 @@ function Add-MbtGuiEvent {
             $o.Done = [long](Get-MbtGuiProp $Event 'done' $o.Done); $o.Total = [long](Get-MbtGuiProp $Event 'total' $o.Total)
             $o.Bytes = [long](Get-MbtGuiProp $Event 'bytes' $o.Bytes)
             $o.Msg = [string](Get-MbtGuiProp $Event 'msg' $o.Msg); $o.Detail = [string](Get-MbtGuiProp $Event 'detail' $o.Detail)
-            if ($kind -eq 'object' -and $state -in 'done', 'ok' -and $o.Total -gt 0) { Add-MbtGuiLog $Run 'ok' "Folder $key done: $(Format-MbtGuiCount $o.Total) items." $at }
+            if ($kind -eq 'object' -and $state -in 'done', 'ok' -and $o.Total -gt 0) { Add-MbtGuiLog $Run 'ok' "Folder $key done: $(Format-MbtGuiQuantity $o.Total 'item')." $at }
             if ($kind -eq 'object' -and $tone -eq 'warn' -and $state -in 'notready', 'not-ready') { Add-MbtGuiLog $Run 'warn' "$key is not ready at Microsoft. Will try again later." $at }
         }
         'wait' {
@@ -230,8 +258,61 @@ function Get-MbtGuiPlanTotals {
 function Format-MbtGuiPlanTotals {
     <# "The service counted 1,208 items in 12 folders, 6.2 GiB." with the honest words when a size is not given. #>
     param([Parameter(Mandatory)]$Totals)
-    $size = if ($Totals.UnknownSize -le 0) { Format-MbtGuiBytes $Totals.Bytes } elseif ($Totals.Bytes -le 0) { 'size not known' } else { '{0} + {1} folder{2} of unknown size' -f (Format-MbtGuiBytes $Totals.Bytes), $Totals.UnknownSize, $(if ($Totals.UnknownSize -gt 1) { 's' } else { '' }) }
-    return ('{0} item{1} in {2} folder{3}, {4}' -f (Format-MbtGuiCount $Totals.Items), $(if ($Totals.Items -ne 1) { 's' } else { '' }), $Totals.Folders, $(if ($Totals.Folders -ne 1) { 's' } else { '' }), $size)
+    $size = if ($Totals.UnknownSize -le 0) { Format-MbtGuiBytes $Totals.Bytes } elseif ($Totals.Bytes -le 0) { 'size not known' } else { '{0} + {1} of unknown size' -f (Format-MbtGuiBytes $Totals.Bytes), (Format-MbtGuiQuantity $Totals.UnknownSize 'folder') }
+    return ('{0} in {1}, {2}' -f (Format-MbtGuiQuantity $Totals.Items 'item'), (Format-MbtGuiQuantity $Totals.Folders 'folder'), $size)
+}
+
+function Format-MbtGuiRefusedSummary {
+    <# The title of the list of refused items: "The refused item", "The 3 refused items", "The first 25 of 1,234 refused items". Shown is the number of rows of the list. #>
+    param([int]$Shown, [long]$Total)
+    $all = [math]::Max($Total, [long]$Shown)
+    if ($all -eq 1) { return 'The refused item' }
+    if ($Shown -ge $all) { return ('The {0} refused items' -f (Format-MbtGuiCount $all)) }
+    if ($Shown -eq 1) { return ('The first of {0} refused items' -f (Format-MbtGuiCount $all)) }
+    return ('The first {0} of {1} refused items' -f (Format-MbtGuiCount $Shown), (Format-MbtGuiCount $all))
+}
+
+function Format-MbtGuiIncompleteSummary {
+    <# The title of the list of messages a repair could not recover whole: "The message that is not complete", "The 3 messages that are not complete". #>
+    param([int]$Count)
+    if ($Count -eq 1) { return 'The message that is not complete' }
+    return ('The {0} messages that are not complete' -f (Format-MbtGuiCount $Count))
+}
+
+function Format-MbtGuiDecisionTitle {
+    <# "1 item needs your decision", "2 items need your decision". #>
+    param([int]$Count)
+    return ('{0} {1} your decision' -f (Format-MbtGuiQuantity $Count 'item'), (Get-MbtGuiPlural $Count 'needs' 'need'))
+}
+
+function Format-MbtGuiStillToDo {
+    <# "1 item is still to do.", "2,000 items are still to do." #>
+    param([long]$Count)
+    return ('{0} {1} still to do.' -f (Format-MbtGuiQuantity $Count 'item'), (Get-MbtGuiPlural $Count 'is' 'are'))
+}
+
+function Format-MbtGuiProgressOf {
+    <# "5 of 1 item", "5 of 1,208 items": the noun agrees with the total. More done than announced, or -Finished: only what was really done ("1,210 items"). #>
+    param([long]$Done, [long]$Total, [string]$Unit = 'item', [switch]$Finished)
+    if ($Finished) { return (Format-MbtGuiQuantity $(if ($Done -gt 0) { $Done } else { $Total }) $Unit) }
+    if ($Total -le 0 -or $Done -gt $Total) { return (Format-MbtGuiQuantity $Done $Unit) }
+    return ('{0} of {1}' -f (Format-MbtGuiCount $Done), (Format-MbtGuiQuantity $Total $Unit))
+}
+
+function Format-MbtGuiFraction {
+    <# "5 / 8", "5 / 8 items" (with -Unit): never more done than the total ("9"); a finished one says only what was done. #>
+    param([long]$Done, [long]$Total, [string]$Unit, [switch]$Finished)
+    $say = { param($n) if ($Unit) { Format-MbtGuiQuantity $n $Unit } else { Format-MbtGuiCount $n } }
+    if ($Finished) { return (& $say $(if ($Done -gt 0) { $Done } else { $Total })) }
+    if ($Total -le 0 -or $Done -gt $Total) { return (& $say $Done) }
+    return ('{0} / {1}' -f (Format-MbtGuiCount $Done), (& $say $Total))
+}
+
+function Format-MbtGuiBytesOf {
+    <# "1.2 GiB of about 3 GiB": the total that Microsoft announces is only about right, so it is never shown as a limit. More than announced, or -Finished: only the real amount. #>
+    param([double]$Bytes, [double]$Total, [switch]$Finished)
+    if ($Finished -or $Total -le 0 -or $Bytes -gt $Total) { return (Format-MbtGuiBytes $Bytes) }
+    return ('{0} of about {1}' -f (Format-MbtGuiBytes $Bytes), (Format-MbtGuiBytes $Total))
 }
 
 function Read-MbtGuiEventTail {
@@ -326,10 +407,10 @@ function Get-MbtGuiEta {
 #endregion
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCn0yAyd7d0DouF
-# IDKoeqrUTBYOAeew9ZjNGtvtjidfv6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCLSqSllLNOtnPB
+# Er4WwyntaisttSo26SqgbbhO/MPIWqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -401,28 +482,28 @@ function Get-MbtGuiEta {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCC1N5dDFseO
-# QE2ltMFPBweGoQzo/GO5zdVdVjSli5huCzANBgkqhkiG9w0BAQEFAASCAgBAOHGa
-# wBw6Ppn3qw9jnc4+AvvyJo7RdgZudmfOjWwUBHiqh7xkLbarReBL9yasxobWOaL1
-# 1FNGEmOMOm66ZjFoYi90y+4tdsUnSKO8iUWjCCnxtMBISO6itHQyWNK7V/bM8XCN
-# +j+A/fWDvG0KGBFhwGLzIKX6utIfxT8HIWWLYNkiySY1P6HT301HczuHwfriuocX
-# LQu/PH4vu0YuZ5T5ye1fG0GzaPxVNQeIrYcyk8YdOA/uWu1f+mM44Q6t4bdBjCFT
-# GWWWHvpb6TpKARBtaSWmcJbNkGwIm9jMUSJETaY04kfPFw3kMiixMz9pf5v9gglj
-# /bJZSQgRxaXMW3x0BJ59nGXZIJKaXzUkil3pqDjss1Y6LQ3zg4CFw1PtbIHjurF0
-# 7PLxPPfG7lrN2xCbyjX9yFsDPWOfTUkpl3yO88+1xFaWA92MeuRQBJY3hOxdFXP7
-# 17rOsLD3tFmCkAL7xoK/Ryf/nHhyiJhTIomYnNX4619+IpWMBAAtbTNLTQ+uG8SD
-# QzQZxCrWcUbSrTui2w6Pt3HG63l2n9vgSJzBab2sDxIQ4vUSLU8zPEM/MqB9XmgG
-# J8bBKZVH535rkhX+rvWOleHuW7l/SJ0MVmi3/QOaqYE0VRwq3cTVin8hJjmmrkPM
-# gwSUGkkTUP2hnJ+ApF9jTWhSzBbdKp2bn3d3T6GCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBKUj2xAkfz
+# 8ppYslKnfU0fMqKz9bRV3fVqIEBeulGMSjANBgkqhkiG9w0BAQEFAASCAgBJGPIx
+# Yj7kGgi+rl3zLoZfYE0mjN9LZGA0a0aC06ENmGhONiWRwnYfgkPu2QEOs6ayEzJd
+# qnbY0dM3VH3uE+mf/jkEN3mlJJj71wm0ppYGsIfQk3l2l+PhiWrT6sBwhzuszQra
+# tqqCtVG9gmwk3nsZKMAdW+tpjjOhW46uccE/1SumuOhuTGtIHjVfbg5S8Nb3h/vk
+# c2ppvZfEUn5E9A2qHZhjLy6zZ1n8QxhmrYqY8hkYUJwiDb7L3hhynpCvY2oWd4wn
+# 6hklhq0TU/Z75wtNV/1cF/w9lGXadiqPkWYeS5at5TdJHPJ+QeZTvlTECr4LYTYZ
+# nbBnPhQ4Ya2ZER4HdWkvxpyuWcBkJjZ7dR9jg06crmPFLjF+x0QRwxQDdK0Hd9Qw
+# 1kpNQGZeOp5Hxwx652hgvxNZGpPKmFRH/0c8aUtnaZdU6wuNjXqX9zW929pMg9qN
+# KJUuMLb4r7o16LABkUH+BeQWw/bVUeaUFjvRjlAWV2G6acE3jfgwhrmtdrRKyMPH
+# hcF4LcHW7M12wHkpRRCgWW0YwQq+z9v6c8RMIyFB/E9iNnAEZBraUG0kbx5gGvnz
+# Gg9QQ0SXoUZYo26AyWEx891LskMXoBMxGDonKvuqfJyDyOTADWKaFVwlpnyX326x
+# HiPqPjkZy0G+Z6MDjtlQca4MpiyEY4WXPH2kRKGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIPLAhxgybwWYq4qEnrDuFfQZmeT+gWrhEdShhwuZb4vGAggWm703PeXm
-# OBgPMjAyNjExMTAwODIyNDJaMAMCAQECECF67MLLEYTLbD9bjmtnBfygghGnMIIE
+# BAIBBQAEICBo9wW6zyRYGP4jg20wJiXbiZHQUfAV3QIX9wSH22euAghqaJmg7B+w
+# chgPMjAyNjExMTUxNDM1MzlaMAMCAQECEDO6aV2DPzygC73aw/h7rwKgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -517,17 +598,17 @@ function Get-MbtGuiEta {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjI0MlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICV+
-# AfTvUi6Zn6seD19ia6faDQaCi2ez50319FAseHKKMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUzOVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEID/Q
+# EM3F2r0FjfmyisTya/GlOHotba2ccKA36H81jdKGMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBoAXAICQPkY9gNiJtneQx9woKjNDhEl1L3PjNcm/BEvgIgdyRs
-# wfk/4JpAGeqH9U24twD/yuvHgX3r2PFsNqwzrDw=
+# zj0EAwIERzBFAiBjwXfhqGA25Gup8vVk3Y/6cGw0WxjiJIrsjvGXAfh3dgIhAORL
+# KVICDz3n3py5N6R7D4qI+Lfj9fWPqQguJFSPPpZj
 # SIG # End signature block

@@ -4,8 +4,8 @@
     Mailbox Transfer console - window, flow and state (dot-sourced by Start-MailboxTransferConsole.ps1).
 
 .DESCRIPTION
-    The window of the console: header, the stepper (Task > From > To > Plan > Run > Done), the page, the action bar, the dialog layer.
-    The state machine is the one of the mockup: a task chooses a flow; only the steps already passed are clickable; while a job runs nothing is.
+    The window of the console: header, the stepper (Setup > Task > Verify > Run > Next steps; Task has the pages What, From, To), the page, the action bar, the dialog layer.
+    The state machine: a task chooses a flow; only the steps already passed are clickable; while a job runs nothing is.
     Pages are functions (MailboxTransfer.Gui.Pages.ps1) that return the element of the page and set the action bar; the page is built again
     when the state changes, except the browse cards, which live as long as the window.
 
@@ -15,21 +15,23 @@
 Set-StrictMode -Version Latest
 
 $script:Flows = @{
-    export = @('start', 'exFrom', 'exTo', 'exPlan', 'run', 'done')
-    import = @('start', 'imFrom', 'imTo', 'imPlan', 'run', 'done')
-    repair = @('start', 'rpFrom', 'rpTo', 'rpPlan', 'run', 'done')
-    open   = @('start', 'opFrom')
-    copy   = @('start', 'opFrom', 'cpTo', 'cpPlan', 'run', 'done')
+    export = @('setup', 'start', 'exFrom', 'exTo', 'exPlan', 'run', 'done')
+    import = @('setup', 'start', 'imFrom', 'imTo', 'imPlan', 'run', 'done')
+    repair = @('setup', 'start', 'rpFrom', 'rpTo', 'rpPlan', 'run', 'done')
+    open   = @('setup', 'start', 'opFrom')
+    copy   = @('setup', 'start', 'opFrom', 'cpTo', 'cpPlan', 'run', 'done')
 }
-$script:StepLabels = @{ start = 'Task'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To'; exPlan = 'Plan'; imPlan = 'Plan'; rpPlan = 'Plan'; cpPlan = 'Plan'; run = 'Run'; done = 'Done' }
+# The five steps of the stepper, and the sub-steps shown under Task.
+$script:StepGroups = @{ setup = 'Setup'; start = 'Task'; exFrom = 'Task'; imFrom = 'Task'; rpFrom = 'Task'; opFrom = 'Task'; exTo = 'Task'; imTo = 'Task'; rpTo = 'Task'; cpTo = 'Task'; exPlan = 'Verify'; imPlan = 'Verify'; rpPlan = 'Verify'; cpPlan = 'Verify'; run = 'Run'; done = 'Next steps' }
+$script:SubStepLabels = @{ start = 'What'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To' }
 $script:Tasks = [ordered]@{
     export = @{ Title = 'Browse and export'; Eyebrow = 'BROWSE ' + [char]0x00B7 + ' EXPORT'; Icon = 'down'; Context = 'Browse and export'
         Text = 'Look inside a mailbox, tick what to keep, and save it on this computer as PST files or as an export store. Nothing is changed in the mailbox.'
-        Will = @('Sign in and pick the mailbox.', 'Browse it like a mailbox and tick what to keep.', 'Choose where to save it.', 'Read the plan, then press Start.')
+        Will = @('Sign in and pick the mailbox.', 'Browse it like a mailbox and tick what to keep.', 'Choose where to save it.', 'Read the checks and the plan, then press Start.')
         Safe = 'Nothing is changed in the mailbox.' }
     import = @{ Title = 'Import'; Eyebrow = 'IMPORT'; Icon = 'up'; Context = 'Import'
         Text = 'Put a PST file or an export into a mailbox. Items are added. Nothing is deleted and nothing is overwritten.'
-        Will = @('Pick the PST file or the export.', 'Pick the mailbox (and where in it).', 'Read the plan, type IMPORT, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
+        Will = @('Pick the PST file or the export.', 'Pick the mailbox (and where in it).', 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
         Safe = 'This task adds items to a mailbox. It never deletes or overwrites.' }
     repair = @{ Title = 'Check and repair a PST'; Eyebrow = 'PST'; Icon = 'wrench'; Context = 'Check and repair a PST'
         Text = 'Test a PST file for damage. If it is damaged, write a repaired copy. Your original file is never changed.'
@@ -49,15 +51,16 @@ function New-MbtGuiState {
     param([string]$WorkFolder)
     @{
         Task = $null; Sel = $null; Step = 0
-        Mailbox = ''; AuthMode = 'user'; AppTenant = ''; AppClient = ''; AppThumb = ''; TenantId = ''; ClientId = ''; Shared = ''; ImShared = ''; Signed = $false; SigningIn = $false; CodeShown = $false; Code = $null; SignInError = ''; Account = ''; Token = $null
+        Mailbox = ''; AuthMode = 'user'; AppTenant = ''; AppClient = ''; AppThumb = ''; TenantId = ''; ClientId = ''; Shared = ''; ImShared = ''; Signed = $false; SigningIn = $false; CodeShown = $false; Code = $null; SignInCts = $null; SwitchToCode = $false; SignInError = ''; Account = ''; Token = $null
         Locations = @(); LocationChecked = @{}; Reading = $false; LocationsFile = ''; RecoverableItems = $false
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
-        Conc = 4; Retry = 2; Tries = 6; Reconcile = 5; Awake = $true; WorkFolder = $WorkFolder; Changed = @{}
-        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirm = ''
+        Conc = 4; Retry = 2; Tries = 3; Reconcile = 5; Awake = $false; WorkFolder = $WorkFolder; Changed = @{}
+        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirmed = $false; ConfirmKey = ''
+        SetupReturn = -1; AuthEdit = $false; ConfigPath = ''
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
         PlanState = 'idle'; PlanMsg = ''; PlanKey = ''; PlanTotals = $null; CpFor = ''
-        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''
+        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''; JobName = ''
     }
 }
 
@@ -94,7 +97,7 @@ function New-MbtGuiWindow {
         -Engine: the adapter (real or fake). -Theme: System (like Windows), Light, Dark.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.1.0')
+    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.2.0')
 
     $look = Initialize-MbtGuiTheme -Theme $Theme
     $xaml = Get-Content -LiteralPath (Join-Path $script:GuiRoot 'module\MailboxTransfer.Gui.xaml') -Raw
@@ -115,7 +118,7 @@ function New-MbtGuiWindow {
     $script:Gui = @{
         Window = $window; C = $c; Theme = $look; ThemeName = $Theme; Engine = $Engine; S = (New-MbtGuiState -WorkFolder $WorkFolder); Version = $Version
         EntryScript = $EntryScript; Timer = $timer; Job = $null; Run = $null; Browsers = @{}; PrimaryAction = $null; BackAction = $null
-        OnSelectionChanged = $null; Reports = @(); ExportSelection = [pscustomobject]@{ Entries = @(); Items = 0L; Bytes = 0L; Folders = 0; UnknownSize = 0; SubtreeUnread = $false }; ImportTotals = $null; PlanJob = $null; PlanRun = $null; PlanHolder = $null
+        OnSelectionChanged = $null; Reports = @(); ReportState = ''; ReportHint = $null; ExportSelection = [pscustomobject]@{ Entries = @(); Items = 0L; Bytes = 0L; Folders = 0; UnknownSize = 0; SubtreeUnread = $false }; ImportTotals = $null; PlanJob = $null; PlanRun = $null; PlanHolder = $null; PlanStarted = $null; PlanShown = ''
         ExportToHolder = $null; ExportDiskHolder = $null; ExportDiskBad = $false; RepairHolder = $null; CloseWhenStopped = $false; LastTickError = $null; PageName = ''
         RunHeadHolder = $null; RunDecisionHolder = $null; RunCols = $null; RunStepsHolder = $null; RunMidHolder = $null; RunDetailHolder = $null
         DialogOpen = $false; Pollers = [Collections.Generic.List[scriptblock]]::new(); Tick = 0; LastEtaPaint = [datetime]::MinValue; Closing = $false; ForceClose = $false
@@ -123,20 +126,21 @@ function New-MbtGuiWindow {
     # The theme can be changed in the window (System follows Windows): the window takes the new look and the page is built again.
     foreach ($name in 'System', 'Light', 'Dark') {
         $c["Th_$name"].Tag = $name
-        $c["Th_$name"].Add_Checked({ param($s, $e) Set-MbtGuiThemeChoice -Name ([string]$s.Tag) })
+        Add-MbtGuiHandler $c["Th_$name"] 'Checked' { param($sender, $e) Set-MbtGuiThemeChoice -Name ([string]$sender.Tag) }
     }
     # Help: the HTML user guide of the package, and the page of the latest release (the tool never checks for updates by itself; this opens the browser on a click).
-    $c.HelpGuide.Add_Click({ Open-MbtGuiHelp -Target Guide })
-    $c.HelpRelease.Add_Click({ Open-MbtGuiHelp -Target Release })
-    $c.BackButton.Add_Click({ Invoke-MbtGuiBack })
-    $c.Primary.Add_Click({ if ($script:Gui.PrimaryAction) { & $script:Gui.PrimaryAction } })
-    $timer.Add_Tick({ Step-MbtGuiTick })
-    $window.Add_PreviewKeyDown({
-            param($s, $e)
-            if ($e.Key -eq 'Escape' -and $script:Gui.DialogOpen) { Close-MbtGuiDialog; $e.Handled = $true }
-            elseif ($e.Key -eq 'Return' -and -not $script:Gui.DialogOpen -and $e.OriginalSource -isnot [Windows.Controls.TextBox] -and $c.Primary.IsEnabled -and $e.OriginalSource -isnot [Windows.Controls.Button]) { & $script:Gui.PrimaryAction; $e.Handled = $true }
-        })
-    $window.Add_Closing({ param($s, $e) Invoke-MbtGuiClosing $e })
+    Add-MbtGuiHandler $c.HelpGuide 'Click' { Open-MbtGuiHelp -Target Guide }
+    Add-MbtGuiHandler $c.HelpRelease 'Click' { Open-MbtGuiHelp -Target Release }
+    Add-MbtGuiHandler $c.BackButton 'Click' { Invoke-MbtGuiBack }
+    Add-MbtGuiHandler $c.Primary 'Click' { if ($script:Gui.PrimaryAction) { & $script:Gui.PrimaryAction } }
+    Add-MbtGuiHandler $timer 'Tick' { Step-MbtGuiTick }
+    Add-MbtGuiHandler $window 'PreviewKeyDown' {
+        param($sender, $e)
+        $gui = $script:Gui
+        if ($e.Key -eq 'Escape' -and $gui.DialogOpen) { Close-MbtGuiDialog; $e.Handled = $true }
+        elseif ($e.Key -eq 'Return' -and -not $gui.DialogOpen -and $e.OriginalSource -isnot [Windows.Controls.TextBox] -and $gui.C.Primary.IsEnabled -and $e.OriginalSource -isnot [Windows.Controls.Button] -and $gui.PrimaryAction) { & $gui.PrimaryAction; $e.Handled = $true }
+    }
+    Add-MbtGuiHandler $window 'Closing' { param($sender, $e) Invoke-MbtGuiClosing $e }
     # The window fits the screen where it opens (small laptop screen at 150 %).
     $area = [Windows.SystemParameters]::WorkArea
     $window.Width = [Math]::Min($window.Width, $area.Width); $window.Height = [Math]::Min($window.Height, $area.Height)
@@ -151,6 +155,7 @@ function New-MbtGuiWindow {
 
 function Get-MbtGuiScreen {
     $s = $script:Gui.S
+    if ($s.Step -le 0) { return 'setup' }
     if (-not $s.Task) { return 'start' }
     return $script:Flows[$s.Task][$s.Step]
 }
@@ -169,46 +174,90 @@ function Show-MbtGuiPage {
 }
 
 function Update-MbtGuiStepper {
+    <# Five steps (Setup, Task, Verify, Run, Next steps); the pages of the task (What, From, To) are shown under the Task step. #>
     $g = $script:Gui; $s = $g.S; $panel = $g.C.Stepper
     $panel.Children.Clear()
     $flow = if ($s.Task) { $script:Flows[$s.Task] } else { $script:Flows.export }
     $screen = Get-MbtGuiScreen
     $locked = ($screen -eq 'run' -and $g.Run -and -not $g.Run.Result)
+    $groups = [Collections.Generic.List[object]]::new()
     for ($i = 0; $i -lt $flow.Count; $i++) {
-        if ($i -gt 0) { $panel.Children.Add((New-GuiIcon 'chev' 10 'TextFillColorTertiaryBrush')) | Out-Null; $panel.Children[$panel.Children.Count - 1].Margin = [Windows.Thickness]::new(4, 0, 4, 0) }
-        $cur = $i -eq $s.Step; $done = $i -lt $s.Step
+        $name = $script:StepGroups[$flow[$i]]
+        $last = if ($groups.Count) { $groups[$groups.Count - 1] } else { $null }
+        if ($last -and $last.Name -eq $name) { $last.Members.Add($i) } else { $groups.Add(@{ Name = $name; Members = [Collections.Generic.List[int]]::new([int[]]@($i)) }) }
+    }
+    $n = 0
+    foreach ($grp in $groups) {
+        $n++
+        if ($n -gt 1) {
+            $chev = New-GuiIcon 'chev' 10 'TextFillColorTertiaryBrush'
+            $chev.Margin = [Windows.Thickness]::new(4, 11, 4, 0); $chev.VerticalAlignment = 'Top'
+            $panel.Children.Add($chev) | Out-Null
+        }
+        $first = $grp.Members[0]; $lastIdx = $grp.Members[$grp.Members.Count - 1]
+        $cur = ($s.Step -ge $first -and $s.Step -le $lastIdx); $done = $s.Step -gt $lastIdx
         $btn = [Windows.Controls.Button]::new()
         $btn.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtStepButton')
-        $btn.IsEnabled = ($i -lt $s.Step) -and -not $locked
-        $btn.Tag = $i
+        $btn.VerticalAlignment = 'Top'
+        $btn.IsEnabled = $done -and -not $locked
+        $btn.Tag = $first
         $sp = [Windows.Controls.StackPanel]::new(); $sp.Orientation = 'Horizontal'
         $circle = [Windows.Controls.Border]::new(); $circle.Width = 24; $circle.Height = 24; $circle.CornerRadius = [Windows.CornerRadius]::new(12)
         $bgKey = if ($cur) { 'AccentFillColorDefaultBrush' } elseif ($done) { 'MbtSuccessBackground' } else { 'MbtInfoBackground' }
         Set-MbtGuiResource $circle ([Windows.Controls.Border]::BackgroundProperty) $bgKey
         if ($done) { $num = New-GuiIcon 'check' 12 'MbtSuccessInk'; $num.HorizontalAlignment = 'Center' }
         else {
-            $num = New-GuiText ([string]($i + 1)) 'Small' -NoWrap; $num.FontWeight = [Windows.FontWeights]::SemiBold; $num.HorizontalAlignment = 'Center'; $num.VerticalAlignment = 'Center'
+            $num = New-GuiText ([string]$n) 'Small' -NoWrap; $num.FontWeight = [Windows.FontWeights]::SemiBold; $num.HorizontalAlignment = 'Center'; $num.VerticalAlignment = 'Center'
             Set-MbtGuiResource $num ([Windows.Controls.TextBlock]::ForegroundProperty) $(if ($cur) { 'TextOnAccentFillColorPrimaryBrush' } else { 'TextFillColorSecondaryBrush' })
         }
         $circle.Child = $num
-        $lbl = New-GuiText $script:StepLabels[$flow[$i]] 'Body' -NoWrap
+        $lbl = New-GuiText $grp.Name 'Body' -NoWrap
         $lbl.Margin = [Windows.Thickness]::new(8, 0, 0, 0); $lbl.VerticalAlignment = 'Center'
         if ($cur) { $lbl.FontWeight = [Windows.FontWeights]::SemiBold } else { Set-MbtGuiResource $lbl ([Windows.Controls.TextBlock]::ForegroundProperty) 'TextFillColorSecondaryBrush' }
         $sp.Children.Add($circle) | Out-Null; $sp.Children.Add($lbl) | Out-Null
         $btn.Content = $sp
         if ($cur) { Set-MbtGuiResource $btn ([Windows.Controls.Control]::BackgroundProperty) 'MbtAccentSoft' }
-        $btn.Add_Click({ param($b, $e) Set-MbtGuiStep ([int]$b.Tag) })
-        $panel.Children.Add($btn) | Out-Null
+        Add-MbtGuiHandler $btn 'Click' { param($sender, $e) Set-MbtGuiStep ([int]$sender.Tag) }
+        $cell = [Windows.Controls.StackPanel]::new(); $cell.VerticalAlignment = 'Top'
+        $cell.Children.Add($btn) | Out-Null
+        if ($grp.Name -eq 'Task') { $cell.Children.Add((New-MbtGuiSubSteps -Members $grp.Members -Flow $flow -Locked $locked)) | Out-Null }
+        $panel.Children.Add($cell) | Out-Null
     }
-    $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } else { 'Start' }
+    $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } elseif ($screen -eq 'setup') { 'Setup' } else { 'Choose a task' }
     if ($s.Task -in 'export', 'import' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
     $g.C.StepperContext.Text = $ctx
 }
 
+function New-MbtGuiSubSteps {
+    <# What, From, To under the Task step: the pages already passed are clickable, the current one is in the accent colour. #>
+    param([Parameter(Mandatory)]$Members, [Parameter(Mandatory)]$Flow, [bool]$Locked)
+    $s = $script:Gui.S
+    $row = [Windows.Controls.StackPanel]::new(); $row.Orientation = 'Horizontal'; $row.Margin = [Windows.Thickness]::new(32, 0, 0, 0)
+    $k = 0
+    foreach ($i in $Members) {
+        if ($k -gt 0) { $dot = New-GuiIcon 'chev' 8 'TextFillColorTertiaryBrush'; $dot.Margin = [Windows.Thickness]::new(1, 0, 1, 0); $row.Children.Add($dot) | Out-Null }
+        $k++
+        $cur = ($i -eq $s.Step); $passed = ($i -lt $s.Step)
+        $b = [Windows.Controls.Button]::new()
+        $b.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtStepButton')
+        $b.Padding = [Windows.Thickness]::new(6, 0, 6, 1)
+        $b.IsEnabled = $passed -and -not $Locked
+        $b.Tag = $i
+        $t = New-GuiText $script:SubStepLabels[$Flow[$i]] 'Small' -NoWrap
+        if ($cur) { $t.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText' }
+        elseif (-not $passed) { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'TextFillColorTertiaryBrush' }
+        $b.Content = $t
+        Add-MbtGuiHandler $b 'Click' { param($sender, $e) Set-MbtGuiStep ([int]$sender.Tag) }
+        $row.Children.Add($b) | Out-Null
+    }
+    return $row
+}
+
 function Set-MbtGuiActions {
     <# The action bar: Back at the left, optional left and extra elements, the footer, the primary button (grey until the page can continue). #>
-    param([bool]$Back = $true, [string]$Footer = '', $Left, $Extra, [string]$Label, [string]$Icon, [bool]$Enabled = $true, [scriptblock]$OnClick)
+    param([bool]$Back = $true, [string]$Footer = '', $Left, $Extra, [string]$Label, [string]$Icon, [bool]$Enabled = $true, [scriptblock]$OnClick, [switch]$Secondary)
     $c = $script:Gui.C
+    if ($Secondary) { $c.Primary.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'DefaultButtonStyle') } else { $c.Primary.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'AccentButtonStyle') }
     $c.BackButton.Visibility = $(if ($Back) { 'Visible' } else { 'Collapsed' })
     $c.ActionsLeft.Content = $Left
     $c.ActionsExtra.Content = $Extra
@@ -219,7 +268,7 @@ function Set-MbtGuiActions {
         $c.PrimaryLabel.Text = $Label
         if ($Icon) { $c.PrimaryIcon.Text = Get-MbtGlyph $Icon; $c.PrimaryIcon.Visibility = 'Visible' } else { $c.PrimaryIcon.Visibility = 'Collapsed' }
         $c.Primary.IsEnabled = $Enabled
-        $script:Gui.PrimaryAction = $OnClick
+        $script:Gui.PrimaryAction = ConvertTo-MbtGuiHandler -Block $OnClick -CallerScope 2
     } else { $c.Primary.Visibility = 'Collapsed'; $script:Gui.PrimaryAction = $null }
 }
 
@@ -236,14 +285,14 @@ function Set-MbtGuiStep {
     $s = $script:Gui.S
     if ($Index -lt 0) { $Index = 0 }
     $s.Step = $Index
-    if ($Index -eq 0) { $s.Task = $null; $s.Sel = $null }
+    if ($Index -le 1) { $s.Task = $null }
     Show-MbtGuiPage
 }
 
 function Move-MbtGuiStep {
     param([int]$Delta)
     $s = $script:Gui.S
-    $max = $script:Flows[$s.Task].Count - 1
+    $max = $(if ($s.Task) { $script:Flows[$s.Task].Count } else { $script:Flows.export.Count }) - 1
     Set-MbtGuiStep ([math]::Max(0, [math]::Min($max, $s.Step + $Delta)))
 }
 
@@ -267,7 +316,7 @@ function Show-MbtGuiDialog {
         $btn = New-GuiButton -Text $b.Text -Accent:([bool](Get-MbtGuiProp $b 'Accent')) -Danger:([bool](Get-MbtGuiProp $b 'Danger'))
         $btn.Margin = [Windows.Thickness]::new(8, 0, 0, 0)
         $btn.Tag = (Get-MbtGuiProp $b 'Action')
-        $btn.Add_Click({ param($x, $e) $act = $x.Tag; Close-MbtGuiDialog; if ($act) { & $act } })
+        Add-MbtGuiHandler $btn 'Click' { param($sender, $e) $act = $sender.Tag; Close-MbtGuiDialog; if ($act) { & $act } }
         $c.DialogButtons.Children.Add($btn) | Out-Null
     }
     $c.Overlay.Visibility = 'Visible'
@@ -331,17 +380,25 @@ function Step-MbtGuiTick {
         if ($g.CloseWhenStopped -and $g.Job -and $g.Job.Exited) { $g.ForceClose = $true; $g.Window.Close() }
         Step-MbtGuiSignInCode
         Step-MbtGuiPlanJob
-        for ($i = $g.Pollers.Count - 1; $i -ge 0; $i--) { if (& $g.Pollers[$i]) { $g.Pollers.RemoveAt($i) } }
-    } catch { Write-Verbose "tick: $_" ; $g.LastTickError = $_.Exception.Message }
+        # a poller that raises is written down and dropped: kept, it would raise again at every tick
+        for ($i = $g.Pollers.Count - 1; $i -ge 0; $i--) {
+            $finished = $true
+            try { $finished = [bool](& $g.Pollers[$i]) } catch { Write-MbtGuiFault 'a step of the console that waits for a job' $_; $g.LastTickError = $_.Exception.Message }
+            if ($finished) { $g.Pollers.RemoveAt($i) }
+        }
+    } catch {
+        if ($g.LastTickError -ne $_.Exception.Message) { Write-MbtGuiFault 'the tick of the console' $_ }
+        Write-Verbose "tick: $_"; $g.LastTickError = $_.Exception.Message
+    }
 }
 
 #endregion
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDFwIwqz76OgbqC
-# 71FyNjmpR5pLtK/KYE3Il3yeO1neEqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCCMedHKQ7cXNKV
+# LFSsrSlE6qaU1wpFD3lUDA6VQEp5m6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -413,28 +470,28 @@ function Step-MbtGuiTick {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAgJyVKjNbA
-# waoPkS0GmSJClwopNNxv60tt77OuOcL+1jANBgkqhkiG9w0BAQEFAASCAgBCopFO
-# mvuAaU4vTwqiJTClPdIzARnjqBA8WhBxfB9SkfO2AY4lRTdZhRMHO5hBd2YDAVuG
-# DLuzHaI3clQTmVExOtUyYb2Va77ytvhhmIRzORpt0DOUQPWE96lf9UNgW3mShMX1
-# LwYCNAMVVJRWo0cSUfaLto1lu0t3tLii5FzvTSLrMsWrVg/CINLGilUa/8sWaDxZ
-# 7GSYsmi5REO1cR2xt7er3fR86jsmYv9MFLFyhN9mSZQpxyIOrFFyxQEW2FpCmV7S
-# bfLFfcZNNxhgeL2IdRaHin2WN4uw2pP69o5P73RqeWMlJrv8/nsWejOLuLlH/T5s
-# c6TmGuTe7Z0kpjBfIA9+JmclMV1p28zVRBJSsrgvyMI2y7r+AEAIwZIbVDbTtr5R
-# +mxb0xYwXxGNRhsNBGt0PTcGW9TyLJct7II+V3grOBu9Xhiap0j5NPPoXv8Z+6+G
-# LOt8MrbtuS+k3/AGWEzlE4/mGZspShYeGfcCSEGwWyECkaKGhoo3CMk7suxI8cjg
-# Flf4zWqGXMTjWxuxtSm0WT7bfVdCApbl7BaTnKa78rn4oNx7Xn8EQp0ozOZNYk+3
-# tTzPGgiqvIn0SvJceuetrDK3eGDilKP7SLfndr4WPJ+UWqqabsxCrhLca4tJqJKL
-# 3sEpLEpR13jReGJ6CfeGlh7QSEtS1Jpti+JgYKGCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAapkNhmfCb
+# Lf5zgZKaF3W+AvHRmaD1NaReFdFfo6X1YDANBgkqhkiG9w0BAQEFAASCAgCvq706
+# sOHAN3D6WkWDMmYHtM37AkkVQVeOBgDW0vBckZ8jVlGZ0CSxI5xdy9J1oQfjS59y
+# L8RT22Y58xMdaq6edBFwPO/8tfxU7FCIW4yKCop9sDkOUddBsquD9Nmos8Xo1m9R
+# ucMyqSadbmgIx9K3/S40osP81b5931/cKlPH9MDks69+4um6NkoZJZ4kmi/OOW95
+# cHyrXa3Y8z4pli9a/6hmHMi0TuozeLYwfuU6w1l71cy0v41eXfcEH/9n0DNLOhLN
+# Qpwc19zHhmkh3w/F6i3SRbTbv9QKG3u65G5FkU1wCdOp4spDoW6tLy8cQaPt6FTn
+# LDerK6ZWt/eHF2TWsi2U0G1NM7vmg3f1KynllXZQiyz46rR2hUcJriNgTem5goEg
+# 64OD0mMM5D9l4/JhBCCDOmWVtdw/0vwDfPKTGT21K4yI+HF0IBugN7BaxMnfI+3g
+# +Z0tnTtPSoHbwrsqbEccdxiqaykMUICoEq0AIE+5Vr9HPXivDlIXaQocxV0K0nvc
+# fKOdxo5jNvQr3HsrRP/9ouv4R9jFVoAn2NTTtlIf5/u53vYMNC2kxLjJHq0cCwvZ
+# 77aNzxOb6IyL7sY+hUTjzHpH9BTNKdmia4cq0G6O3jkSJIR7K3l8k6QVnWNSiLkg
+# fQnar2cmwjUEc67xleuEmiRYRXBguTT4S3hHJ6GCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEINXD5NH7fwwBpjbiDIfX7abxRibGDjIg0uQlxCO7lYTmAgh6gyLWtOqq
-# QxgPMjAyNjExMTAxNDA5MTFaMAMCAQECEDmqg0RvjcppT13/7Vl0WcOgghGnMIIE
+# BAIBBQAEILKsxoDfOhWk5ZK4Bjazj7UuRxICnWolrHg2TXuU0XtGAggp3XGYhaSb
+# qxgPMjAyNjExMTUxNDM1NDlaMAMCAQECEEHqSO3zyUgBVT0zXq9/fXegghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -529,17 +586,17 @@ function Step-MbtGuiTick {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkxMVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIEDu
-# 6MlWL3PzIZG24hHu6zF/b2hVVQVFGCDLNuwohrQSMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzU0OVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIOaK
+# JwvNg7Hj5/z9RS10rtkc+FSsmWlYWINm4oXX/815MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBqANGDfNnp/1AzjviGetg14jYVnytUwxz8rwPJ7YDn8QIgC7NB
-# 8yv7w2B81eOs39HWI1DFem2wjaLA9JNQW/BBYVY=
+# zj0EAwIESDBGAiEA2nGipyF84ELtWSxQndV0fMDFHajsFTHrKExLn3+XlWQCIQCQ
+# JmiKhtgcUVcZUaqIxEzZN9XIuiQfxwHL+y+yZsw7ew==
 # SIG # End signature block

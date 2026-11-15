@@ -4,15 +4,22 @@
     Mailbox Transfer console - jobs (dot-sourced by Start-MailboxTransferConsole.ps1).
 
 .DESCRIPTION
-    A job is what the console starts in a child pwsh: export, PST write, import, check, repair (CONSOLE-SPEC 9). Here: the job folder
-    (<work folder>\jobs\<yyyyMMdd-HHmm>-<task>-<id>\ with request.json, effective.config.psd1, selection files, events.jsonl, status.json, stop.request,
-    stdout.txt, stderr.txt), the command lines (every value comes from a validated control, never from free text), the child process, the stop
-    request, and the pump that reads the events file into the run model. The pump is also what the tests drive with a fake events file.
+    A job is what the console starts in a child pwsh: export, PST write, import, check, repair. Here: the job folder
+    (<work folder>\jobs\<yyyyMMdd-HHmm>-<task>-<id>\ with request.json, events.jsonl, status.json, stop.request, stdout.txt, stderr.txt), the command lines
+    (every value comes from a validated control, never from free text), the child process, the stop request, and the pump that reads the events file
+    into the run model. The pump is also what the tests drive with a fake events file. What was chosen in the browse view (the selection of an export, the
+    folders and messages ticked in a PST) is kept in <work folder>\selections\, outside the job folder, because the command line names those files.
+    What is changed for one run (tenant, application, certificate, parallel requests, waits, tries) goes to the command line as parameters: nothing is
+    written to the configuration file, and the line the console shows gives the same result as the one it runs.
 
 .NOTES
     Author  : Nicolas Fabert
 #>
 Set-StrictMode -Version Latest
+
+# The HTML report of a job (the same writer as the command line: report.html in the job folder) and the overview of all the jobs.
+. (Join-Path $PSScriptRoot 'MailboxTransfer.Report.ps1')
+. (Join-Path $PSScriptRoot 'MailboxTransfer.Overview.ps1')
 
 function New-MbtGuiJobId { return -join ((1..4) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] }) }
 
@@ -23,22 +30,6 @@ function New-MbtGuiJobFolder {
     $dir = Join-Path (Join-Path $WorkFolder 'jobs') $name
     $null = New-Item -ItemType Directory -Force -Path $dir
     return $dir
-}
-
-function Get-MbtGuiEffectiveConfig {
-    <#
-        The configuration of one run: the file plus the changes made on the Plan page (never written back to the file). Returns the text of a .psd1
-        that Import-MbtConfiguration reads, or $null when nothing is modified.
-    #>
-    param([Parameter(Mandatory)][hashtable]$State, [string]$WorkFolder)
-    $lines = [Collections.Generic.List[string]]::new()
-    $graph = [Collections.Generic.List[string]]::new()
-    if ($State.Changed.ContainsKey('Tries')) { $graph.Add("MaxAttempts = $([int]$State.Tries)") }
-    if ($State.Changed.ContainsKey('Retry')) { $graph.Add("BaseBackoffSeconds = $([int]$State.Retry)") }
-    if ($graph.Count) { $lines.Add('Graph = @{ ' + ($graph -join '; ') + ' }') }
-    if ($State.Changed.ContainsKey('WorkFolder') -and $WorkFolder) { $lines.Add("Output = @{ Root = '$($WorkFolder.Replace("'", "''"))' }") }
-    if (-not $lines.Count) { return $null }
-    return "@{`n  " + ($lines -join "`n  ") + "`n}`n"
 }
 
 function Test-MbtGuiPstName {
@@ -53,17 +44,53 @@ function Test-MbtGuiPstName {
     return $null
 }
 
-function Get-MbtGuiAuthArguments {
-    <# The sign-in of the child job: nothing for "me" (the cached token), the application's certificate for "the application" (run-only: kept in the console, never written to a file). #>
-    param([hashtable]$S)
-    if (-not ($S.ContainsKey('AuthMode') -and $S.AuthMode -eq 'app')) {
-        # "me": the cached token; the tenant and the application typed in the Sign-in card (the configuration names none) go to the child too
-        if ($S.ContainsKey('TenantId') -and $S.TenantId -and $S.ContainsKey('ClientId') -and $S.ClientId) { '-TenantId'; ([string]$S.TenantId).Trim(); '-ClientId'; ([string]$S.ClientId).Trim() }
-        return
-    }
-    '-CertificateThumbprint'; [string]$S.AppThumb; '-TenantId'; [string]$S.AppTenant; '-ClientId'; [string]$S.AppClient
+function Get-MbtGuiConfiguredSignIn {
+    <# What the configuration file says about the tenant, the application and the certificate (the engine reads it); $null when the engine does not tell. #>
+    $g = Get-Variable -Name Gui -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if (-not $g) { return $null }
+    $has = if ($g.Engine -is [Collections.IDictionary]) { $g.Engine.Contains('SignInSettings') } else { [bool]$g.Engine.PSObject.Properties['SignInSettings'] }
+    # a configuration file that cannot be read gives no values: the Setup page says so (a light), and the sign-in asks for them
+    if ($has) { try { return (& $g.Engine.SignInSettings) } catch { return $null } }
+    return $null
 }
 
+function Get-MbtGuiEffectiveSignIn {
+    <#
+        The values the sign-in uses for this run: the configuration file, over which a value typed on the Setup page (this run only) wins. Tenant, Client
+        (and Thumb for the application) are the ones used; ...Changed says that the value differs from the file; Missing names what is empty.
+    #>
+    param([hashtable]$S)
+    $cfg = Get-MbtGuiConfiguredSignIn
+    $app = ($S['AuthMode'] -eq 'app')
+    $typed = if ($app) { @([string]$S['AppTenant'], [string]$S['AppClient'], [string]$S['AppThumb']) } else { @([string]$S['TenantId'], [string]$S['ClientId'], '') }
+    # the application is in the same tenant as the user in practice: without its own tenant, the tenant of the configuration is used (never the user, the mailbox or the mailbox ids)
+    $appTenant = [string](Get-MbtGuiProp $cfg 'AppTenantId' ''); if (-not $appTenant.Trim()) { $appTenant = [string](Get-MbtGuiProp $cfg 'TenantId' '') }
+    $file = if ($app) { @($appTenant, [string](Get-MbtGuiProp $cfg 'AppClientId' ''), [string](Get-MbtGuiProp $cfg 'CertificateThumbprint' '')) } else { @([string](Get-MbtGuiProp $cfg 'TenantId' ''), [string](Get-MbtGuiProp $cfg 'ClientId' ''), '') }
+    $use = for ($i = 0; $i -lt 3; $i++) { if ($typed[$i].Trim()) { $typed[$i].Trim() } else { $file[$i].Trim() } }
+    # not case sensitive; a thumbprint is compared by its digits (it is written with spaces or colons in the certificate details)
+    $same = { param($a, $b, $thumbprint) if ($thumbprint) { ($a -replace '[^0-9A-Fa-f]', '') -eq ($b -replace '[^0-9A-Fa-f]', '') } else { $a.Trim() -eq $b.Trim() } }
+    $changed = for ($i = 0; $i -lt 3; $i++) { [bool]($typed[$i].Trim() -and -not (& $same $typed[$i] $file[$i] ($app -and $i -eq 2))) }
+    # an engine that does not say what its configuration holds is not asked questions: nothing is reported missing
+    $missing = [Collections.Generic.List[string]]::new()
+    if ($null -ne $cfg) {
+        if (-not $use[0]) { $missing.Add('Tenant') }
+        if (-not $use[1]) { $missing.Add('Application id') }
+        if ($app -and -not $use[2]) { $missing.Add('Certificate thumbprint') }
+    }
+    [pscustomobject]@{ App = $app; Tenant = $use[0]; Client = $use[1]; Thumb = $use[2]; TenantChanged = $changed[0]; ClientChanged = $changed[1]; ThumbChanged = $changed[2]
+        FromFile = $file; Missing = $missing.ToArray(); Changed = [bool]($changed -contains $true) }
+}
+
+function Get-MbtGuiAuthArguments {
+    <# The sign-in of the child job: nothing for "me" (the cached token; the tenant and the application go too when they were changed for this run), the application's certificate for "the application" (run-only: kept in the console, never written to a file). #>
+    param([hashtable]$S)
+    $e = Get-MbtGuiEffectiveSignIn -S $S
+    if (-not $e.App) {
+        if ($e.TenantChanged -or $e.ClientChanged) { '-TenantId'; $e.Tenant; '-ClientId'; $e.Client }
+        return
+    }
+    '-CertificateThumbprint'; ($e.Thumb -replace '[^0-9A-Fa-f]', ''); '-TenantId'; $e.Tenant; '-ClientId'; $e.Client
+}
 function ConvertTo-MbtGuiFolderPattern {
     <# A folder path as a pattern of the engine (-IncludeFolder / -ExcludeFolder): a * or ? in a folder name is written literally (backtick), slashes stay. #>
     param([string]$Path)
@@ -91,13 +118,21 @@ function Get-MbtGuiFolderChoice {
     [pscustomobject]@{ Include = $inc.ToArray(); Exclude = $exc.ToArray(); Nids = $nids.ToArray() }
 }
 
+function Get-MbtGuiSelectionBase {
+    <# Where the choice of an operation is kept, without extension: <work folder>\selections\<task>-<8 characters of what was chosen>. The command line names these files. #>
+    param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Key)
+    return [IO.Path]::Combine($WorkFolder, 'selections', ('{0}-{1}' -f $Task, $Key.Substring(0, 8).ToLowerInvariant()))
+}
+
 function Write-MbtGuiFolderFiles {
-    <# Writes the choice into the job folder: folders.txt (lines "+path" take, "-path" leave out; -FolderFile of the entry script) and items.txt (node ids; -IncludeItemFile). Sets FolderFile / ItemsFile of the job. #>
+    <# Writes the choice next to the selection: <base>.folders.txt (lines "+path" take, "-path" leave out; -FolderFile of the entry script) and <base>.items.txt (node ids; -IncludeItemFile). Sets FolderFile / ItemsFile of the job. #>
     param([Parameter(Mandatory)][hashtable]$Job, [Parameter(Mandatory)]$Choice)
     $Job.FolderFile = $null; $Job.ItemsFile = $null
+    $base = if ($Job.ContainsKey('SelectionBase') -and $Job.SelectionBase) { $Job.SelectionBase } else { Join-Path $Job.Folder 'choice' }
     $lines = @($Choice.Include | ForEach-Object { "+$_" }) + @($Choice.Exclude | ForEach-Object { "-$_" })
-    if ($lines.Count) { $Job.FolderFile = Join-Path $Job.Folder 'folders.txt'; Set-Content -LiteralPath $Job.FolderFile -Value $lines -Encoding utf8 }
-    if (@($Choice.Nids).Count) { $Job.ItemsFile = Join-Path $Job.Folder 'items.txt'; Set-Content -LiteralPath $Job.ItemsFile -Value @($Choice.Nids | ForEach-Object { [string]$_ }) -Encoding utf8 }
+    if ($lines.Count -or @($Choice.Nids).Count) { $null = New-Item -ItemType Directory -Force -Path (Split-Path $base -Parent) }
+    if ($lines.Count) { $Job.FolderFile = "$base.folders.txt"; Set-Content -LiteralPath $Job.FolderFile -Value $lines -Encoding utf8 }
+    if (@($Choice.Nids).Count) { $Job.ItemsFile = "$base.items.txt"; Set-Content -LiteralPath $Job.ItemsFile -Value @($Choice.Nids | ForEach-Object { [string]$_ }) -Encoding utf8 }
 }
 
 function Get-MbtGuiCommonArguments {
@@ -106,7 +141,6 @@ function Get-MbtGuiCommonArguments {
     $a.AddRange([string[]]@(Get-MbtGuiAuthArguments -S $S))
     $a.AddRange([string[]]@('-EventsFile', $Job.EventsPath, '-StopFile', $Job.StopPath, '-JobId', $Job.Id))
     if ($S.Awake) { $a.Add('-KeepAwake') }
-    if ($Job.ConfigPath) { $a.AddRange([string[]]@('-ConfigPath', $Job.ConfigPath)) }
     if ($WhatIf) { $a.Add('-WhatIf') }
     return , $a
 }
@@ -114,7 +148,8 @@ function Get-MbtGuiCommonArguments {
 function Get-MbtGuiCommand {
     <#
         The command lines of a task (one or several, run one after the other). Returns objects with Arguments (for Invoke-MailboxTransfer.ps1) and
-        Title. Every value comes from a validated control of the console. -Plan: the read-only run (-WhatIf) of the same request.
+        Title. Every value comes from a validated control of the console. -Plan: the read-only run (-WhatIf) of the same request. An export of
+        several locations is one command: the selection file holds one selection per location, and the PST files are written by the same command.
     #>
     param(
         [Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'check', 'copy')][string]$Task,
@@ -122,34 +157,26 @@ function Get-MbtGuiCommand {
     )
     $common = Get-MbtGuiCommonArguments -S $S -Job $Job -WhatIf:$Plan
     $out = [Collections.Generic.List[object]]::new()
-    $conc = @('-Concurrency', [string][int]$S.Conc, '-MaxAttempts', [string][int]$S.Tries)
+    $tuning = [Collections.Generic.List[string]]::new()
+    $tuning.AddRange([string[]]@('-Concurrency', [string][int]$S.Conc, '-MaxAttempts', [string][int]$S.Tries))
+    if ($S.Changed.ContainsKey('Retry')) { $tuning.AddRange([string[]]@('-RetryWaitSeconds', [string][int]$S.Retry)) }
     switch ($Task) {
         'export' {
-            $files = @($Job.SelectionFiles)
             $pst = $S.Dest -eq 'pst'
             $eml = $S.Dest -eq 'eml'
-            $outPst = if ($pst) { [IO.Path]::Combine($S.OutFolder, $S.OutName) } else { $null }
-            for ($i = 0; $i -lt $files.Count; $i++) {
-                $a = [Collections.Generic.List[string]]::new()
-                # the temporary files of the export are in the job folder, not below the folder of the script
-                $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox, '-SelectionFile', $files[$i], '-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
-                $a.AddRange([string[]]$conc)
-                if ($pst -and $files.Count -eq 1) {
-                    $a.AddRange([string[]]@('-OutputPst', $outPst, '-PstMaxSizeGB', [string][int]$S.SplitGB))
-                    if (-not $S.CheckEach) { $a.Add('-SkipCheck') }
-                    if ($S.SepAux) { $a.Add('-SeparateAuxArchives') }
-                }
-                $a.AddRange([string[]]$common)
-                $out.Add([pscustomobject]@{ Title = 'Export'; Arguments = $a.ToArray() })
-            }
-            if ($pst -and $files.Count -gt 1) {
-                $a = [Collections.Generic.List[string]]::new()
-                $a.AddRange([string[]]@('-Mode', 'ExportPst', '-StorePath', $Job.StorePath, '-OutputPst', $outPst, '-PstMaxSizeGB', [string][int]$S.SplitGB))
+            $a = [Collections.Generic.List[string]]::new()
+            # the temporary files of the export are in the job folder, not below the folder of the script
+            $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox))
+            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
+            $a.AddRange([string[]]$tuning)
+            if ($pst) {
+                $a.AddRange([string[]]@('-OutputPst', [IO.Path]::Combine($S.OutFolder, $S.OutName), '-PstMaxSizeGB', [string][int]$S.SplitGB))
                 if (-not $S.CheckEach) { $a.Add('-SkipCheck') }
                 if ($S.SepAux) { $a.Add('-SeparateAuxArchives') }
-                $a.AddRange([string[]]$common)
-                $out.Add([pscustomobject]@{ Title = 'Write the PST files'; Arguments = $a.ToArray() })
             }
+            $a.AddRange([string[]]$common)
+            $out.Add([pscustomobject]@{ Title = 'Export'; Arguments = $a.ToArray() })
             if ($eml) {
                 # the items come to the export store first (resumable, checked), then each message is written as an .eml file below the folder chosen
                 $a = [Collections.Generic.List[string]]::new()
@@ -182,7 +209,7 @@ function Get-MbtGuiCommand {
             # the folders ticked in a PST or in a folder of .eml files
             if ((Get-MbtGuiProp $Job 'FolderFile') -and $S.ImSrc -in 'pst', 'eml') { $a.AddRange([string[]]@('-FolderFile', (Get-MbtGuiProp $Job 'FolderFile'))) }
             $a.AddRange([string[]]@('-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
-            $a.AddRange([string[]]$conc)
+            $a.AddRange([string[]]$tuning)
             $a.AddRange([string[]]$common)
             $out.Add([pscustomobject]@{ Title = 'Import'; Arguments = $a.ToArray() })
         }
@@ -213,23 +240,92 @@ function Get-MbtGuiCommand {
     return $out.ToArray()
 }
 
+#region The command line an operator can run ------------------------------------------------------------------------------------------------
+
+# What the console passes for its own sake: not an operator's choice, so not in the line that is shown.
+$script:MbtGuiInternalParameter = @('NoPrompt', 'EventsFile', 'StopFile', 'JobId', 'TempPath', 'ConfigPath', 'LogFolder', 'DevelopmentMode')
+# The value a parameter of Invoke-MailboxTransfer.ps1 has when it is not given (the tests compare this table with the parameter block of the script).
+$script:MbtGuiCliDefault = @{ Mailbox = 'Primary'; Concurrency = '4'; MaxAttempts = '3'; ReconcileDelaySeconds = '300'; ReconcileRounds = '3'; PstMaxSizeGB = '50'; Level = 'Automatic'; RepairLevel = 'Rebuild' }
+
+function Split-MbtGuiArgument {
+    <# The flat arguments of a command as pairs: Name (without the dash), Value ($null for a switch). #>
+    param([string[]]$Argument)
+    $pairs = [Collections.Generic.List[object]]::new()
+    $list = @($Argument)
+    for ($i = 0; $i -lt $list.Count; $i++) {
+        $token = [string]$list[$i]
+        if ($token -notmatch '^-[A-Za-z]+$') { continue }
+        $value = $null
+        if (($i + 1) -lt $list.Count -and [string]$list[$i + 1] -notmatch '^-[A-Za-z]+$') { $value = [string]$list[$i + 1]; $i++ }
+        $pairs.Add([pscustomobject]@{ Name = $token.Substring(1); Value = $value })
+    }
+    return $pairs.ToArray()
+}
+
+function Test-MbtGuiDefaultValue {
+    param([string]$Name, [string]$Value)
+    if (-not $script:MbtGuiCliDefault.ContainsKey($Name)) { return $false }
+    $default = $script:MbtGuiCliDefault[$Name]
+    $x = 0.0; $y = 0.0
+    if ([double]::TryParse($Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$x) -and [double]::TryParse($default, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$y)) { return ($x -eq $y) }
+    return ($Value -ieq $default)
+}
+
+function ConvertTo-MbtGuiShownArgument {
+    <#
+        The arguments the console runs, as the arguments an operator would type: without the plumbing of the console (silent sign-in, events, stop file, job id,
+        temporary folder) and without a value that is what the script does anyway. The sign-in of the application is written the short way when it is the one of
+        the configuration file (-AppOnly). Everything else is kept, so the line gives the same result as the run.
+    #>
+    param([Parameter(Mandatory)][string[]]$Argument, [hashtable]$S)
+    $sign = if ($S) { Get-MbtGuiEffectiveSignIn -S $S } else { $null }
+    $out = [Collections.Generic.List[object]]::new()
+    foreach ($p in (Split-MbtGuiArgument $Argument)) {
+        if ($p.Name -in $script:MbtGuiInternalParameter) { continue }
+        if ($null -ne $p.Value -and (Test-MbtGuiDefaultValue $p.Name $p.Value)) { continue }
+        if ($sign -and $p.Name -eq 'CertificateThumbprint' -and -not $sign.ThumbChanged) { $out.Add([pscustomobject]@{ Name = 'AppOnly'; Value = $null }); continue }
+        if ($sign -and $p.Name -eq 'TenantId' -and -not $sign.TenantChanged) { continue }
+        if ($sign -and $p.Name -eq 'ClientId' -and -not $sign.ClientChanged) { continue }
+        $out.Add($p)
+    }
+    return $out.ToArray()
+}
+
+function Format-MbtGuiCommandToken {
+    param([string]$Text)
+    if ($Text -match '[\s;&()$''`"]') { return ("'" + $Text.Replace("'", "''") + "'") }
+    return $Text
+}
+
+function ConvertTo-MbtGuiCommandLine {
+    <# One line of PowerShell per command of the task, as an operator would type it in the folder of the tool. #>
+    param([Parameter(Mandatory)][object[]]$Command, [hashtable]$S)
+    $lines = foreach ($c in $Command) {
+        $tokens = [Collections.Generic.List[string]]::new(); $tokens.Add('.\Invoke-MailboxTransfer.ps1')
+        foreach ($p in (ConvertTo-MbtGuiShownArgument -Argument @($c.Arguments) -S $S)) {
+            $tokens.Add('-' + $p.Name)
+            if ($null -ne $p.Value) { $tokens.Add((Format-MbtGuiCommandToken $p.Value)) }
+        }
+        $tokens -join ' '
+    }
+    return ($lines -join "`n")
+}
+
+#endregion
+
 function New-MbtGuiJob {
     <# The job object: folder, paths of its files, the commands still to run, the child process. #>
-    param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)][string]$Task, [string]$EntryScript, [string]$StorePath, [string[]]$SelectionFiles = @(), [string]$ConfigText, [string]$JobName)
+    param([Parameter(Mandatory)][string]$WorkFolder, [Parameter(Mandatory)][string]$Task, [string]$EntryScript, [string]$StorePath, [string[]]$SelectionFiles = @(), [string]$JobName, [string]$SelectionBase)
     $id = New-MbtGuiJobId
     $dir = New-MbtGuiJobFolder -WorkFolder $WorkFolder -Task $Task -Id $id
     $job = @{
         Id = "$Task-$id"; Task = $Task; Folder = $dir; EntryScript = $EntryScript
         EventsPath = Join-Path $dir 'events.jsonl'; StopPath = Join-Path $dir 'stop.request'; StatusPath = Join-Path $dir 'status.json'
-        StdOut = Join-Path $dir 'stdout.txt'; StdErr = Join-Path $dir 'stderr.txt'; ConfigPath = $null
+        StdOut = Join-Path $dir 'stdout.txt'; StdErr = Join-Path $dir 'stderr.txt'; SelectionBase = $SelectionBase
         StorePath = $(if ($StorePath) { $StorePath } else { Join-Path $WorkFolder 'stores\default' }); SelectionFiles = $SelectionFiles
         JobName = $(if ($JobName) { $JobName } else { "import-$id" })
         FolderFile = $null; ItemsFile = $null
         Offset = 0L; Process = $null; Queue = [Collections.Generic.Queue[object]]::new(); Started = [datetime]::UtcNow; StopAsked = $null; Exited = $false; ExitCode = $null; Fake = $false
-    }
-    if ($ConfigText) {
-        $job.ConfigPath = Join-Path $dir 'effective.config.psd1'
-        Set-Content -LiteralPath $job.ConfigPath -Value $ConfigText -Encoding utf8
     }
     return $job
 }
@@ -402,10 +498,11 @@ function ConvertTo-MbtGuiCsvRow {
 
 function Write-MbtGuiRunReport {
     <#
-        The report of a finished run, CSV and JSON (an HTML report is for later): report.json and report.csv in the job folder; for a repair also
-        <new file>.repair-report.csv / .json next to the new file. Returns the paths written.
+        The report of a finished run: report.json and report.csv in the job folder, and report.html (the chronology of the job, written from its events.jsonl, which links the CSV and the JSON);
+        for a repair also <new file>.repair-report.csv / .json next to the new file. Returns the paths written. -NoHtml leaves report.html out: the page of a job of 50,000 folders takes about a minute, so
+        the console has the worker write it (Complete-MbtGuiRun).
     #>
-    param([Parameter(Mandatory)]$Run, [Parameter(Mandatory)][string]$Folder, [string]$Task, [string]$RepairDestination)
+    param([Parameter(Mandatory)]$Run, [Parameter(Mandatory)][string]$Folder, [string]$Task, [string]$RepairDestination, [switch]$NoHtml)
     $null = New-Item -ItemType Directory -Force -Path $Folder
     $rows = [Collections.Generic.List[object]]::new()
     foreach ($s in $Run.Steps) { $rows.Add([pscustomobject]@{ Kind = 'step'; Step = $s.Id; Key = $s.Title; State = $s.State; Done = $s.Done; Total = $s.Total; Message = $s.Msg }) }
@@ -430,14 +527,48 @@ function Write-MbtGuiRunReport {
         $rows | ConvertTo-MbtGuiCsvRow | Export-Csv -LiteralPath $t.Csv -NoTypeInformation -Encoding utf8
         $written.Add($t.Json); $written.Add($t.Csv)
     }
+    if (-not $NoHtml -and (Test-Path -LiteralPath (Join-Path $Folder 'events.jsonl') -PathType Leaf)) {
+        try { $written.Add((Write-MbtJobHtmlReport -Folder $Folder)) } catch { Write-Verbose "The HTML report could not be written: $($_.Exception.Message)" }
+    }
     return $written.ToArray()
 }
 
+function Open-MbtGuiJobOverview {
+    <#
+        "All jobs": writes <work folder>\jobs\overview.html again from the status of every job (the worker does it, the window stays alive), then opens it in the browser. The
+        demonstration writes nothing, and the dialog says so.
+    #>
+    $g = $script:Gui
+    $say = { param([string]$Title, [string]$Body) Show-MbtGuiDialog -Title $Title -Body $Body -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $open = { param($path) if ($path -and (Test-Path -LiteralPath ([string]$path))) { Start-Process -FilePath ([string]$path) } else { & $say 'Nothing to open here' 'No file was written: this is the demonstration.' } }.GetNewClosure()
+    $fail = { param($message) & $say 'The overview of all the jobs could not be written' ([string]$message) }.GetNewClosure()
+    try { & $g.Engine.JobOverview $g.S.WorkFolder $open $fail }
+    catch { & $fail $_.Exception.Message }
+}
+
+function Get-MbtGuiReportPath {
+    <#
+        The report the Done page opens: report.html when the job has one (written by the command line at the end of the job, and again by the console beside the CSV), else report.csv
+        (a job of an older version has only the CSV). -Reports are the files the console wrote for this run, -Folder the job folder. Null without either.
+    #>
+    param([string[]]$Reports = @(), [string]$Folder)
+    $html = @($Reports | Where-Object { $_ -like '*.html' } | Select-Object -First 1)
+    if ($html.Count -and (Test-Path -LiteralPath $html[0] -PathType Leaf)) { return $html[0] }
+    if ($Folder) {
+        $inFolder = [IO.Path]::Combine($Folder, 'report.html')
+        if (Test-Path -LiteralPath $inFolder -PathType Leaf) { return $inFolder }
+    }
+    $csv = @($Reports | Where-Object { $_ -like '*.csv' } | Select-Object -First 1)
+    if ($csv.Count) { return $csv[0] }
+    if ($Folder) { return [IO.Path]::Combine($Folder, 'report.csv') }
+    return $null
+}
+
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDBeHpZb5G+vbN8
-# y3fWUkjfWq3ZQR+y9Gz/1B3jlUC2HqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCJ+M48ZqqfGzFz
+# bjo7SHNte0DRzuZP4lX2fI6iOtPmdqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -509,28 +640,28 @@ function Write-MbtGuiRunReport {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAH0aFyG7Rt
-# cM6D+c2QaJO0yNvgNg0zSwn7kX0BmrBYLTANBgkqhkiG9w0BAQEFAASCAgCrOuIa
-# Cdbct0iE03t2r/yyS5T+NRuHBvRqTc9JeXkmM70cyy6Q09TGqhTHF4ld1LtwN0En
-# hMzzdpbV9GexOnS4UA91BvxyLRQ/JE4eiv/izG+VmowRFaEfJOA6LE3dH1Yk4yQJ
-# 7jl2H7JIOmZGISXd/OqD6ML81JODKHXncBd33J2TFAQaB8aD5+KBgzkeddjiqhDa
-# c4qoSdwgF5Nxosq/q2+tv918ogI9Odk/iK8+PkU7g66T1Qs31MdDMhKu9eU3fTH4
-# IKZqPF+HzTt/7VHtha0CdEMO83OVveYaoThFYTUCN/w/nHdskq0E4tcSdgKnxgMl
-# O/asgZ2vZMw1IZoA+635b6eImkyKkkmbe45Uw5BilHdmVkH4scMEXqJ1xy0WzdfH
-# YMq7ECijKhK8/H6cbbObqD9G/LCDX7hZsCFEG0XHlzpeNLdx1c+zqBqBoBROg/kB
-# 21bHY6ctpf7LCs/VuxhvJs1VkJmdJ1z1qzJq0uF9P4E7iqzslUMPDWzx2RWnZ3vH
-# jLW7wfoP8A0+eYyKGU/QR9+ABYLBCa6mdibrm6Uno187/+c3RSOJpAFXeOyamYkE
-# XqRANT89cplpIxzLHg6cwp3W3FyycG4ynY/2rjdY5ZnlYztK8njfhB/1LMYc8GVR
-# eKLAIoQF/OvIRkVFfYHS9O37rWTLRka/hnrCTKGCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBznngP0j5n
+# g68KzrHh2exsFFI8s9dfVTKku8Pc64ThfjANBgkqhkiG9w0BAQEFAASCAgBLIgOv
+# BDo/F6/QLZjxLQVY4Qki4UzWQ4Q2aV8hSHwfzCeVH452VqIzHDf6e3n58WE+oGiB
+# w1UhF6q4rY7NADGks4dCRmS9eJXIUVg7+F+LtGyODFCey7iqo0oJxiOfAvrLccQ7
+# JXANYTeSebN53vBKoJWmkmf2Czc+o7tZjAvzzVMBtftE7ut/hKVxYRIKUidU3/EC
+# lAjANxIusGXvSfUwF/QpKRA++ejwZ6WJGUzLfuBVeULr9HpQZ3pemlRWt/Y/Qdda
+# yQbt+WpXjc2DFrApSf5x34ULMpLXZl4YQOgYdLXHY5eCje0DP3JYhX/0RCFgqVcA
+# 2KE8lYspkKyWUV9DpZVCn7YJurtTeAMREqwnPOVvVNPMrTM8EjV6Jl1ZQtr986xz
+# 2K+p70ig2qMFSnX0LK5FLj0sA1wUGS6QnKwU3UEIFXt13DjotE5un0HGYAuj9YZ7
+# ZKZLvTSBHYrmBhjsIHFTJb8BSZeeMWpu3/zh3CdkdNB2mK1JaUpaUFH0n9Wk6btk
+# DwC9oGw/EEG7J2f1Pwj/R97ayXMG81CAaC30Y/8Fy46+alwhfI8cpABKvaQeTMEO
+# HOjB6cCSm+icgjCz+oDv3vMHUShQF16weP1GZvt5Ke5fZod69KryTc9hCGVsaFWs
+# 9bPcYeZpLibqARaqrB0H7XUg5add4AUA4c1GTKGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIN1NEFn/4/kE3IT3ZOV+cbrCi2IraQXRzUr46wuLcxiAAggDBlTVZFxq
-# ZRgPMjAyNjExMTAwODIyMjVaMAMCAQECEGUYjL1iMJ/sZfIJuvyfa32gghGnMIIE
+# BAIBBQAEICILgoG/4Y9Xouy+SFIFgzT1H1CmApGX6oCWV5sOVkxqAggOhAjvoQCH
+# gRgPMjAyNjExMTUxNDM1MTZaMAMCAQECEFU1E2TDP7b0mQ5f8y6R4KqgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -625,17 +756,17 @@ function Write-MbtGuiRunReport {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIyNVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBm7
-# caClpaKSF7hZOAbQdKAY4yHKc9y/7ieaNQOAtmCxMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUxNlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINcJ
+# wdWQfpE8Fw2S5kRpOtPZI5XQieuQY3oq9yP3BvKNMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEA0bYZ/7FwG9EKEjBk2VUTvX8rSzY1flJcjgrjQTTuEGECIQCR
-# XQ+a2lr9MqDUeh/UOBqY3gOI4mQcQxvfB9FvbHw02w==
+# zj0EAwIERzBFAiEA80Smuu1zCDgOrHpX0dlheceFP/6Jg3KvjamVI0vJugICIE0t
+# /tcENh8L870osGwDkpz93etxWTGbNlYQhT6/bnFU
 # SIG # End signature block

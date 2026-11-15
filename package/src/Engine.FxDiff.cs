@@ -2,7 +2,7 @@
 //  Mailbox Transfer - engine, part 5g: difference between a message sent to Exchange and the same message exported again
 // -----------------------------------------------------------------------------
 //  FxDiff.Compare(sent, got) lists, property by property, what Exchange kept (nothing listed), changed, dropped or added. Used by the
-//  import-from-PST verification of the lab tools (tools\Test-PstImportLive.ps1) and by the tests; the result is a plain list, so a UI
+//  import-from-PST verification of the tools of the repository (tools\Test-PstImportLive.ps1) and by the tests; the result is a plain list, so a UI
 //  can show it. Recipients and attachments are matched by position, embedded messages follow their attachment.
 //  A string compares by text (the terminator and the string8 / Unicode form do not count), everything else byte for byte; a value that
 //  is lazy is compared in pieces (never held whole).

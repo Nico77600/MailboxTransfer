@@ -135,19 +135,22 @@ Describe 'Names and settings' {
     It 'says the name in plain words' {
         Test-MbtGuiPstName 'aux.pst' | Should -Be '"AUX" is a name Windows keeps for itself. Choose another file name.'
     }
-    It 'writes an effective configuration of the changes only, nothing when nothing changed' {
-        Get-MbtGuiEffectiveConfig -State @{ Changed = @{} } | Should -BeNullOrEmpty
-        $t = Get-MbtGuiEffectiveConfig -State @{ Changed = @{ Tries = $true; Retry = $true }; Tries = 3; Retry = 5 }
-        $t | Should -Match 'MaxAttempts = 3'
-        $t | Should -Match 'BaseBackoffSeconds = 5'
-        $f = Join-Path $TestDrive 'eff.psd1'; Set-Content -LiteralPath $f -Value $t
-        { Import-PowerShellDataFile -LiteralPath $f } | Should -Not -Throw
+    It 'the settings changed for one run go to the command line as parameters, and only when they were changed; no configuration file is written' {
+        $s = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Dest = 'store'; OutFolder = 'D:\Out'; Conc = 4; Tries = 3; Retry = 2; Reconcile = 5; Awake = $false; Changed = @{} }
+        $j = @{ Id = 'job-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; StorePath = 'D:\Store'; SelectionFiles = @('D:\Sel\a.json') }
+        (Get-MbtGuiCommand -Task export -S $s -Job $j)[0].Arguments | Should -Not -Contain '-RetryWaitSeconds'
+        $s.Changed['Retry'] = $true; $s.Retry = 5; $s.Tries = 4
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $j)[0].Arguments
+        $a[($a.IndexOf('-RetryWaitSeconds') + 1)] | Should -Be '5'
+        $a[($a.IndexOf('-MaxAttempts') + 1)] | Should -Be '4'
+        $a | Should -Not -Contain '-ConfigPath'
+        Get-Command Get-MbtGuiEffectiveConfig -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 }
 
 Describe 'Commands of a job' {
     BeforeAll {
-        $script:S = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Shared = ''; ImShared = ''; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'adele.pst'; SplitGB = 20; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 6; Reconcile = 5; Awake = $true; ImSrc = 'store'; ImPath = 'D:\Store'; TgtLoc = 'Archive'; TgtMode = 'new'; TgtName = 'Imported x'; Mapping = ''; RpPath = 'D:\a.pst'; RpDest = 'D:\a.repaired.pst'; RpLevel = 'Automatic'; RpKeep = $false; Changed = @{} }
+        $script:S = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Shared = ''; ImShared = ''; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'adele.pst'; SplitGB = 20; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 3; Reconcile = 5; Awake = $true; ImSrc = 'store'; ImPath = 'D:\Store'; TgtLoc = 'Archive'; TgtMode = 'new'; TgtName = 'Imported x'; Mapping = ''; RpPath = 'D:\a.pst'; RpDest = 'D:\a.repaired.pst'; RpLevel = 'Automatic'; RpKeep = $false; Changed = @{} }
         $script:Job = @{ Id = 'job-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; ConfigPath = $null; StorePath = 'D:\Store'; SelectionFiles = @('D:\J\selection-1.json'); JobName = 'import-1' }
     }
     It 'builds the export command from controls: selection file, store, PST size, events, stop, keep awake' {
@@ -172,16 +175,16 @@ Describe 'Commands of a job' {
             $a[($a.IndexOf('-ClientId') + 1)] | Should -Be '11111111-2222-3333-4444-555555555555'
             $a[($a.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'adele@contoso.com' -Because 'the mailbox of the card is the target mailbox'
         }
-        Get-MbtGuiEffectiveConfig -State $s | Should -BeNullOrEmpty
     }
     It 'the plan is the same request with -WhatIf' {
         (Get-MbtGuiCommand -Task export -S $script:S -Job $script:Job -Plan)[0].Arguments | Should -Contain '-WhatIf'
     }
-    It 'several locations: one export each, then one PST write' {
-        $j = $script:Job.Clone(); $j.SelectionFiles = @('a.json', 'b.json')
-        $c = @(Get-MbtGuiCommand -Task export -S $script:S -Job $j)
-        $c.Count | Should -Be 3
-        $c[2].Arguments | Should -Contain 'ExportPst'
+    It 'several locations: one command, with one selection file for all of them and the PST written by the same command' {
+        $c = @(Get-MbtGuiCommand -Task export -S $script:S -Job $script:Job)
+        $c.Count | Should -Be 1
+        $c[0].Arguments | Should -Contain '-OutputPst'
+        $c[0].Arguments | Should -Not -Contain 'ExportPst'
+        @($c[0].Arguments | Where-Object { $_ -eq '-SelectionFile' }).Count | Should -Be 1
     }
     It 'builds the import command with the job name, the new folder and the reconcile delay in seconds' {
         $a = (Get-MbtGuiCommand -Task import -S $script:S -Job $script:Job)[0].Arguments
@@ -306,7 +309,7 @@ Describe 'Capabilities of the engine adapter' {
         foreach ($n in 'PstImport', 'EmlExport', 'EmlImport', 'SharedMailbox', 'PstExport', 'PstCheck', 'PstRepair', 'Events', 'FolderChoice', 'PstCopy', 'PstPreview') { $c.$n | Should -BeTrue -Because $n }
         $entry = Get-Command (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1')
         foreach ($p in 'PstPath', 'EmlPath', 'MailboxId', 'TargetRoot', 'EventsFile', 'StopFile', 'KeepAwake', 'NoPrompt', 'TempPath') { $entry.Parameters.ContainsKey($p) | Should -BeTrue -Because $p }
-        $s = @{ Task = 'export'; OpPath = 'D:\open.pst'; Mailbox = 'adele@contoso.com'; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'a.pst'; SplitGB = 20; CheckEach = $true; SepAux = $true; Conc = 4; Tries = 6; Reconcile = 5; Awake = $true; ImSrc = 'pst'; ImPath = 'D:\a.pst'; ImShared = 'p@contoso.com'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Mapping = 'D:\m.psd1'; RpPath = 'D:\a.pst'; RpDest = 'D:\b.pst'; RpLevel = 'Automatic'; RpKeep = $true; Changed = @{} }
+        $s = @{ Task = 'export'; OpPath = 'D:\open.pst'; Mailbox = 'adele@contoso.com'; Dest = 'pst'; OutFolder = 'D:\Out'; OutName = 'a.pst'; SplitGB = 20; CheckEach = $true; SepAux = $true; Conc = 4; Tries = 3; Reconcile = 5; Awake = $true; ImSrc = 'pst'; ImPath = 'D:\a.pst'; ImShared = 'p@contoso.com'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Mapping = 'D:\m.psd1'; RpPath = 'D:\a.pst'; RpDest = 'D:\b.pst'; RpLevel = 'Automatic'; RpKeep = $true; Changed = @{} }
         $j = @{ Id = 'job-1'; Folder = 'D:\J'; EventsPath = 'D:\J\e.jsonl'; StopPath = 'D:\J\s'; ConfigPath = 'D:\J\c.psd1'; StorePath = 'D:\Store'; SelectionFiles = @('D:\J\sel.json'); JobName = 'j'; FolderFile = 'D:\J\folders.txt'; ItemsFile = 'D:\J\items.txt' }
         $modes = @($entry.Parameters['Mode'].Attributes.Where({ $_ -is [Management.Automation.ValidateSetAttribute] }).ValidValues)
         foreach ($case in @(@('export', 'pst'), @('export', 'eml'), @('export', 'store'), @('import', 'pst'), @('import', 'eml'), @('import', 'store'), @('repair', ''), @('check', ''), @('copy', 'pst'))) {
@@ -357,7 +360,7 @@ Describe 'Folders of a PST or of .eml files, numbers of the plan, items refused 
         Write-MbtGuiFolderFiles -Job $j -Choice ([pscustomobject]@{ Include = @('Inbox', 'Old, mail'); Exclude = @('Inbox/*'); Nids = @([uint32]7) })
         Get-Content -LiteralPath $j.FolderFile -Encoding utf8 | Should -Be @('+Inbox', '+Old, mail', '-Inbox/*')
         Get-Content -LiteralPath $j.ItemsFile | Should -Be @('7')
-        $s = @{ Task = 'import'; Mailbox = 'a@contoso.com'; ImSrc = 'pst'; ImPath = 'D:\a.pst'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Conc = 4; Tries = 6; Reconcile = 5; Awake = $true; Changed = @{}; Mapping = ''; ImShared = '' }
+        $s = @{ Task = 'import'; Mailbox = 'a@contoso.com'; ImSrc = 'pst'; ImPath = 'D:\a.pst'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'X'; Conc = 4; Tries = 3; Reconcile = 5; Awake = $true; Changed = @{}; Mapping = ''; ImShared = '' }
         $a = (Get-MbtGuiCommand -Task import -S $s -Job $j)[0].Arguments
         $a[($a.IndexOf('-FolderFile') + 1)] | Should -Be $j.FolderFile
         $s.ImSrc = 'store'
@@ -368,7 +371,7 @@ Describe 'Folders of a PST or of .eml files, numbers of the plan, items refused 
     It 'the copy command reads the open PST and writes new PST files, with the folders and messages ticked' {
         $j = New-MbtGuiJob -WorkFolder $TestDrive -Task copy -EntryScript 'x.ps1'
         Write-MbtGuiFolderFiles -Job $j -Choice ([pscustomobject]@{ Include = @('Inbox'); Exclude = @(); Nids = @([uint32]5) })
-        $s = @{ Task = 'copy'; OpPath = 'D:\open.pst'; OutFolder = 'D:\Out'; OutName = 'copy.pst'; SplitGB = 20; CheckEach = $false; Conc = 4; Tries = 6; Awake = $true; Changed = @{} }
+        $s = @{ Task = 'copy'; OpPath = 'D:\open.pst'; OutFolder = 'D:\Out'; OutName = 'copy.pst'; SplitGB = 20; CheckEach = $false; Conc = 4; Tries = 3; Awake = $true; Changed = @{} }
         $a = (Get-MbtGuiCommand -Task copy -S $s -Job $j)[0].Arguments
         $a[($a.IndexOf('-Mode') + 1)] | Should -Be 'ExportPst'
         $a[($a.IndexOf('-PstPath') + 1)] | Should -Be 'D:\open.pst'
@@ -422,6 +425,50 @@ Describe 'Folders of a PST or of .eml files, numbers of the plan, items refused 
     }
 }
 
+Describe 'Singular and plural in the words of the console' {
+    It 'a count with its noun: 0 and 2 are plural, 1 is singular, the thousands are grouped, an irregular plural is given' {
+        Format-MbtGuiQuantity 0 'location' | Should -Be '0 locations'
+        Format-MbtGuiQuantity 1 'location' | Should -Be '1 location'
+        Format-MbtGuiQuantity 2 'location' | Should -Be '2 locations'
+        Format-MbtGuiQuantity 1234 'item' | Should -Be '1,234 items'
+        Format-MbtGuiQuantity 1 'entry' 'entries' | Should -Be '1 entry'
+        Format-MbtGuiQuantity 2 'entry' 'entries' | Should -Be '2 entries'
+        Format-MbtGuiCount 1234 | Should -Be '1,234'
+    }
+    It 'the word alone, for a noun or a verb' {
+        Get-MbtGuiPlural 1 'item' | Should -Be 'item'
+        Get-MbtGuiPlural 0 'item' | Should -Be 'items'
+        Get-MbtGuiPlural 1 'is' 'are' | Should -Be 'is'
+        Get-MbtGuiPlural 3 'is' 'are' | Should -Be 'are'
+    }
+    It 'the totals of a plan and the size of a selection agree with the count' {
+        Format-MbtGuiPlanTotals ([pscustomobject]@{ Items = 1; Folders = 1; Bytes = [long](2GB); UnknownSize = 0 }) | Should -Be '1 item in 1 folder, 2 GiB'
+        Format-MbtGuiPlanTotals ([pscustomobject]@{ Items = 2; Folders = 2; Bytes = [long](2GB); UnknownSize = 1 }) | Should -Be '2 items in 2 folders, 2 GiB + 1 folder of unknown size'
+        Format-MbtGuiSelectionSize ([pscustomobject]@{ Bytes = [long](1GB); UnknownSize = 1 }) | Should -Be '1 GiB + 1 folder of unknown size'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 1; SubtreeUnread = $false }) -WithNoun | Should -Be '1 item'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 2; SubtreeUnread = $true }) -WithNoun | Should -Be 'at least 2 items'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 1500; SubtreeUnread = $false }) -WithNoun | Should -Be '1,500 items'
+    }
+    It 'the title of the refused items: the item, all of them, or the first of many' {
+        Format-MbtGuiRefusedSummary 1 1 | Should -Be 'The refused item'
+        Format-MbtGuiRefusedSummary 3 3 | Should -Be 'The 3 refused items'
+        Format-MbtGuiRefusedSummary 25 1234 | Should -Be 'The first 25 of 1,234 refused items'
+        Format-MbtGuiRefusedSummary 1 5 | Should -Be 'The first of 5 refused items'
+    }
+    It 'the title of the messages a repair could not recover whole' {
+        Format-MbtGuiIncompleteSummary 1 | Should -Be 'The message that is not complete'
+        Format-MbtGuiIncompleteSummary 3 | Should -Be 'The 3 messages that are not complete'
+    }
+    It 'the sentences with a verb agree with the count' {
+        Format-MbtGuiDecisionTitle 1 | Should -Be '1 item needs your decision'
+        Format-MbtGuiDecisionTitle 2 | Should -Be '2 items need your decision'
+        Format-MbtGuiStillToDo 1 | Should -Be '1 item is still to do.'
+        Format-MbtGuiStillToDo 2000 | Should -Be '2,000 items are still to do.'
+        Format-MbtGuiProgressOf 0 1 | Should -Be '0 of 1 item'
+        Format-MbtGuiProgressOf 5 1208 | Should -Be '5 of 1,208 items'
+    }
+}
+
 Describe 'Report' {
     It 'writes CSV and JSON of a finished run, and next to the new file for a repair' {
         $r = New-MbtGuiRun -Task repair -Title 'Repair x'
@@ -436,5 +483,382 @@ Describe 'Report' {
         $j.exitCode | Should -Be 0
         @($j.rows | Where-Object Kind -EQ 'item').Count | Should -Be 1
         (Import-Csv -LiteralPath (Join-Path $TestDrive 'job\report.csv')).Count | Should -Be 2
+    }
+}
+
+Describe 'The report of a run is written in the background' {
+    It 'report.json and report.csv are written at once; report.html only when it is not left to the worker' {
+        $r = New-MbtGuiRun -Task export -Title 'Export x'
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'd'; title = 'Download the items' }) }
+        Add-Evt $r result -Fields @{ exit = 0; counts = [pscustomobject]@{ done = 5 } }
+        $folder = Join-Path $TestDrive 'bg-job'
+        $null = New-Item -ItemType Directory -Force -Path $folder
+        Set-Content -LiteralPath (Join-Path $folder 'events.jsonl') -Value '{"v":1,"t":"2026-11-12T10:00:00.000Z","e":"plan","steps":[{"id":"d","title":"Download the items"}]}'
+        $files = @(Write-MbtGuiRunReport -Run $r -Folder $folder -Task export -NoHtml)
+        $files.Count | Should -Be 2
+        (Join-Path $folder 'report.json') | Should -Exist
+        (Join-Path $folder 'report.csv') | Should -Exist
+        (Join-Path $folder 'report.html') | Should -Not -Exist
+        @(Write-MbtGuiRunReport -Run $r -Folder $folder -Task export).Count | Should -Be 3
+        (Join-Path $folder 'report.html') | Should -Exist
+    }
+    It 'the end of a run leaves report.html to the worker, says so on the Done page, and writes the overview when the report is there' {
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport [^\r\n]*-NoHtml.*?\$g\.ReportState = ''writing''.*?\$reportDone = \{.*?\$g\.Engine\.JobOverview \$work.*?& \$g\.Engine\.JobReport \$g\.Job\.Folder \$reportDone'
+        $run | Should -Match '(?s)\$openReport = \{.*?ReportState -eq ''writing''.*?The report is being written.*?Get-MbtGuiReportPath'
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1') -Raw) | Should -Match '(?s)\$e\.JobReport = .*?-OnDone \{ param\(\$res\) & \$OnDone @\(\$res\)\[0\] \}.*?Write-MbtJobHtmlReport -Folder \$folder'
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Fake.ps1') -Raw) | Should -Match '\$engine\.JobReport = \{ param\(\$Folder, \$OnDone, \$OnError\) & \$OnDone \$null \}'
+    }
+}
+
+Describe 'Results of the engine handed to the pages' {
+    It 'the worker hands an array: an engine call whose page expects one object unwraps it (the sign-in gives one object, never an array)' {
+        $file = Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1'
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+        $raw = foreach ($call in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Start-MbtGuiWork' }, $true)) {
+            $i = [array]::FindIndex([object[]]$call.CommandElements, [Predicate[object]] { param($x) $x -is [Management.Automation.Language.CommandParameterAst] -and $x.ParameterName -eq 'OnDone' })
+            if ($i -ge 0 -and $call.CommandElements[$i + 1].Extent.Text -eq '$OnDone') {
+                $assign = $call.Parent; while ($assign -and $assign -isnot [Management.Automation.Language.AssignmentStatementAst]) { $assign = $assign.Parent }
+                $assign.Left.Extent.Text
+            }
+        }
+        @($raw | Sort-Object) | Should -Be @('$e.SaveSelection', '$e.SaveSelections') -Because 'these two hand a path that the page reads as an array; every other call gives @($res)[0]'
+        (Get-Content -LiteralPath $file -Raw) | Should -Match '(?s)\$e\.SignIn = .*?-OnDone \{ param\(\$res\) & \$OnDone @\(\$res\)\[0\] \}'
+    }
+    It 'a page step that fails after an engine call is written down, not raised' {
+        $record = try { throw 'boom' } catch { $_ }
+        { Write-MbtGuiFault 'OnDone' $record } | Should -Not -Throw
+    }
+}
+
+Describe 'Rows built in a loop' {
+    BeforeAll {
+        # The rows of a table are written "foreach (...) { , @(cell, cell, cell) }". A loop that runs once gives its one row as the three cells, not as a list of one row, unless the
+        # assignment wraps it: $rows = @(foreach ...). This finds every assignment of the result of a loop (or of ForEach-Object, or of a script block) that emits a row with the comma
+        # and does not wrap it.
+        function Find-UnwrappedRow {
+            param([string]$Path, [string]$Code)
+            $tokens = $null; $errors = $null
+            $ast = if ($Code) { [Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tokens, [ref]$errors) } else { [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors) }
+            $loops = @('ForEachStatementAst', 'ForStatementAst', 'WhileStatementAst', 'DoWhileStatementAst', 'DoUntilStatementAst')
+            foreach ($assign in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Operator -eq 'Equals' }, $true)) {
+                $rhs = $assign.Right
+                foreach ($comma in $rhs.FindAll({ param($n) $n -is [Management.Automation.Language.ArrayLiteralAst] -and $n.Elements.Count -eq 1 -and $n.Extent.Text.StartsWith(',') }, $true)) {
+                    # emitted: the comma is the expression of a statement (alone, or in parentheses)
+                    $at = $comma.Parent
+                    if ($at -is [Management.Automation.Language.ParenExpressionAst]) { $at = $at.Parent }
+                    if ($at -isnot [Management.Automation.Language.CommandExpressionAst]) { continue }
+                    # and the statement is in a loop, a ForEach-Object block or a script block that the right side runs, with no @( ) around it
+                    $inside = $false; $wrapped = $false; $up = $comma.Parent
+                    while ($up -and -not [object]::ReferenceEquals($up, $rhs.Parent)) {
+                        if ($up.GetType().Name -in $loops -or $up -is [Management.Automation.Language.ScriptBlockExpressionAst]) { $inside = $true }
+                        if ($up -is [Management.Automation.Language.ArrayExpressionAst]) { $wrapped = $true }
+                        $up = $up.Parent
+                    }
+                    if ($inside -and -not $wrapped) { "$(if ($Path) { Split-Path $Path -Leaf }):$($assign.Extent.StartLineNumber): $($assign.Left.Extent.Text)"; break }
+                }
+            }
+        }
+    }
+    It 'finds the assignments whose single row would be read as its cells, and leaves the wrapped ones' {
+        $code = @'
+$a = foreach ($x in 1) { , @($x, 2) }
+$b = @(foreach ($x in 1) { , @($x, 2) })
+$c = $list | ForEach-Object { , @($_, 2) }
+$d = for ($i = 0; $i -lt 1; $i++) { , @($i, 2) }
+$e = foreach ($x in 1) { if ($x) { , @(1, 2) } }
+$f = & { foreach ($x in 1) { (, @(1, 2)) } }
+$g = , @(1, 2)
+$h = foreach ($x in 1) { @(1, 2) }
+$i = @($list | ForEach-Object { , @($_, 2) })
+'@
+        $found = @(Find-UnwrappedRow -Code $code)
+        @($found | ForEach-Object { ($_ -split ': ')[1] }) | Should -Be @('$a', '$c', '$d', '$e', '$f')
+    }
+    It 'no table of the console is built from a loop that gives a bare row: every list of rows is $rows = @(...)' {
+        $found = foreach ($file in Get-ChildItem -LiteralPath (Join-Path $script:Package 'module') -Filter '*.ps1') { Find-UnwrappedRow -Path $file.FullName }
+        @($found) | Should -BeNullOrEmpty -Because 'a loop that runs once would hand New-GuiTable its one row as three cells'
+    }
+}
+
+Describe 'What a job that has not counted an item yet shows' {
+    It 'the plan check says what the engine does and for how long' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }, [pscustomobject]@{ id = 'list'; title = 'List the items' }) }
+        $t0 = [datetime]::UtcNow.AddSeconds(-34)
+        Get-MbtGuiPlanProgressText -Run $r -Started $t0 | Should -Be 'nothing is changed, 34 s' -Because 'before the first word of the engine'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = 'Signing in to Microsoft' }
+        Get-MbtGuiPlanProgressText -Run $r -Started $t0 -Now $t0.AddSeconds(3) | Should -Be 'Signing in to Microsoft, 3 s'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = '1,240 folders read' }
+        Get-MbtGuiPlanProgressText -Run $r -Started $t0 -Now $t0.AddSeconds(95) | Should -Be '1,240 folders read, 1 min 35 s'
+        Get-MbtGuiPlanProgressText -Run $null -Started $null | Should -Be 'nothing is changed'
+    }
+    It 'says nothing about a step that is not running' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }) }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'done'; msg = '4,443 folders read' }
+        Get-MbtGuiRunningNote $r | Should -Be ''
+    }
+    It 'the head of the Run page says Preparing, with what is read, until the first item is counted' {
+        $r = New-MbtGuiRun -Task export
+        Get-MbtGuiPreparingText $r | Should -Be '**Preparing.** Connecting to Microsoft and reading what you chose.' -Because 'no event yet'
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }, [pscustomobject]@{ id = 'list'; title = 'List the items you chose' }) }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running' }
+        Get-MbtGuiPreparingText $r | Should -Be '**Preparing.** Read the folder tree.'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = '1,240 folders read' }
+        Get-MbtGuiPreparingText $r | Should -Be '**Preparing.** 1,240 folders read.'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'done'; msg = '4,443 folders read' }
+        Add-Evt $r step -Fields @{ id = 'list'; state = 'running'; total = 15; done = 0 }
+        Get-MbtGuiPreparingText $r | Should -Be '' -Because 'the items are counted'
+    }
+    It 'no Preparing hint once the job ended or was stopped' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r result -Fields @{ exit = 1 }
+        Get-MbtGuiPreparingText $r | Should -Be ''
+        $s = New-MbtGuiRun -Task export
+        Add-Evt $s slept -Fields @{ from = [datetime]::UtcNow.AddHours(-1).ToString('o'); to = [datetime]::UtcNow.ToString('o'); seconds = 3600 }
+        Get-MbtGuiPreparingText $s | Should -Be ''
+    }
+    It 'a step that runs is drawn with the play icon and one that waits with the clock' {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1')
+        (Get-MbtGuiStepTone @{ State = 'running' } 'running')[1] | Should -Be 'play'
+        (Get-MbtGuiStepTone @{ State = 'waiting' } 'running')[1] | Should -Be 'clock'
+        (Get-MbtGuiStepTone @{ State = 'done' } 'running')[1] | Should -Be 'check'
+    }
+}
+
+Describe 'The text beside Start on a Verify page' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1')
+        function Get-MbtGuiScreen { return $script:Screen }
+    }
+    BeforeEach { $script:Gui = @{ S = @{ PlanState = 'idle'; Confirmed = $false } } }
+    It 'says why Start waits while the plan is being checked, and before the check begins' -ForEach @('exPlan', 'imPlan', 'cpPlan') {
+        $script:Screen = $_
+        foreach ($state in 'idle', 'checking') {
+            $script:Gui.S.PlanState = $state
+            Get-MbtGuiPlanFooter | Should -Be 'Start unlocks when the plan is checked.'
+        }
+    }
+    It 'says the plan cannot be used when the service refused it' {
+        $script:Screen = 'exPlan'; $script:Gui.S.PlanState = 'error'
+        Get-MbtGuiPlanFooter | Should -Be 'The plan cannot be used. Press Check again, or go back and change your choice.'
+    }
+    It 'asks for the tick of an import, then says it is ready' {
+        $script:Screen = 'imPlan'; $script:Gui.S.PlanState = 'ok'
+        Get-MbtGuiPlanFooter | Should -Be 'Tick the box to unlock Start.'
+        $script:Gui.S.Confirmed = $true
+        Get-MbtGuiPlanFooter | Should -Be 'Ready. Nothing is written before you press Start.'
+    }
+    It 'keeps the sentence of the page once the plan is valid' {
+        $script:Screen = 'exPlan'; $script:Gui.S.PlanState = 'ok'
+        Get-MbtGuiPlanFooter | Should -Be 'Read the checks and the plan. Nothing starts before you press Start.'
+        $script:Screen = 'cpPlan'
+        Get-MbtGuiPlanFooter | Should -Be 'Read the plan. Nothing starts before you press Start.'
+    }
+}
+
+Describe 'A plan check that fails' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Export.ps1')
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1')
+        $script:Tech = 'Exception calling "ResolvePlan" with "5" argument(s): "GET https://graph.microsoft.com/v1.0/admin/exchange/mailboxes/MBX:x@contoso.com/folders/AAMk%3D -> {0} UnknownError: "'
+    }
+    It 'says a 5xx of the service in plain words, with Check again, not the raw exception' -ForEach @(500, 502, 503, 504) {
+        $raw = 'error The task stopped because of an error. What was done is kept. ' + ($script:Tech -f $_)
+        $text = Get-MbtGuiPlanFailureText -Raw $raw -Message 'The task stopped because of an error. What was done is kept.'
+        $text | Should -Be 'Microsoft did not answer correctly (a temporary problem). Press Check again.'
+        (ConvertTo-MbtGuiMessage $raw).Temporary | Should -Be 'service'
+    }
+    It 'says a network failure in plain words, with Check again' {
+        $text = Get-MbtGuiPlanFailureText -Raw 'NetworkError GET https://graph.microsoft.com/v1.0/x failed: No such host is known.' -Message 'x'
+        $text | Should -Be 'We cannot reach Microsoft. Check your internet connection, then press Check again.'
+    }
+    It 'keeps the sentence of the engine when the cause is not known, and says a known cause in its own words' {
+        Get-MbtGuiPlanFailureText -Raw 'error stopped GET x -> 404 ErrorItemNotFound: gone' -Message 'The task stopped because of an error.' | Should -Be 'The task stopped because of an error.'
+        Get-MbtGuiPlanFailureText -Raw 'error stopped GET x -> 400 Bad' | Should -Be 'The service did not accept the request.'
+        Get-MbtGuiPlanFailureText -Raw 'ErrorAccessDenied: Access is denied' -Message 'stopped' | Should -BeLike 'This sign-in is not allowed*'
+    }
+    It 'does not take a number that is only inside an identifier for a status' {
+        (ConvertTo-MbtGuiMessage 'GET https://graph.microsoft.com/v1.0/x/folders/AAMk5025Yw -> 404 ErrorItemNotFound').Temporary | Should -Be ''
+    }
+}
+
+Describe 'The plan page once the service has counted the sizes' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Export.ps1')
+        function Get-Sel([long]$Bytes, [int]$Unknown) { [pscustomobject]@{ Entries = @(); Items = 12; Bytes = $Bytes; Folders = 3; UnknownSize = $Unknown; SubtreeUnread = $false } }
+        function Get-Obj([string]$Key, [long]$Bytes, [string]$State = 'planned', [string]$Step = 'plan') { @{ Key = $Key; Step = $Step; State = $State; Total = 2L; Bytes = $Bytes } }
+    }
+    BeforeEach { $script:Gui = @{ S = @{ Task = 'export'; PlanState = 'ok'; PlanTotals = [pscustomobject]@{ Items = 12; Bytes = 9000L; Folders = 3; UnknownSize = 0; FoldersToCreate = 0 } }; ExportSelection = (Get-Sel 5000 1) } }
+    It 'takes the size the service counted when the browse view knew none for some folder and the service knows every size' {
+        $sel = Get-MbtGuiPlanSelection
+        $sel.Bytes | Should -Be 9000
+        $sel.UnknownSize | Should -Be 0
+        $sel.Items | Should -Be 12
+    }
+    It 'keeps the selection of the browse view while the plan is not counted, when the service left a size out, and when none was unknown' {
+        $script:Gui.S.PlanState = 'checking'
+        (Get-MbtGuiPlanSelection).UnknownSize | Should -Be 1
+        $script:Gui.S.PlanState = 'ok'; $script:Gui.S.PlanTotals.UnknownSize = 1
+        (Get-MbtGuiPlanSelection).Bytes | Should -Be 5000
+        $script:Gui.S.PlanTotals.UnknownSize = 0; $script:Gui.ExportSelection = Get-Sel 5000 0
+        (Get-MbtGuiPlanSelection).Bytes | Should -Be 5000
+        $script:Gui.S.PlanTotals = $null; $script:Gui.ExportSelection = Get-Sel 5000 1
+        (Get-MbtGuiPlanSelection).UnknownSize | Should -Be 1
+    }
+    It 'knows the size counted for a folder by its path in the mailbox, never for a path counted twice or without a size' {
+        $script:Gui.PlanRun = @{ Objects = @((Get-Obj 'Calendar' 73597), (Get-Obj 'Inbox' -1), (Get-Obj 'Archive/Same' 10), (Get-Obj 'Archive/Same' 20), (Get-Obj 'Refused' 5 'refused'), (Get-Obj '(folders)' 3), (Get-Obj 'Other' 7 'planned' 'download')) }
+        $sizes = Get-MbtGuiCountedSizes
+        $sizes['Calendar'] | Should -Be 73597
+        $sizes['calendar'] | Should -Be 73597 -Because 'a path is not case sensitive'
+        $sizes.ContainsKey('Inbox') | Should -BeFalse
+        $sizes.ContainsKey('Archive/Same') | Should -BeFalse
+        $sizes.ContainsKey('Refused') | Should -BeFalse
+        $sizes.ContainsKey('(folders)') | Should -BeFalse
+        $sizes.ContainsKey('Other') | Should -BeFalse
+        $sizes.Count | Should -Be 1
+    }
+    It 'counts nothing before the check is done, for an import, or without a run' {
+        $script:Gui.PlanRun = @{ Objects = @((Get-Obj 'Calendar' 100)) }
+        $script:Gui.S.PlanState = 'checking'
+        (Get-MbtGuiCountedSizes).Count | Should -Be 0
+        $script:Gui.S.PlanState = 'ok'; $script:Gui.S.Task = 'import'
+        (Get-MbtGuiCountedSizes).Count | Should -Be 0
+        $script:Gui.S.Task = 'export'; $script:Gui.Remove('PlanRun')
+        (Get-MbtGuiCountedSizes).Count | Should -Be 0
+    }
+}
+
+Describe 'Disk space wording' {
+    It 'says disk space, not room, in every text of the console, the guides and the tests' {
+        $root = Split-Path $script:Package -Parent
+        $hits = foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.ps1', '*.psm1', '*.md', '*.html', '*.cs', '*.txt' | Where-Object { $_.FullName -notmatch '[\\/](\.git|out)[\\/]' -and $_.Name -ne 'Gui.Logic.Tests.ps1' }) {
+            Select-String -LiteralPath $file.FullName -Pattern 'enough room' -SimpleMatch | ForEach-Object { "$($file.Name):$($_.LineNumber)" }
+        }
+        @($hits) | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Disk check sentences of the To page' {
+    It 'the check says there is enough disk space, or that there is not enough disk space on the drive' {
+        $text = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Export.ps1') -Raw
+        $text | Should -Match 'There is enough disk space\.'
+        $text | Should -Match 'Not enough disk space on \$drive\.'
+    }
+}
+
+Describe 'What a step that is done shows' {
+    BeforeAll { . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') }
+
+    It 'a step that is done without a message of its own keeps none of its progress text, and keeps a real final message' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }, [pscustomobject]@{ id = 'list'; title = 'List the items' }, [pscustomobject]@{ id = 'bad'; title = 'Write' }) }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; msg = 'Measuring 1 folder the service gives no size for: 1 done' }
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'running'; done = 1 }
+        $r.Steps[0].Msg | Should -Be 'Measuring 1 folder the service gives no size for: 1 done' -Because 'a running step without a message keeps what it said'
+        Add-Evt $r step -Fields @{ id = 'tree'; state = 'done' }
+        $r.Steps[0].Msg | Should -Be ''
+        Get-MbtGuiStepSub $r.Steps[0] | Should -Be '' -Because 'nothing is left to say'
+        Add-Evt $r step -Fields @{ id = 'list'; state = 'running'; msg = 'Counting' }
+        Add-Evt $r step -Fields @{ id = 'list'; state = 'done'; msg = '4,443 folders read' }
+        $r.Steps[1].Msg | Should -Be '4,443 folders read'
+        Get-MbtGuiStepSub $r.Steps[1] | Should -Be '4,443 folders read'
+        Add-Evt $r step -Fields @{ id = 'bad'; state = 'running'; msg = 'Writing part 2' }
+        Add-Evt $r step -Fields @{ id = 'bad'; state = 'failed' }
+        $r.Steps[2].Msg | Should -Be 'Writing part 2' -Because 'a step that failed keeps where it was'
+    }
+
+    It 'the line of a step never says more done than the total, and a step that is done says what it did' {
+        Get-MbtGuiStepSub @{ State = 'running'; Msg = ''; Done = 5; Total = 8 } | Should -Be '5 / 8 items'
+        Get-MbtGuiStepSub @{ State = 'running'; Msg = ''; Done = 9; Total = 8 } | Should -Be '9 items'
+        Get-MbtGuiStepSub @{ State = 'running'; Msg = ''; Done = 1; Total = 1 } | Should -Be '1 / 1 item'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 53; Total = 53 } | Should -Be '53 items'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 60; Total = 53 } | Should -Be '60 items'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 0; Total = 4 } | Should -Be '4 items'
+        Get-MbtGuiStepSub @{ State = 'done'; Msg = ''; Done = 0; Total = 0 } | Should -Be ''
+    }
+
+    It 'a number that is done is shown with its total only while it is below it; a size is only about right' {
+        Format-MbtGuiProgressOf 5 8 | Should -Be '5 of 8 items'
+        Format-MbtGuiProgressOf 9 8 | Should -Be '9 items'
+        Format-MbtGuiProgressOf 1 0 | Should -Be '1 item'
+        Format-MbtGuiProgressOf 8 8 -Finished | Should -Be '8 items'
+        Format-MbtGuiFraction 5 8 | Should -Be '5 / 8'
+        Format-MbtGuiFraction 12 10 | Should -Be '12'
+        Format-MbtGuiFraction 10 10 -Finished | Should -Be '10'
+        Format-MbtGuiFraction 0 10 -Finished | Should -Be '10'
+        Format-MbtGuiBytesOf 5MB 8MB | Should -Be '5 MiB of about 8 MiB'
+        Format-MbtGuiBytesOf 9MB 8MB | Should -Be '9 MiB'
+        Format-MbtGuiBytesOf 8.2MB 7.9MB -Finished | Should -Be '8 MiB'
+        Format-MbtGuiBytesOf 3MB 0 | Should -Be '3 MiB'
+    }
+
+    It 'the run model keeps what a download really did when the announced size was smaller' {
+        $r = New-MbtGuiRun -Task export
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'download'; title = 'Download the items' }) }
+        Add-Evt $r step -Fields @{ id = 'download'; state = 'running'; done = 0; total = 53; bytes = 0; bytesTotal = 8320848 }
+        Add-Evt $r step -Fields @{ id = 'download'; state = 'done'; done = 53; total = 53; bytes = 8620875; bytesTotal = 8320848 }
+        Format-MbtGuiBytesOf $r.Bytes $r.BytesTotal -Finished | Should -Be '8 MiB'
+        Format-MbtGuiBytesOf $r.Bytes $r.BytesTotal | Should -Be '8 MiB' -Because 'more than announced'
+        Get-MbtGuiStepSub $r.Steps[0] | Should -Be '53 items'
+    }
+}
+
+Describe 'The All jobs button' {
+    BeforeAll {
+        # the callbacks of the button run in a scope of their own: the stand-ins of the dialog and of the browser are global for the length of these tests
+        function global:Show-MbtGuiDialog { param($Title, $Body, $Buttons) $global:MbtTestSaid = @{ Title = $Title; Body = $Body } }
+        function global:Start-Process { param($FilePath) $global:MbtTestStarted = $FilePath }
+        function New-OverviewGui($Engine) { $script:Gui = @{ S = @{ WorkFolder = 'W:\work' }; Engine = $Engine } }
+    }
+    AfterAll {
+        Remove-Item -Path Function:\Show-MbtGuiDialog, Function:\Start-Process -ErrorAction SilentlyContinue
+        Remove-Variable -Name MbtTestSaid, MbtTestStarted -Scope Global -ErrorAction SilentlyContinue
+    }
+    It 'asks the engine for the overview of the work folder and opens the page it gives' {
+        $global:MbtTestStarted = $null
+        $page = Join-Path $TestDrive 'overview.html'
+        Set-Content -LiteralPath $page -Value '<html></html>'
+        $seen = @{}
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) $seen.Work = $Work; & $OnDone $page }.GetNewClosure() })
+        Open-MbtGuiJobOverview
+        $seen.Work | Should -Be 'W:\work'
+        $global:MbtTestStarted | Should -Be $page
+    }
+    It 'says so when no file was written (the demonstration), and when the page could not be written' {
+        $global:MbtTestStarted = $null
+        $global:MbtTestSaid = $null
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null } })
+        Open-MbtGuiJobOverview
+        $global:MbtTestSaid.Title | Should -Be 'Nothing to open here'
+        $global:MbtTestSaid = $null
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) & $OnError 'The disk is full.' } })
+        Open-MbtGuiJobOverview
+        $global:MbtTestSaid.Title | Should -Be 'The overview of all the jobs could not be written'
+        $global:MbtTestSaid.Body | Should -Be 'The disk is full.'
+        $global:MbtTestSaid = $null
+        New-OverviewGui ([pscustomobject]@{ JobOverview = { param($Work, $OnDone, $OnError) throw 'boom' } })
+        Open-MbtGuiJobOverview
+        $global:MbtTestSaid.Body | Should -Be 'boom'
+        $global:MbtTestStarted | Should -BeNullOrEmpty
+    }
+    It 'is on the page of the jobs to continue and in the card Reports and log of the Next steps page, and the engines answer it' {
+        $pages = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.ps1') -Raw
+        $pages | Should -Match "(?s)-Title 'Continue a job'.*?-Right \(New-GuiButton -Text 'All jobs'.*?Open-MbtGuiJobOverview"
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match "(?s)function New-MbtGuiReportsCard.*?New-GuiButton -Text 'All jobs'.*?Open-MbtGuiJobOverview.*?-Title 'Reports and log'"
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1') -Raw) | Should -Match '(?s)\$e\.JobOverview = .*?Write-MbtJobOverview -WorkFolder \$work'
+        (Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Fake.ps1') -Raw) | Should -Match '\$engine\.JobOverview = \{ param\(\$Work, \$OnDone, \$OnError\) & \$OnDone \$null \}'
+    }
+    It 'the overview is written again when a run ends' {
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match '(?s)function Complete-MbtGuiRun.*?Write-MbtGuiRunReport.*?\$reportDone = \{.*?\$g\.Engine\.JobOverview \$work'
+    }
+    It 'a batch row of the jobs to continue opens its report and never continues anything' {
+        $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $run | Should -Match '(?s)function Resume-MbtGuiJob.*?\$Entry\.Task -eq ''batch''\) \{ Open-MbtGuiBatchReport \$Entry; return \}.*?\$reqFile'
+        $run | Should -Match '(?s)function Open-MbtGuiBatchReport.*?\$g\.Engine\.BatchReport \$g\.S\.WorkFolder'
     }
 }

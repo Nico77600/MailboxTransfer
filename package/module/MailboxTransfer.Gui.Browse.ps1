@@ -55,9 +55,9 @@ function New-MbtGuiBrowser {
     $b = @{ Name = $Name; Root = $root; C = $c; Roots = $roots; Rows = $rows; Current = $null; Next = $null; TrayEmpty = $TrayEmpty; Kind = $Kind; Ready = $false; OnChange = $null; Loading = $false; Pending = 0; Reading = $null; NoPicks = $false }
     $script:Gui.Browsers[$Name] = $b
 
-    $c.FolderTree.Add_SelectedItemChanged({ param($s, $e) if ($e.NewValue) { Open-MbtGuiFolder $e.NewValue } }.GetNewClosure())
-    $c.MessageList.Add_SelectionChanged({ param($s, $e) if ($s.SelectedItem) { Show-MbtGuiMessage $b $s.SelectedItem } }.GetNewClosure())
-    $c.PickAll.Add_Click({ param($s, $e) if ($b.Current) { $b.Current.TickOwnOnly([bool]$s.IsChecked); Sync-MbtGuiRows $b } }.GetNewClosure())
+    Add-MbtGuiHandler $c.FolderTree 'SelectedItemChanged' { param($sender, $e) if ($e.NewValue) { Open-MbtGuiFolder $e.NewValue } }
+    Add-MbtGuiHandler $c.MessageList 'SelectionChanged' { param($sender, $e) if ($sender.SelectedItem) { Show-MbtGuiMessage $b $sender.SelectedItem } }
+    Add-MbtGuiHandler $c.PickAll 'Click' { param($sender, $e) if ($b.Current) { $b.Current.TickOwnOnly([bool]$sender.IsChecked); Sync-MbtGuiRows $b } }
     Update-MbtGuiTray $b
     return $b
 }
@@ -101,7 +101,7 @@ function Open-MbtGuiFolder {
         return
     }
     $suffix = if ($Node.Count -gt 12) { ' ' + [char]0x00B7 + ' newest shown first' } else { '' }
-    $c.ListTitle.Text = ('{0} {1} {2} items{3}' -f $Node.Name, [char]0x00B7, (Format-MbtGuiCount $Node.Count), $suffix)
+    $c.ListTitle.Text = ('{0} {1} {2}{3}' -f $Node.Name, [char]0x00B7, (Format-MbtGuiQuantity $Node.Count 'item'), $suffix)
     $c.ListHeader.Visibility = 'Visible'
     $c.PickAll.Visibility = $(if ($b.NoPicks) { 'Collapsed' } else { 'Visible' })
     $c.ListEmpty.Visibility = 'Collapsed'
@@ -192,14 +192,17 @@ function Show-MbtGuiMessage {
     $c.ReadSubject.Text = $Row.Subject; $c.ReadFrom.Text = $Row.From
     $c.ReadDetails.Text = 'Reading the message...'; $c.ReadBody.Text = ''; $c.ReadAttachment.Visibility = 'Collapsed'
     $engine = $script:Gui.Engine
+    $Browser.Reading = $Row
     & $engine.Preview $Row $node {
         param($p)
+        # another message was picked while this one was read: its text is not shown
+        if (-not [object]::ReferenceEquals($Browser.Reading, $Row)) { return }
         $c.ReadSubject.Text = $p.Subject
-        $c.ReadFrom.Text = "$($p.From)  <$($p.Address)>"
+        $c.ReadFrom.Text = (@($(if ($p.From) { $p.From }), $(if ($p.Address -and $p.Address -ne $p.From) { "<$($p.Address)>" })) | Where-Object { $_ }) -join '  '
         $c.ReadDetails.Text = "To: $($p.To)`nReceived: $($p.Received)`nLocation: $($p.Location)`nDetails: $($p.Details)"
         $c.ReadBody.Text = $p.Body
         if ($p.Attachment) { $c.ReadAttachment.Visibility = 'Visible'; $c.ReadAttachmentText.Text = $p.Attachment } else { $c.ReadAttachment.Visibility = 'Collapsed' }
-    }.GetNewClosure() { param($msg) $c.ReadDetails.Text = "The message could not be read: $msg" }.GetNewClosure()
+    }.GetNewClosure() { param($msg) if ([object]::ReferenceEquals($Browser.Reading, $Row)) { $c.ReadDetails.Text = "The message could not be read: $msg" } }.GetNewClosure()
 }
 
 #region Selection ---------------------------------------------------------------------------
@@ -256,7 +259,7 @@ function Update-MbtGuiTray {
     $p.Children.Clear()
     $sel = Get-MbtGuiSelection -Roots @($Browser.Roots)
     if ($sel.Items -gt 0 -or $sel.Folders -gt 0) {
-        $txt = '**{0} items** in {1} folder{2} {3} {4}' -f (Format-MbtGuiCount $sel.Items), $sel.Folders, $(if ($sel.Folders -gt 1) { 's' } else { '' }), [char]0x00B7, (Format-MbtGuiSelectionSize $sel)
+        $txt = '**{0}** in {1} {2} {3}' -f (Format-MbtGuiQuantity $sel.Items 'item'), (Format-MbtGuiQuantity $sel.Folders 'folder'), [char]0x00B7, (Format-MbtGuiSelectionSize $sel)
         if ($sel.SubtreeUnread) { $txt += ' (folders below are counted as you open them)' }
         $t = New-GuiText $txt 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
         $p.Children.Add($t) | Out-Null
@@ -279,10 +282,10 @@ function Update-MbtGuiBrowseTrays {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAgZjvu7+qvflGO
-# 8eALEogWxc+v64q9L1fJQ9oziiBm86CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBjWI7TrBNlEQ3s
+# E+ucj2UdH8PlJBP5DD0jwT77ULOQnqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -354,28 +357,28 @@ function Update-MbtGuiBrowseTrays {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCABie0gBOPP
-# 3NentbDZZw9vaP80uLUiwI78wLPSmmMi4jANBgkqhkiG9w0BAQEFAASCAgCb8WYn
-# Ixm2V+AKBs8QtrtUEv8R7YcJ5ba7cr0/B7IlXvlOAPx21r49sgXLFD9Gucfs6k+s
-# e1aJp3kUKVbIWIUV9bGmZ+cJ+OcJQ2A7mjJDloyrmnqYa/Gu4wLcgGwnl5exGOn4
-# WGPY8ax0gOv2uNLKRNREk3gFSOFmkyulJ3Z8odI72NHenCOdkDbOgyg3Oudsf9dN
-# eQeLvrfXcNlYsrFJVAY193Bm5ETMDQTTlbMINa5qcMtIN/VHwa7KtSLDR/y359QH
-# YH5lz6t2cKmPTzIyfNPTaAEnTcoXKaINUknim9D7Z/8M4fZGQS2tEW/tIqvCYXU9
-# eOqVcuFHyRaxSMXAm27vNqZa97cagQMDuWhAC6/Qkv21EDVQPkK7eqrKFCwMfNu8
-# yq2sEMD1epLdd2VWt+LUWkYbwrmhtvgVtGg/j5Ann47Lwf2HrPuufOKHb8wllOnw
-# Y2gbXbjvf57BdGPyNdlOG7rgINdWtiJ2aOKfPZP6jfLf81LpSoKH1t35qmcdOzs0
-# AmAPqQv8dRejKVjNOatJgwr79+l7ApKWmh1h07ExqfNAmY6PYyRc/pw4gEHH5UAn
-# vfFtMupR8Ys8dvgRoYEQiZEN/zhUf5WTRnmejgHyK237kTLTPRViXnfWeFBWwO5L
-# 1x2L6WYUn5tIzZm2rsCuBoffP0HQuedAhWBYF6GCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCapJ1YSK2d
+# KPiVNOvnDIrPPT8qymleGHDtxPIcGWNNMzANBgkqhkiG9w0BAQEFAASCAgAa/PRJ
+# +yHw8fGXQTz+cErWGh68TKfyJwlPbvqxUhV2ITxIUaOYskqjj4HNGMxA774kaxnE
+# AywiF0TpmmjvYgiUW57/Pl2EFw0JouU5J+6Vxc3AQLAJyAusxCj3SDY1xN1xpZkI
+# QnGb4focG/2vjbC3ELfdETInxjPVcVxTs7AbKh00CdsMq8a4HazCBV/zkYa8uP/A
+# CKVYGBoElkE8MbKSk0dhXLTvhuXZnyKqyAfdU8ez8XcXfGz2dVERoJXhoRF25X8w
+# Dte7Q/qYEl4J5sPzdE1O8iQUE++jZbEfTEnOp8E8W/95Vfk4W7ZTPqq1NYxuhFnB
+# dJl1Toqgl4FUE2k0jHRgJpxbDZDrhd82qGxnAW/iuGHBeWEUfnDE7rozNNfTaUeE
+# NVVqHYXvfFbNKLrX3PcxIK+Sjt3svHAO99yiIeixo88/pnoWdvos5IuOhjU8fFyT
+# X2ZJjgrsJBUJcgzT1UsmVRgsNC2lUqqdCnYztOpfqfp09Ix0w9I3BxD1x1WjH/qg
+# 6pcZobPUXardoqnLDiCh8RcmOjyrbPbdGqngrbCzNMVF9qYRdKkKmnv6qrFIkF3C
+# 1mhCWq4z2hW1aS0o0xktVe9cc9MhptEug9JivPJ49SGbI3w8F7qIttk42b5ZeLPt
+# RFqNg6Gzdot2WsZnxicj05yH5CYA0hNBPEw9RaGCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIAZhbD/fMo7QSbRGxtWpDNEYtxd7UMJkhABjDroMafCzAghx8BAmz7Ks
-# 3hgPMjAyNjExMTAwODIxNTlaMAMCAQECED+c5YmDuSwa24kD4gdTsS6gghGnMIIE
+# BAIBBQAEILJlLhFe9q8HD0bHn5GDE+D87zeQiCDGJjfj5bGxh0iQAggcmQsVbNYm
+# YBgPMjAyNjExMTUxNDM0NTRaMAMCAQECECVVYmaam0nKFDw0wK4TUj+gghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -470,17 +473,17 @@ function Update-MbtGuiBrowseTrays {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjE1OVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIE86
-# FqU0RaW0Zh2Gn6y7lSm9sHHbc7pDdW+cdfsOmzsyMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQ1NFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIKSQ
+# NwXaJ6WdwBOabfRn9M29kLBBsTxW0WxGhl6zz7w8MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEAqdNdnS6O44RyfzM17EbaeRBE6jt21Ypq+wgH3PFHXpICIDwz
-# KYq9vJq64GMbMs1NEB6Ft+hKqDnAkcbLzKRBqeq1
+# zj0EAwIESDBGAiEA687eQMcaDvTn1xvtM1UJcY6tXaZD4FxJ7VuFkxE82lQCIQDx
+# 5ZUWemZ/orimKCtdzJHQtoOEBUihRmlvzpd2Qq5Umg==
 # SIG # End signature block

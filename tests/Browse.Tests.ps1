@@ -916,6 +916,236 @@ Describe 'Browse: a selection drives the export (ExportOptions.Plan)' {
     }
 }
 
+Describe 'Browse: the folder trees of one export are read once, at once, and the reading says how far it is' {
+    It 'a selection that needs the import-export tree and the export that follows share one read of it' {
+        $w = New-World -Divergent
+        $client = New-FakeClient -Handler $w.Mail
+        $api = [MailboxTransfer.MailboxApi]::new($client)
+        $api.CacheFolderTrees = $true
+        $b = [MailboxTransfer.MailboxBrowser]::new($api)
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        $sel.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = 'F-PROJ'; FolderPath = 'Inbox/Projects' })
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $api.TreesRead | Should -Be 1 -Because 'the id of the browse view is not known to the import-export API: the path is looked up in its whole tree'
+        $o = [MailboxTransfer.ExportOptions]::new()
+        $o.MailboxId = $script:Src; $o.Kind = 'Primary'; $o.Upn = 'adele@contoso.test'; $o.Concurrency = 2; $o.Plan = $plan
+        $o.TempPath = Join-Path $script:Tmp ('tmp-' + [guid]::NewGuid().ToString('N'))
+        $store = New-TestStoreAt 'tree-once'
+        try {
+            $job = [MailboxTransfer.ExportJob]::Start($api, $store, $o)
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            while (-not $job.Wait(100)) { if ([DateTime]::UtcNow -gt $deadline) { $job.Cancel(); throw 'the export job did not finish in time' } }
+            $job.Error | Should -BeNullOrEmpty
+            $job.Result.Exported | Should -Be 3
+            $api.TreesRead | Should -Be 1 -Because 'the export takes the tree the selection read'
+            $job.Snapshot().Detail | Should -BeNullOrEmpty -Because 'the phase is over'
+        } finally { $store.Dispose() }
+    }
+
+    It 'a job that does not share the trees reads the tree of the mailbox again for the export' {
+        $w = New-World -Divergent
+        $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $w.Mail))
+        $b = [MailboxTransfer.MailboxBrowser]::new($api)
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        $sel.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = 'F-PROJ'; FolderPath = 'Inbox/Projects' })
+        $null = $b.ResolvePlan($sel)
+        $null = $api.GetFolderTree($script:Src)
+        $api.TreesRead | Should -Be 2
+    }
+
+    It 'the export reports the folders read while it reads the tree' {
+        $w = New-World
+        $w.Ie.LatencyMs = 300
+        $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $w.Mail))
+        $o = [MailboxTransfer.ExportOptions]::new()
+        $o.MailboxId = $script:Src; $o.Kind = 'Primary'; $o.Upn = 'adele@contoso.test'; $o.Concurrency = 2
+        $o.TempPath = Join-Path $script:Tmp ('tmp-' + [guid]::NewGuid().ToString('N'))
+        $store = New-TestStoreAt 'tree-detail'
+        try {
+            $job = [MailboxTransfer.ExportJob]::Start($api, $store, $o)
+            $details = [System.Collections.Generic.List[string]]::new()
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            while (-not $job.Wait(50)) {
+                $d = $job.Metrics.Detail
+                if ($d -and -not $details.Contains($d)) { $details.Add($d) }
+                if ([DateTime]::UtcNow -gt $deadline) { $job.Cancel(); throw 'the export job did not finish in time' }
+            }
+            $job.Error | Should -BeNullOrEmpty
+            $details.Count | Should -BeGreaterThan 0
+            $details | ForEach-Object { $_ | Should -Match '^[\d,]+ folders? read$' }
+            $job.Snapshot().Detail | Should -BeNullOrEmpty
+        } finally { $store.Dispose() }
+    }
+
+    It 'a folder that has no subfolder is counted as it is: the tree of the mailbox is not read for it' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $deltaBefore = $w.Mail.RequestsOf('mailFolders/delta')
+        $leaf = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $leaf.AddFolder($tree.Find('Inbox/Projects'), $true)
+        $plan = $b.ResolvePlan($leaf)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $plan.Folders[0].Items | Should -Be 3
+        $plan.Folders[0].FolderCount | Should -Be 1
+        $plan.Folders[0].IncludeSubfolders | Should -BeTrue
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be $deltaBefore -Because 'Projects has no subfolder'
+        $wide = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $wide.AddFolder($tree.Find('Inbox'), $true)
+        $planWide = $b.ResolvePlan($wide)
+        $planWide.Folders[0].FolderCount | Should -BeGreaterThan 1
+        $planWide.Folders[0].FolderCount | Should -Be 3
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be $deltaBefore -Because 'the folders below Inbox are read from Inbox down, not the tree of the mailbox'
+    }
+
+    It 'the reading of the selection reports the folders read, to the callback it is given' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+        $seen = [System.Collections.Generic.List[object]]::new()
+        $cb = [Action[MailboxTransfer.BrowseProgress]] { param($p) $seen.Add($p) }
+        $plan = $b.ResolvePlan($sel, $true, [Threading.CancellationToken]::None, $cb)
+        $plan.IsComplete | Should -BeTrue
+        @($seen | Where-Object Stage -EQ 'folders').Count | Should -BeGreaterThan 0
+        @($seen | Where-Object Stage -EQ 'plan').Count | Should -BeGreaterThan 0
+    }
+}
+
+Describe 'Browse: the plan counts below the chosen folder, and sizes the folders the service gives no size for' {
+    BeforeAll {
+        function Add-Entry($Selection, [string]$Id, [string]$Path, [bool]$Subfolders = $false) {
+            $Selection.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = $Id; FolderPath = $Path; IncludeSubfolders = $Subfolders })
+        }
+    }
+    It 'the folders below a folder are read from it down and add up as the tree of the mailbox does' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $covered = @($tree.Folders | Where-Object { $_.Path -eq 'Inbox' -or $_.Path -like 'Inbox/*' })
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+        $deltaBefore = $w.Mail.RequestsOf('mailFolders/delta')
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be $deltaBefore
+        $expected = [MailboxTransfer.BrowseTotals]::Of([MailboxTransfer.BrowseFolder[]]$covered)
+        $plan.Folders[0].FolderCount | Should -Be $expected.Folders
+        $plan.Folders[0].Items | Should -Be $expected.Items
+        $plan.Notes.Count | Should -Be 0
+    }
+    It 'a non-mail folder with a subfolder is counted with it, below the folder chosen' {
+        $w = New-World
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL2', 'Holidays', 'F-CAL', 'IPF.Appointment')
+        $null = $w.Ie.AddItem($script:Src, 'F-CAL2', 'C3', [byte[]]::new(1000), 'ck-C3', (Get-Day 14))
+        $b = New-Browser $w
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar' $true
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+        $plan.Folders[0].FolderCount | Should -Be 2
+        $plan.Folders[0].Items | Should -Be 3
+        $plan.Folders[0].Bytes | Should -Be 7100
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $w.Mail.RequestsOf('mailFolders/delta') | Should -Be 0
+    }
+    It 'the tree of the mailbox keeps the folders below a non-mail folder, in any depth' {
+        $w = New-World
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL2', 'Holidays', 'F-CAL', 'IPF.Appointment')
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL3', 'National', 'F-CAL2', 'IPF.Appointment')
+        $b = New-Browser $w
+        $tree = $b.GetFolderTree((Get-Loc Primary))
+        $tree.Find('Calendar/Holidays') | Should -Not -BeNullOrEmpty
+        $tree.Find('Calendar/Holidays/National') | Should -Not -BeNullOrEmpty
+        $tree.Find('Inbox/Inbox Notes') | Should -Not -BeNullOrEmpty
+    }
+    It 'a folder with no size from the service is sized from its items' {
+        $w = New-World
+        $b = New-Browser $w
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $seen = [System.Collections.Generic.List[object]]::new()
+        $cb = [Action[MailboxTransfer.BrowseProgress]] { param($p) $seen.Add($p) }
+        $plan = $b.ResolvePlan($sel, $true, [Threading.CancellationToken]::None, $cb)
+        $plan.IsComplete | Should -BeTrue
+        $plan.Folders[0].Items | Should -Be 2
+        $plan.Folders[0].Bytes | Should -Be 6100
+        $plan.Folders[0].FoldersUnknownSize | Should -Be 0
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $plan.Totals().SizeComplete | Should -BeTrue
+        $w.Ie.RequestsOf('/folders/F-CAL/items') | Should -Be 1
+        @($seen | Where-Object Stage -EQ 'sizes').Count | Should -BeGreaterThan 0
+    }
+    It 'an empty folder is 0 bytes without a listing, and the folders below a folder with a size add to it' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+        $plan = $b.ResolvePlan($sel)
+        $plan.Folders[0].FolderCount | Should -Be 3
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $w.Ie.RequestsOf('/folders/F-NOTES/items') | Should -Be 0 -Because 'Inbox Notes announces no item'
+        $mailSize = (@($tree.Folders | Where-Object { $_.Path -like 'Inbox*' -and $_.SizeBytes -ge 0 }) | Measure-Object SizeBytes -Sum).Sum
+        $plan.Folders[0].Bytes | Should -Be $mailSize
+    }
+    It 'the folders past the cap of items stay unknown and the plan is still valid' {
+        $w = New-World
+        $b = New-Browser $w
+        $b.SizeListingItemCap = 1
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue
+        $plan.Folders[0].Bytes | Should -Be -1
+        $plan.Folders[0].FoldersUnknownSize | Should -Be 1
+        $plan.Folders[0].SizeComplete | Should -BeFalse
+        $w.Ie.RequestsOf('/folders/F-CAL/items') | Should -Be 0
+    }
+    It 'the cap is shared by the folders of the plan, in the order of the plan' {
+        $w = New-World
+        $b = New-Browser $w
+        $b.SizeListingItemCap = 2
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $null = $w.Ie.AddFolder($script:Src, 'F-CAL2', 'Holidays', $null, 'IPF.Appointment')
+        $null = $w.Ie.AddItem($script:Src, 'F-CAL2', 'C3', [byte[]]::new(1000), 'ck-C3', (Get-Day 14))
+        Add-Entry $sel 'F-CAL2' 'Holidays'
+        $plan = $b.ResolvePlan($sel)
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $plan.Folders[1].SizeComplete | Should -BeFalse
+        $plan.Totals().FoldersWithUnknownSize | Should -Be 1
+    }
+    It 'a listing that fails leaves the folder unknown and does not refuse the plan' {
+        $w = New-World
+        $w.Ie.ListingFailures["$($script:Src)|F-CAL"] = [MailboxTransfer.Tests.FakeListingFailure]@{ Status = 403; Code = 'ErrorAccessDenied'; Message = 'no' }
+        $b = New-Browser $w
+        $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+        Add-Entry $sel 'F-CAL' 'Calendar'
+        $plan = $b.ResolvePlan($sel)
+        $plan.IsComplete | Should -BeTrue
+        $plan.Folders[0].Items | Should -Be 2
+        $plan.Folders[0].SizeComplete | Should -BeFalse
+    }
+    It 'a folder of the mail API that gives its size is not listed' {
+        $w = New-World
+        $b = New-Browser $w
+        $loc = Get-Loc Primary
+        $tree = $b.GetFolderTree($loc)
+        $sel = [MailboxTransfer.BrowseSelection]::For($loc)
+        $null = $sel.AddFolder($tree.Find('Sent Items'), $false)
+        $plan = $b.ResolvePlan($sel)
+        $plan.Folders[0].SizeComplete | Should -BeTrue
+        $w.Ie.RequestsOf('/folders/F-SENT/items') | Should -Be 0
+    }
+}
+
 Describe 'Browse: module functions and the entry script' {
     BeforeAll {
         $script:Entry = Join-Path $script:Root 'Invoke-MailboxTransfer.ps1'
@@ -1063,6 +1293,29 @@ Describe 'Browse: module functions and the entry script' {
         { Invoke-Entry $w ($common + @{ Folder = 'Inbox'; ItemId = '9' }) } | Should -Throw '*the listing has 5 row(s)*'
     }
 
+    It 'the command line values, the mailbox id and the folder path are accepted in any case, and give what the exact spelling gives' {
+        $w = New-World
+        $common = @{ PrimaryMailboxId = $script:Src; StorePath = (Join-Path $script:Tmp 'cli-none') }
+        function Get-Rows([string]$Text) { @($Text -split "`r?`n" | Where-Object { $_ -match '^\s+\d+\s+2026-\d\d-\d\d \d\d:\d\d\s' }) }
+        $exact = Invoke-Entry $w ($common + @{ Mode = 'Browse'; Folder = 'Inbox/Projects'; Top = 0 })
+        $exact | Should -Match 'folder Inbox/Projects: 3 item\(s\)'
+        $lower = Invoke-Entry $w ($common + @{ Mode = 'browse'; Folder = 'inbox/PROJECTS'; Top = 0 })
+        $lower | Should -Match 'folder Inbox/Projects: 3 item\(s\)'
+        (Get-Rows $lower) | Should -Be (Get-Rows $exact)
+        foreach ($sort in 'ReceivedDescending', 'ReceivedAscending', 'SentDescending', 'SentAscending', 'SubjectAscending', 'SubjectDescending') {
+            $a = Invoke-Entry $w ($common + @{ Mode = 'Browse'; Folder = 'Inbox'; Top = 0; Sort = $sort })
+            foreach ($spelling in $sort.ToLowerInvariant(), $sort.ToUpperInvariant()) {
+                $b = Invoke-Entry $w ($common + @{ Mode = 'Browse'; Folder = 'inbox'; Top = 0; Sort = $spelling })
+                (Get-Rows $b) | Should -Be (Get-Rows $a) -Because $spelling
+                (Get-Rows $b).Count | Should -Be 5
+            }
+        }
+        $arch = Invoke-Entry $w @{ Mode = 'browse'; Mailbox = 'archive'; ArchiveMailboxId = $script:Arch.ToUpperInvariant(); StorePath = (Join-Path $script:Tmp 'cli-none') }
+        $arch | Should -Match 'browsing the Archive mailbox MBX:aaaaaaaa'
+        $arch | Should -Match 'Old Mail\s+4 item\(s\)'
+        $w.Mail.RequestsOf("/users/$($script:Arch)/") | Should -BeGreaterThan 0
+    }
+
     It '-Mode Browse -Mailbox AuxArchive: tree and sizes from the import-export API, a note that the details come after the export, no Mail API request' {
         $w = New-World
         $common = @{ Mode = 'Browse'; Mailbox = 'AuxArchive'; MailboxId = $script:Aux1; StorePath = (Join-Path $script:Tmp 'cli-none'); LocationsFile = $null }
@@ -1122,6 +1375,36 @@ Describe 'Browse: module functions and the entry script' {
         $again | Should -Match 'export finished: 0 items exported'
     }
 
+    It 'Export -SelectionFile writes events from the start: the first step is under way while the job signs in, reads the selection and the tree' {
+        $w = New-World
+        $sel = Join-Path $script:Tmp 'cli-ev-sel.json'
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; PrimaryMailboxId = $script:Src; Folder = 'Inbox'; IncludeSubfolders = $true; SaveSelection = $sel; StorePath = (Join-Path $script:Tmp 'cli-ev-none') }
+        $events = Join-Path $script:Tmp 'cli-ev\events.jsonl'
+        $read = { @(Get-Content -LiteralPath $events | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json }) }
+        $dry = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $sel; StorePath = (Join-Path $script:Tmp 'cli-ev-store'); TempPath = (Join-Path $script:Tmp 'cli-ev-tmp'); WhatIf = $true; EventsFile = $events; JobId = 'plan-1' }
+        $dry | Should -Match 'WhatIf: the selection is valid'
+        $ev = & $read
+        $ev[0].e | Should -Be 'plan'
+        $steps = @($ev | Where-Object { $_.e -eq 'step' })
+        $steps[0].id | Should -Be 'tree'
+        $steps[0].state | Should -Be 'running'
+        $steps[0].msg | Should -Be 'Signing in to Microsoft'
+        @($steps | Where-Object { $_.msg -eq 'Reading your selection' }).Count | Should -BeGreaterThan 0
+        $steps[-1].id | Should -Be 'tree'
+        $steps[-1].state | Should -Be 'done' -Because 'the plan check ends with its only step'
+        Remove-Item -LiteralPath (Split-Path $events -Parent) -Recurse -Force
+        $go = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $sel; StorePath = (Join-Path $script:Tmp 'cli-ev-store'); TempPath = (Join-Path $script:Tmp 'cli-ev-tmp'); Concurrency = 2; EventsFile = $events; JobId = 'run-1' }
+        $go | Should -Match 'export finished: 8 items exported'
+        $ev = & $read
+        $steps = @($ev | Where-Object { $_.e -eq 'step' })
+        $steps[0].id | Should -Be 'tree'
+        $steps[0].msg | Should -Be 'Signing in to Microsoft'
+        $treeDone = [array]::IndexOf(@($steps | ForEach-Object { "$($_.id)/$($_.state)" }), 'tree/done')
+        $laterStep = @($steps | ForEach-Object { $_.id }).IndexOf('download')
+        $treeDone | Should -BeGreaterOrEqual 0
+        $laterStep | Should -BeGreaterThan $treeDone -Because 'the tree is done before the first event of a later step'
+    }
+
     It 'Browse -SaveSelection with -ItemId selects those items (by row number), the plan says how they were matched' {
         $w = New-World
         $sel = Join-Path $script:Tmp 'cli-items.json'
@@ -1178,6 +1461,42 @@ Describe 'Browse: module functions and the entry script' {
         $go = Invoke-Entry $w ($base + @{ Concurrency = 2 })
         $go | Should -Match 'exporting the Archive mailbox MBX:aaaaaaaa'
         $go | Should -Match 'export finished: 4 items exported'
+    }
+
+    It 'a selection file of several mailboxes (the console writes one for the locations it ticked): one Export command exports them all, a single mailbox is written as before' {
+        $w = New-World
+        $primary = Join-Path $script:Tmp 'set-primary.json'; $archive = Join-Path $script:Tmp 'set-archive.json'
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; PrimaryMailboxId = $script:Src; Folder = 'Inbox'; IncludeSubfolders = $true; SaveSelection = $primary; StorePath = (Join-Path $script:Tmp 'cli-none') }
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; Mailbox = 'Archive'; ArchiveMailboxId = $script:Arch; Folder = 'Old Mail'; SaveSelection = $archive; StorePath = (Join-Path $script:Tmp 'cli-none') }
+        $one = Save-MbtBrowseSelectionSet -Selection @(Read-MbtBrowseSelection -Path $primary) -Path (Join-Path $script:Tmp 'set-one.json')
+        (Get-Content -LiteralPath $one -Raw) | Should -Be (Get-Content -LiteralPath $primary -Raw) -Because 'one mailbox: the file of an earlier version'
+        $set = Save-MbtBrowseSelectionSet -Selection @((Read-MbtBrowseSelection -Path $primary), (Read-MbtBrowseSelection -Path $archive)) -Path (Join-Path $script:Tmp 'selections\set-both.json')
+        $read = @(Read-MbtBrowseSelectionSet -Path $set)
+        $read.Count | Should -Be 2
+        ($read | ForEach-Object Kind) -join ',' | Should -Be 'Primary,Archive'
+        @(Read-MbtBrowseSelectionSet -Path $primary).Count | Should -Be 1
+        $store = Join-Path $script:Tmp 'cli-store-set'
+        $dry = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $set; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-tmp-set'); WhatIf = $true }
+        $dry | Should -Match 'for the Primary mailbox MBX:11111111'
+        $dry | Should -Match 'for the Archive mailbox MBX:aaaaaaaa'
+        $dry | Should -Match 'WhatIf: the selection is valid, nothing was exported'
+        (Test-Path (Join-Path $store 'catalog.db')) | Should -BeFalse
+        $out = Join-Path (Join-Path $script:Tmp 'set-pst') 'both.pst'
+        $go = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $set; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-tmp-set'); Concurrency = 2; OutputPst = $out; SkipCheck = $true }
+        $go | Should -Match 'exporting the Primary mailbox MBX:11111111'
+        $go | Should -Match 'exporting the Archive mailbox MBX:aaaaaaaa'
+        $global:MbtEntryExit | Should -Be 0
+        $s = Open-MbtExportStore -Path $store -ReadOnly
+        try {
+            ($s.GetMailboxes() | ForEach-Object { $_.Kind.ToString() } | Sort-Object) -join ',' | Should -Be 'Archive,Primary'
+            ($s.GetItemStats($script:Src) | Where-Object State -EQ 'Exported').Count | Should -Be 8
+            ($s.GetItemStats($script:Arch) | Where-Object State -EQ 'Exported').Count | Should -Be 4
+        } finally { $s.Dispose() }
+        Test-Path -LiteralPath $out | Should -BeTrue -Because 'the PST is written by the same command'
+        (Get-Content -LiteralPath ([IO.Path]::ChangeExtension($out, 'manifest.json')) -Raw | ConvertFrom-Json).Parts.Count | Should -BeGreaterThan 0
+        # ExportPst takes the same file: only what the selection names
+        $again = Invoke-Entry $w @{ Mode = 'ExportPst'; SelectionFile = $set; StorePath = $store; OutputPst = (Join-Path (Join-Path $script:Tmp 'set-pst') 'again.pst'); SkipCheck = $true }
+        $again | Should -Match 'export to PST finished'
     }
 }
 
@@ -1471,5 +1790,237 @@ Describe 'Recoverable Items: the entry script' {
         $w = New-World
         $null = $w.Ie.AddMailbox($bare); $null = $w.Ie.BareFailureMailboxes.Add($bare)
         { $null = Invoke-Entry $w @{ Mode = 'Export'; PrimaryMailboxId = $bare; StorePath = (Join-Path $script:Tmp 'cli-unreach'); TempPath = (Join-Path $script:Tmp 'cli-unreach-tmp') } } | Should -Throw '*Undo-SoftDeletedMailbox*'
+    }
+}
+
+Describe 'Export of a selection: only the folders of the selection are read, with the same result as the whole tree' {
+    BeforeAll {
+        # Inbox (2) > Projects (1) > 2026 (1) > Q1 (1), Q2 (1); Inbox > Other (1); Sent Items (2); Archive (1) > Old (1) > 2019 (1); Calendar (1); Empty; Misc > A (1), B (1)
+        function New-DeepService {
+            $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+            $svc.RootOnlyFolders = $true
+            $null = $svc.AddMailbox($script:Src)
+            $folders = @(
+                @('F-INBOX', 'Inbox', 'ROOT', 2), @('F-PROJ', 'Projects', 'F-INBOX', 1), @('F-2026', '2026', 'F-PROJ', 1), @('F-Q1', 'Q1', 'F-2026', 1), @('F-Q2', 'Q2', 'F-2026', 1), @('F-OTHER', 'Other', 'F-INBOX', 1),
+                @('F-SENT', 'Sent Items', 'ROOT', 2), @('F-ARCH', 'Archive', 'ROOT', 1), @('F-OLD', 'Old', 'F-ARCH', 1), @('F-2019', '2019', 'F-OLD', 1),
+                @('F-CAL', 'Calendar', 'ROOT', 1), @('F-EMPTY', 'Empty', 'ROOT', 0), @('F-MISC', 'Misc', 'ROOT', 0), @('F-A', 'A', 'F-MISC', 1), @('F-B', 'B', 'F-MISC', 1)
+            )
+            foreach ($f in $folders) {
+                $null = $svc.AddFolder($script:Src, $f[0], $f[1], $f[2], $(if ($f[0] -eq 'F-CAL') { 'IPF.Appointment' } else { 'IPF.Note' }))
+                foreach ($i in 1..$f[3] | Where-Object { $f[3] -gt 0 }) { $null = $svc.AddItem($script:Src, $f[0], "$($f[0])-$i", (New-Message "$($f[1]) $i"), "ck-$($f[0])-$i") }
+            }
+            return $svc
+        }
+        $script:DeepPaths = @{ 'F-INBOX' = 'Inbox'; 'F-PROJ' = 'Inbox/Projects'; 'F-2026' = 'Inbox/Projects/2026'; 'F-Q1' = 'Inbox/Projects/2026/Q1'; 'F-Q2' = 'Inbox/Projects/2026/Q2'; 'F-OTHER' = 'Inbox/Other'
+            'F-SENT' = 'Sent Items'; 'F-ARCH' = 'Archive'; 'F-OLD' = 'Archive/Old'; 'F-2019' = 'Archive/Old/2019'; 'F-CAL' = 'Calendar'; 'F-EMPTY' = 'Empty'; 'F-MISC' = 'Misc'; 'F-A' = 'Misc/A'; 'F-B' = 'Misc/B' }
+
+        function New-DeepPlan([object[]]$Entries) {
+            $plan = [MailboxTransfer.ExportPlan]::new()
+            $plan.MailboxId = $script:Src
+            foreach ($e in $Entries) { $plan.Folders.Add([MailboxTransfer.ExportPlanFolder]@{ SourceFolderId = $e[0]; ExportFolderId = $e[0]; Path = $script:DeepPaths[$e[0]]; IncludeSubfolders = [bool]$e[1]; Match = 'SameId' }) }
+            return $plan
+        }
+
+        function Invoke-DeepExport {
+            param([Parameter(Mandatory)]$Service, [Parameter(Mandatory)]$Store, [Parameter(Mandatory)]$Plan, [switch]$Whole, [string]$Kind = 'Primary', [string]$Mailbox = $script:Src)
+            $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $Service))
+            $o = [MailboxTransfer.ExportOptions]::new()
+            $o.MailboxId = $Mailbox; $o.Kind = $Kind; $o.Upn = 'adele@contoso.test'; $o.Concurrency = 2; $o.Plan = $Plan; $o.WholeFolderTree = [bool]$Whole
+            $o.TempPath = Join-Path $script:Tmp ('tmp-' + [guid]::NewGuid().ToString('N'))
+            $job = [MailboxTransfer.ExportJob]::Start($api, $Store, $o)
+            $messages = [System.Collections.Generic.List[string]]::new()
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            while (-not $job.Wait(100)) {
+                foreach ($m in $job.TakeMessages()) { $messages.Add($m) }
+                if ([DateTime]::UtcNow -gt $deadline) { $job.Cancel(); throw 'the export job did not finish in time' }
+            }
+            foreach ($m in $job.TakeMessages()) { $messages.Add($m) }
+            return [pscustomobject]@{ Job = $job; Messages = $messages; Result = $job.Result; Api = $api }
+        }
+
+        function Get-StoreView($Store) {
+            foreach ($f in @($Store.GetFolders($script:Src) | Sort-Object Key)) {
+                $items = @($Store.GetItems($f.Key, 0, 1000, [MailboxTransfer.StoreItemSort]::Subject, $false).Items | ForEach-Object { "$($_.ItemId):$($_.State)" } | Sort-Object)
+                '{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}' -f $f.Key, $f.FolderId, $f.ParentFolderId, $f.DisplayName, $f.Path, $f.FolderType, $f.SourceItemCount, $f.SourceSize, ($items -join ',')
+            }
+        }
+    }
+
+    It 'the same folders, paths, counts and items in the store as the whole tree: <Name>' -ForEach @(
+        @{ Name = 'a folder with its subfolders (Inbox)'; Entries = @(, @('F-INBOX', $true)); Exported = 7 }
+        @{ Name = 'a folder and a folder below it, both with their subfolders'; Entries = @(@('F-INBOX', $true), @('F-PROJ', $true)); Exported = 7 }
+        @{ Name = 'a folder alone and a folder below it'; Entries = @(@('F-INBOX', $false), @('F-2026', $false)); Exported = 3 }
+        @{ Name = 'the subfolder before the folder'; Entries = @(@('F-2026', $true), @('F-INBOX', $false)); Exported = 5 }
+        @{ Name = 'sibling folders'; Entries = @(@('F-SENT', $false), @('F-CAL', $false), @('F-EMPTY', $false)); Exported = 3 }
+        @{ Name = 'a deep folder'; Entries = @(, @('F-Q1', $false)); Exported = 1 }
+        @{ Name = 'a deep folder with its subfolders and a first-level folder'; Entries = @(@('F-OLD', $true), @('F-SENT', $true)); Exported = 4 }
+        @{ Name = 'folders of two branches below a folder that is not chosen'; Entries = @(@('F-A', $false), @('F-B', $false)); Exported = 2 }
+        @{ Name = 'a folder asked twice'; Entries = @(@('F-OTHER', $false), @('F-OTHER', $true)); Exported = 1 }
+    ) {
+        $svc = New-DeepService
+        $plan = New-DeepPlan $Entries
+        $narrowStore = New-TestStoreAt ('narrow-' + [guid]::NewGuid().ToString('N'))
+        $wholeStore = New-TestStoreAt ('whole-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $narrow = Invoke-DeepExport -Service $svc -Store $narrowStore -Plan $plan
+            $narrow.Job.Error | Should -BeNullOrEmpty
+            $narrow.Result.FolderTreeNarrow | Should -BeTrue
+            $narrow.Api.TreesRead | Should -Be 0 -Because 'the tree of the mailbox is not read'
+            $narrow.Api.SubtreesRead | Should -Be 1
+            $whole = Invoke-DeepExport -Service $svc -Store $wholeStore -Plan $plan -Whole
+            $whole.Job.Error | Should -BeNullOrEmpty
+            $whole.Result.FolderTreeNarrow | Should -BeFalse
+            $whole.Api.TreesRead | Should -Be 1
+            $narrow.Result.Exported | Should -Be $Exported
+            $whole.Result.Exported | Should -Be $Exported
+            $narrow.Result.Failed | Should -Be 0
+            $narrow.Result.Inventoried | Should -Be $whole.Result.Inventoried
+            @(Get-StoreView $narrowStore) | Should -Be @(Get-StoreView $wholeStore)
+            @(Get-StoreView $narrowStore).Count | Should -BeGreaterThan 0
+            $narrow.Result.Folders | Should -BeLessThan $whole.Result.Folders
+            $whole.Result.Folders | Should -Be 15
+        } finally { $narrowStore.Dispose(); $wholeStore.Dispose() }
+    }
+
+    It 'the folders read are the folders chosen, the ones below them and the ones above them, and nothing else' {
+        $svc = New-DeepService
+        $store = New-TestStoreAt 'narrow-requests'
+        try {
+            $r = Invoke-DeepExport -Service $svc -Store $store -Plan (New-DeepPlan @(, @('F-OLD', $true)))
+            $r.Job.Error | Should -BeNullOrEmpty
+            $r.Result.Folders | Should -Be 3 -Because 'Archive (above), Old (chosen), 2019 (below)'
+            ($r.Messages -join "`n") | Should -Match 'tree: 3 folders read \(the folders of the selection'
+            $svc.RequestsOf('/folders/F-OLD') | Should -BeGreaterThan 0
+            $svc.RequestsOf('F-MISC') | Should -Be 0
+            $svc.RequestsOf('F-INBOX') | Should -Be 0
+            $svc.RequestsOf('F-EMPTY') | Should -Be 0
+            @($store.GetFolders($script:Src) | ForEach-Object Path | Sort-Object) | Should -Be @('Archive', 'Archive/Old', 'Archive/Old/2019')
+            $r.Job.Snapshot().Detail | Should -BeNullOrEmpty
+        } finally { $store.Dispose() }
+    }
+
+    It 'a folder that is not in the mailbox, or whose chain does not end at the first level, makes the export read the whole tree' {
+        $svc = New-DeepService
+        $store = New-TestStoreAt 'narrow-missing'
+        try {
+            $plan = New-DeepPlan @(, @('F-INBOX', $false))
+            $plan.Folders.Add([MailboxTransfer.ExportPlanFolder]@{ SourceFolderId = 'F-NOT-THERE'; ExportFolderId = 'F-NOT-THERE'; Path = 'Gone'; Match = 'SameId' })
+            $r = Invoke-DeepExport -Service $svc -Store $store -Plan $plan
+            $r.Job.Error.Message | Should -Match 'not found in this mailbox: F-NOT-THERE'
+            $r.Api.TreesRead | Should -Be 1
+            $r.Result.FolderTreeNarrow | Should -BeFalse
+        } finally { $store.Dispose() }
+        $svc2 = New-DeepService
+        $null = $svc2.AddFolder($script:Src, 'F-ORPHAN', 'Orphan', 'F-NO-PARENT')
+        $script:DeepPaths['F-ORPHAN'] = 'Orphan'
+        $store2 = New-TestStoreAt 'narrow-orphan'
+        try {
+            $r2 = Invoke-DeepExport -Service $svc2 -Store $store2 -Plan (New-DeepPlan @(, @('F-ORPHAN', $false)))
+            $r2.Result.FolderTreeNarrow | Should -BeFalse
+            $r2.Api.TreesRead | Should -Be 1
+        } finally { $store2.Dispose() }
+    }
+
+    It 'a folder of the first level: the top of the store above it is never asked for' {
+        $svc = New-DeepService
+        $store = New-TestStoreAt 'narrow-top'
+        try {
+            $r = Invoke-DeepExport -Service $svc -Store $store -Plan (New-DeepPlan @(, @('F-SENT', $false)))
+            $r.Result.Folders | Should -Be 1
+            $r.Result.FolderTreeNarrow | Should -BeTrue
+            $svc.RequestsOf('/folders/ROOT') | Should -Be 0
+            @($svc.Log | Where-Object { $_ -match '/folders/F-SENT(\?|$)' }).Count | Should -Be 0 -Because 'the first level is listed once: a first-level folder is not asked by its id'
+        } finally { $store.Dispose() }
+    }
+
+    It 'the tree of the whole mailbox is read for Recoverable Items, for an auxiliary archive and for a tree already read and kept' {
+        $w = New-World
+        Add-Recoverable $w
+        $store = New-TestStoreAt 'narrow-recoverable'
+        try {
+            $b = New-Browser $w
+            $b.IncludeRecoverableItems = $true
+            $b.RecoverableItemsFolders = [MailboxTransfer.RecoverableItems]::DefaultFolders
+            $tree = $b.GetFolderTree((Get-Loc Primary))
+            $sel = [MailboxTransfer.BrowseSelection]::For((Get-Loc Primary))
+            $null = $sel.AddFolder($tree.Find('Inbox'), $true)
+            $null = $sel.AddFolder($tree.Find('Recoverable Items/Deletions'))
+            $plan = $b.ResolvePlan($sel)
+            $plan.IsComplete | Should -BeTrue -Because ($plan.Problems -join ' ')
+            $r = Invoke-PlanExport -World $w -Store $store -Plan $plan
+            $r.Job.Error | Should -BeNullOrEmpty
+            $r.Result.FolderTreeNarrow | Should -BeFalse
+            $r.Result.RecoverableFolders | Should -BeGreaterThan 0
+            $r.Result.Exported | Should -Be 10 -Because '5 in Inbox, 3 in Projects, 2 in Deletions'
+        } finally { $store.Dispose() }
+
+        $svc = New-DeepService
+        $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $svc))
+        $api.CacheFolderTrees = $true
+        $null = $api.GetFolderTree($script:Src)
+        $api.GetFolderSubtrees($script:Src, [string[]]@('F-SENT'), [System.Collections.Generic.HashSet[string]]::new(), [Threading.CancellationToken]::None, $null, 0) | Should -BeNullOrEmpty -Because 'the whole tree is already there: it is taken from the cache'
+        $api.TreesRead | Should -Be 1
+        $api.SubtreesRead | Should -Be 0
+
+        $aux = New-DeepService
+        $auxStore = New-TestStoreAt 'narrow-aux'
+        try {
+            $r = Invoke-DeepExport -Service $aux -Store $auxStore -Plan (New-DeepPlan @(, @('F-SENT', $false))) -Kind 'AuxArchive'
+            $r.Job.Error | Should -BeNullOrEmpty
+            $r.Result.FolderTreeNarrow | Should -BeFalse
+            $r.Api.TreesRead | Should -Be 1
+        } finally { $auxStore.Dispose() }
+    }
+
+    It 'the main archive: the same result, and the tree of the mailbox is not read' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $svc.RootOnlyFolders = $true
+        $null = $svc.AddMailbox($script:Arch)
+        $null = $svc.AddFolder($script:Arch, 'F-INBOX', 'Inbox'); $null = $svc.AddFolder($script:Arch, 'F-SUB', 'Sub', 'F-INBOX'); $null = $svc.AddFolder($script:Arch, 'F-OTHER', 'Other')
+        foreach ($i in 1..2) { $null = $svc.AddItem($script:Arch, 'F-INBOX', "A$i", (New-Message "Archive $i"), "ck-A$i") }
+        $null = $svc.AddItem($script:Arch, 'F-SUB', 'S1', (New-Message 'Sub'), 'ck-S1')
+        $null = $svc.AddItem($script:Arch, 'F-OTHER', 'O1', (New-Message 'Other'), 'ck-O1')
+        $plan = [MailboxTransfer.ExportPlan]::new()
+        $plan.MailboxId = $script:Arch
+        $plan.Folders.Add([MailboxTransfer.ExportPlanFolder]@{ SourceFolderId = 'F-SUB'; ExportFolderId = 'F-SUB'; Path = 'Inbox/Sub'; Match = 'SameId' })
+        $a = New-TestStoreAt 'narrow-arch-a'; $b = New-TestStoreAt 'narrow-arch-b'
+        try {
+            $n = Invoke-DeepExport -Service $svc -Store $a -Plan $plan -Kind 'Archive' -Mailbox $script:Arch
+            $f = Invoke-DeepExport -Service $svc -Store $b -Plan $plan -Kind 'Archive' -Mailbox $script:Arch -Whole
+            $n.Job.Error | Should -BeNullOrEmpty
+            $n.Result.FolderTreeNarrow | Should -BeTrue
+            $n.Result.Exported | Should -Be 1
+            $f.Result.Exported | Should -Be 1
+            $rows = { param($s) @($s.GetFolders($script:Arch) | ForEach-Object { "$($_.Key)|$($_.FolderId)|$($_.ParentFolderId)|$($_.Path)|$($_.SourceItemCount)" }) }
+            @(& $rows $a) | Should -Be @(& $rows $b)
+            @($a.GetFolders($script:Arch) | ForEach-Object Path | Sort-Object) | Should -Be @('Inbox', 'Inbox/Sub')
+        } finally { $a.Dispose(); $b.Dispose() }
+    }
+
+    It 'a service that lists every folder in the first listing gives the same store as the whole tree' {
+        $svc = New-DeepService
+        $svc.RootOnlyFolders = $false
+        $plan = New-DeepPlan @(@('F-Q1', $false), @('F-OTHER', $false))
+        $a = New-TestStoreAt 'narrow-flat-a'; $b = New-TestStoreAt 'narrow-flat-b'
+        try {
+            $n = Invoke-DeepExport -Service $svc -Store $a -Plan $plan
+            $f = Invoke-DeepExport -Service $svc -Store $b -Plan $plan -Whole
+            $n.Result.FolderTreeNarrow | Should -BeTrue
+            @(Get-StoreView $a) | Should -Be @(Get-StoreView $b)
+            @($a.GetFolders($script:Src) | ForEach-Object Path | Sort-Object) | Should -Be @('Inbox', 'Inbox/Other', 'Inbox/Projects', 'Inbox/Projects/2026', 'Inbox/Projects/2026/Q1')
+        } finally { $a.Dispose(); $b.Dispose() }
+    }
+
+    It 'the reading reports the folders read, and the folders of one level are asked at once' {
+        $svc = New-DeepService
+        $api = [MailboxTransfer.MailboxApi]::new((New-FakeClient -Handler $svc))
+        $seen = [System.Collections.Generic.List[int]]::new()
+        $with = [System.Collections.Generic.HashSet[string]]::new([string[]]@('F-INBOX', 'F-ARCH'))
+        $part = $api.GetFolderSubtrees($script:Src, [string[]]@('F-INBOX', 'F-ARCH'), $with, [Threading.CancellationToken]::None, [Action[int]] { param($n) $seen.Add($n) }, 4)
+        @($part).Count | Should -Be 9 -Because 'Inbox, Projects, 2026, Q1, Q2, Other, Archive, Old, 2019'
+        @($part | ForEach-Object Path) | Should -Be @('Archive', 'Archive/Old', 'Archive/Old/2019', 'Inbox', 'Inbox/Other', 'Inbox/Projects', 'Inbox/Projects/2026', 'Inbox/Projects/2026/Q1', 'Inbox/Projects/2026/Q2')
+        $seen.Count | Should -BeGreaterThan 0
+        $seen[$seen.Count - 1] | Should -Be 9
+        $api.TreesRead | Should -Be 0
     }
 }

@@ -632,6 +632,120 @@ Describe 'the import job' {
     }
 }
 
+Describe 'PST import: nothing the operator types is case sensitive' {
+    BeforeAll {
+        function Invoke-JournalSql([string]$Path, [string[]]$Sql) {
+            $c = [Microsoft.Data.Sqlite.SqliteConnection]::new("Data Source=$Path;Pooling=False"); $c.Open()
+            try { foreach ($s in $Sql) { $cmd = $c.CreateCommand(); $cmd.CommandText = $s; [void]$cmd.ExecuteNonQuery() } } finally { $c.Dispose() }
+        }
+        function Get-JobRows([string]$Path) {
+            $c = [Microsoft.Data.Sqlite.SqliteConnection]::new("Data Source=$Path;Pooling=False;Mode=ReadOnly"); $c.Open()
+            try { $cmd = $c.CreateCommand(); $cmd.CommandText = 'SELECT jobId, name FROM job ORDER BY jobId'; $r = $cmd.ExecuteReader(); $rows = @(); while ($r.Read()) { $rows += "$($r.GetInt64(0)):$($r.GetString(1))" }; $r.Dispose(); $rows } finally { $c.Dispose() }
+        }
+        # the name column of a journal whose job names are case sensitive
+        $script:OldJobTable = @(
+            'CREATE TABLE job_old(jobId INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, targetMailbox TEXT NOT NULL, targetRoot TEXT, createdUtc TEXT NOT NULL, options TEXT)',
+            'INSERT INTO job_old SELECT jobId, name, targetMailbox, targetRoot, createdUtc, options FROM job',
+            'DROP TABLE job', 'ALTER TABLE job_old RENAME TO job')
+    }
+    It 'a job name in another case resumes the same job: nothing is imported twice' {
+        $pst = New-ImportPst 'casejob'
+        $svc = New-TargetService
+        $journal = Join-Path $TestDrive 'casejob.db'
+        $o = New-Options @($pst); $o.JobName = 'PstImport'
+        $first = Invoke-PstJob -Service $svc -Options $o -Journal $journal
+        $first.Result.JobDone | Should -Be 9
+        $o2 = New-Options @($pst); $o2.JobName = 'pstimport'
+        $again = Invoke-PstJob -Service $svc -Options $o2 -Journal $journal
+        $again.Error | Should -BeNullOrEmpty
+        $again.Result.JobId | Should -Be $first.Result.JobId
+        $again.Result.Done | Should -Be 0
+        $again.Result.JobTotal | Should -Be 9
+        $svc.RequestsOf('/importItem?') | Should -Be 9
+        @(Get-JobRows $journal).Count | Should -Be 1
+    }
+    It 'a journal created with a case-sensitive name column is found too, and a name held twice in two spellings picks the most recent job without failing' {
+        $pst = New-ImportPst 'caseold'
+        $svc = New-TargetService
+        $journal = Join-Path $TestDrive 'caseold.db'
+        $o = New-Options @($pst); $o.JobName = 'Migr1'
+        $first = Invoke-PstJob -Service $svc -Options $o -Journal $journal
+        Invoke-JournalSql $journal $script:OldJobTable
+        $o2 = New-Options @($pst); $o2.JobName = 'migr1'
+        $again = Invoke-PstJob -Service $svc -Options $o2 -Journal $journal
+        $again.Error | Should -BeNullOrEmpty
+        $again.Result.JobId | Should -Be $first.Result.JobId
+        $again.Result.Done | Should -Be 0
+        $svc.RequestsOf('/importItem?') | Should -Be 9
+        # the old column accepts a second job that differs only by case: the most recent one is the job of that name
+        Invoke-JournalSql $journal @("INSERT INTO job(name, targetMailbox, targetRoot, createdUtc, options) SELECT 'MIGR1', targetMailbox, targetRoot, createdUtc, options FROM job WHERE jobId=$($first.Result.JobId)")
+        $j = [MailboxTransfer.PstImportJournal]::new($journal)
+        try { $j.FindJob('Migr1') | Should -Be ($first.Result.JobId + 1); $j.FindJob('migr1') | Should -Be ($first.Result.JobId + 1); $j.FindJob('other') | Should -Be 0 } finally { $j.Dispose() }
+    }
+    It 'a new journal does not accept two names that differ by case' {
+        $journal = Join-Path $TestDrive 'casenew.db'
+        $j = [MailboxTransfer.PstImportJournal]::new($journal)
+        try {
+            $a = $j.CreateJob('Archive', $script:Dst, 'x')
+            { [void]$j.CreateJob('ARCHIVE', $script:Dst, 'x') } | Should -Throw
+            $j.FindJob('aRCHIVE') | Should -Be $a
+        } finally { $j.Dispose() }
+    }
+    It 'the target folder and the folder map resume in another case, and the target mailbox id in another case is the same mailbox' {
+        $pst = New-ImportPst 'casefolder'
+        $svc = New-TargetService
+        $journal = Join-Path $TestDrive 'casefolder.db'
+        $o = New-Options @($pst) 'Imported/Old'
+        $o.FolderMap = [System.Collections.Generic.Dictionary[string, string]]::new(); $o.FolderMap['Inbox'] = 'Mail/Received'
+        $first = Invoke-PstJob -Service $svc -Options $o -Journal $journal
+        $first.Result.JobDone | Should -Be 9
+        $folders = @($svc.FoldersOf($script:Dst)).Count
+        $o2 = New-Options @($pst) 'imported/OLD'
+        $o2.FolderMap = [System.Collections.Generic.Dictionary[string, string]]::new(); $o2.FolderMap['INBOX'] = 'mail/received'
+        $o2.TargetMailboxId = $script:Dst.Replace('MBX:', 'mbx:')
+        $again = Invoke-PstJob -Service $svc -Options $o2 -Journal $journal
+        $again.Error | Should -BeNullOrEmpty
+        $again.Result.Done | Should -Be 0
+        $again.Result.JobComplete | Should -BeTrue
+        $svc.RequestsOf('/importItem?') | Should -Be 9
+        @($svc.FoldersOf($script:Dst)).Count | Should -Be $folders -Because 'no second tree below another spelling of the same folder'
+        # another folder is still another folder
+        (Invoke-PstJob -Service $svc -Options (New-Options @($pst) 'Imported/Else') -Journal $journal).Error.Message | Should -BeLike '*other target options*'
+    }
+    It 'the options of a journal that holds the folder as it was typed are compared without case' {
+        $pst = New-ImportPst 'caseopts'
+        $svc = New-TargetService
+        $journal = Join-Path $TestDrive 'caseopts.db'
+        $first = Invoke-PstJob -Service $svc -Options (New-Options @($pst) 'Imported/old') -Journal $journal
+        Invoke-JournalSql $journal @("UPDATE job SET options='targetFolder=IMPORTED/OLD; mergeWellKnown=False; perFileSubfolder=False; folderMap='")
+        $again = Invoke-PstJob -Service $svc -Options (New-Options @($pst) 'imported/old') -Journal $journal
+        $again.Error | Should -BeNullOrEmpty
+        $again.Result.Done | Should -Be 0
+    }
+    It 'recognises the file of an earlier run whatever the case of its path, and says it changed' {
+        $journal = Join-Path $TestDrive 'casepath.db'
+        $j = [MailboxTransfer.PstImportJournal]::new($journal)
+        try {
+            $id = $j.CreateJob('paths', $script:Dst, 'x')
+            $j.SavePst($id, [MailboxTransfer.PstImportSource]@{ PstId = 'a.pst|10|aaaaaaaaaaaaaaaa'; SourcePath = 'C:\X\a.pst' })
+            $j.OtherPstIdForPath($id, 'c:\x\A.PST', 'a.pst|11|bbbbbbbbbbbbbbbb') | Should -Be 'a.pst|10|aaaaaaaaaaaaaaaa'
+            $j.OtherPstIdForPath($id, 'c:\x\A.PST', 'a.pst|10|aaaaaaaaaaaaaaaa') | Should -BeNullOrEmpty -Because 'it is the same file'
+            $j.OtherPstIdForPath($id, 'c:\x\b.pst', 'b.pst|1|cccccccccccccccc') | Should -BeNullOrEmpty
+        } finally { $j.Dispose() }
+        # a run that finds the file changed and spelled in another case
+        $pst = Join-Path $TestDrive 'CaseChanged\Old.pst'
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path $pst)
+        $w = [MailboxTransfer.PstWriter]::Create($pst, 'one'); $f = $w.CreateFolder($null, 'Inbox', 'IPF.Note'); [void]$w.AddMessage($f, (New-PstMsg 'one')); $w.Close()
+        $svc = New-TargetService
+        $journal2 = Join-Path $TestDrive 'casechanged.db'
+        $null = Invoke-PstJob -Service $svc -Options (New-Options @($pst)) -Journal $journal2
+        Remove-Item -LiteralPath $pst -Force
+        $w = [MailboxTransfer.PstWriter]::Create($pst, 'two'); $f = $w.CreateFolder($null, 'Inbox', 'IPF.Note'); [void]$w.AddMessage($f, (New-PstMsg 'one')); [void]$w.AddMessage($f, (New-PstMsg 'two')); $w.Close()
+        $changed = Invoke-PstJob -Service $svc -Options (New-Options @($pst.ToUpperInvariant())) -Journal $journal2
+        ($changed.Messages -join "`n") | Should -Match 'is not the file this job imported before'
+    }
+}
+
 Describe 'Import-MbtPst' {
     It 'shows the plan with -WhatIf and creates nothing, then imports through the function' {
         $pst = New-ImportPst 'cmdlet'

@@ -1,0 +1,169 @@
+<!doctype html>
+<!--
+    Mailbox Transfer - HTML report of a job (template)
+    Author  : Nicolas Fabert
+    Written by Write-MbtJobHtmlReport (module\MailboxTransfer.Report.ps1) at the end of every job, from events.jsonl and status.json of the job
+    folder. Every marker in the page below (an upper-case name in double braces) is replaced once, in one pass, by text that the code has already
+    HTML-encoded. The markers, in the order of the page:
+      TITLE, VERSION, SUBTITLE   texts of the header
+      META         job details (task, source, destination, store, times, job id)
+      TILES        result tiles
+      NEXT         "What to do next" card
+      ERRORS       the error of the job, when there is one
+      DECISIONS    items waiting for a decision
+      TIMELINE     the chronology as a picture (SVG: one bar a step, the waits, the sleeps, the warnings and the errors)
+      STEPS        the steps with their start, end, duration, state and message
+      CHRONOLOGY   every event of the job in time order
+      FOLDERS      one row a folder (items, size, state)
+      ITEMS        items and findings that need a look (refused items, check findings, items not recovered)
+      WARNINGS     warnings of the job
+      FILES        links to the other files of the job folder
+      GENERATED    when and how the report was written
+      DATA         the same data as JSON (script element, application/json), for tools
+    The page needs no network and no other file. The script at the end only filters tables and follows the theme of the system.
+-->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{TITLE}}</title>
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("theme");
+    const theme = param === "light" || param === "dark" ? param : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef; --cp-bg-elevated: #fcfbf8; --cp-surface: #ffffff; --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede; --cp-border-strong: #919191; --cp-text: #242424; --cp-text-muted: #5c5c5c; --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b; --cp-accent-hover: #9a1a41; --cp-accent-soft: rgba(177, 31, 75, 0.08); --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a; --cp-danger: #dc2626; --cp-warning: #d97706; --cp-link: #0078d4; --cp-violet: #7c3aed; --cp-gray: #9ca3af;
+  --cp-highlight: rgba(177, 31, 75, 0.12); --cp-sleep: rgba(124, 58, 237, 0.16);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a; --cp-bg-elevated: #343231; --cp-surface: #292929; --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747; --cp-border-strong: #5f5f5f; --cp-text: #dedede; --cp-text-muted: #a0a0a0; --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1; --cp-accent-hover: #fb7b91; --cp-accent-soft: rgba(253, 142, 161, 0.14); --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80; --cp-danger: #f87171; --cp-warning: #fbbf24; --cp-link: #4da6ff; --cp-violet: #a78bfa; --cp-gray: #8b8b8b;
+  --cp-highlight: rgba(253, 142, 161, 0.12); --cp-sleep: rgba(167, 139, 250, 0.2);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 32px; background: var(--cp-bg); color: var(--cp-text); font: 14px "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; margin: 8px 0 6px; }
+h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+p { line-height: 1.5; margin: 8px 0; }
+.muted, small { color: var(--cp-text-muted); }
+a { color: var(--cp-link); }
+[hidden] { display: none !important; }
+header.hero { position: relative; overflow: hidden; border: 1px solid var(--cp-border); border-top: 4px solid var(--cp-accent); border-radius: 16px; padding: 24px; margin-bottom: 20px; background: linear-gradient(125deg, var(--cp-surface) 35%, var(--cp-accent-soft)); }
+header.hero::before { content: ""; position: absolute; width: 280px; height: 280px; right: -100px; top: -160px; border: 40px solid var(--cp-highlight); border-radius: 50%; pointer-events: none; }
+.origin { position: relative; color: var(--cp-accent); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700; }
+.subtitle { position: relative; color: var(--cp-text-muted); margin: 0 0 16px; overflow-wrap: anywhere; }
+header.hero h1 { position: relative; overflow-wrap: anywhere; }
+.meta { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 24px; font-size: 13px; }
+.meta div { min-width: 0; overflow-wrap: anywhere; }
+.meta span { display: block; font-size: 11px; color: var(--cp-accent); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin: 0 0 20px; }
+.tile { position: relative; overflow: hidden; padding: 16px 18px; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); transition: transform 160ms ease, border-color 160ms ease; }
+.tile:hover { transform: translateY(-3px); border-color: var(--cp-accent); }
+.tile::after { content: ""; position: absolute; width: 70px; height: 70px; right: -26px; bottom: -30px; border: 12px solid var(--cp-highlight); border-radius: 50%; pointer-events: none; }
+.tile-label { font-size: 12px; font-weight: 600; color: var(--cp-text-muted); }
+.tile-value { font-size: 26px; font-weight: 650; margin-top: 8px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tile-note { font-size: 11px; color: var(--cp-text-muted); margin-top: 4px; }
+.tile.ok .tile-value { color: var(--cp-success); } .tile.warn .tile-value { color: var(--cp-warning); } .tile.fail .tile-value { color: var(--cp-danger); } .tile.info .tile-value { color: var(--cp-link); }
+.tile.main { background: linear-gradient(125deg, var(--cp-accent-hover), var(--cp-accent)); border-color: var(--cp-accent); }
+.tile.main .tile-label, .tile.main .tile-value, .tile.main .tile-note { color: var(--cp-accent-fg); }
+.card { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+.card > h2 .count { color: var(--cp-text-muted); font-weight: 400; font-size: 13px; margin-left: 6px; }
+.card.next { border-left: 4px solid var(--cp-accent); }
+.card.next.ok { border-left-color: var(--cp-success); }
+.card.problem { border-left: 4px solid var(--cp-danger); } .card.problem h2 { color: var(--cp-danger); }
+.card.attention { border-left: 4px solid var(--cp-warning); } .card.attention h2 { color: var(--cp-warning); }
+.caption { font-size: 12px; color: var(--cp-text-muted); margin: 0 0 12px; }
+pre { background: var(--cp-surface-soft); border: 1px solid var(--cp-border); border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px Consolas, "Cascadia Mono", monospace; margin: 8px 0; }
+code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
+details > summary { cursor: pointer; color: var(--cp-text-muted); font-size: 12px; }
+.scroll { overflow: auto; max-height: 560px; border: 1px solid var(--cp-border); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { position: sticky; top: 0; background: var(--cp-surface-soft); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--cp-border); white-space: nowrap; font-weight: 600; z-index: 1; }
+td { padding: 7px 10px; border-bottom: 1px solid var(--cp-border); vertical-align: top; overflow-wrap: anywhere; }
+tbody tr:hover td { background: var(--cp-accent-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.when { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--cp-text-muted); }
+td.mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+tr.k-error td:first-child { box-shadow: inset 3px 0 0 var(--cp-danger); } tr.k-warn td:first-child, tr.k-wait td:first-child { box-shadow: inset 3px 0 0 var(--cp-warning); }
+tr.k-sleep td:first-child { box-shadow: inset 3px 0 0 var(--cp-violet); } tr.k-result td:first-child, tr.k-start td:first-child { box-shadow: inset 3px 0 0 var(--cp-accent); }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-weight: 600; font-size: 11.5px; border: 1px solid currentColor; white-space: nowrap; }
+.badge.ok { color: var(--cp-success); } .badge.warn { color: var(--cp-warning); } .badge.fail { color: var(--cp-danger); } .badge.info { color: var(--cp-link); } .badge.wait { color: var(--cp-text-muted); }
+.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+button.chip, .chip { font: inherit; font-size: 12px; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--cp-border); color: var(--cp-text-muted); background: var(--cp-surface); cursor: pointer; }
+button.chip[aria-pressed="true"] { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+input[type="search"] { font: inherit; color: var(--cp-text); background: var(--cp-surface); border: 1px solid var(--cp-border); padding: 6px 10px; border-radius: 10px; min-width: 220px; }
+:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+.timeline { width: 100%; height: auto; display: block; }
+.timeline text { fill: var(--cp-text-muted); font-size: 11px; font-family: "Segoe UI", Aptos, Calibri, sans-serif; }
+.timeline .lane { fill: var(--cp-surface-soft); }
+.timeline .grid { stroke: var(--cp-border); stroke-width: 1; }
+.timeline .done { fill: var(--cp-success); } .timeline .failed { fill: var(--cp-danger); } .timeline .open { fill: var(--cp-warning); } .timeline .wait { fill: var(--cp-warning); }
+.timeline .sleep { fill: var(--cp-sleep); stroke: var(--cp-violet); stroke-width: 1; }
+.timeline .mark-warn { fill: var(--cp-warning); } .timeline .mark-error { fill: var(--cp-danger); }
+.timeline rect.bar:hover { opacity: 0.8; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--cp-text-muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.files { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 0; list-style: none; }
+.empty { padding: 18px; text-align: center; color: var(--cp-text-muted); }
+footer { color: var(--cp-text-muted); font-size: 12px; line-height: 1.6; margin-top: 8px; }
+@media (max-width: 700px) { body { padding: 14px 12px; } h1 { font-size: 24px; } .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .tile-value { font-size: 22px; } header.hero { padding: 16px; } .card { padding: 14px; } }
+@media print { body { padding: 0; background: #fff; } .bar, .chips { display: none; } .scroll { max-height: none; overflow: visible; } .tile:hover { transform: none; } }
+</style></head>
+<body>
+<header class="hero">
+  <div class="origin">Mailbox Transfer &middot; v{{VERSION}}</div>
+  <h1>{{TITLE}}</h1>
+  <p class="subtitle">{{SUBTITLE}}</p>
+  <div class="meta">{{META}}</div>
+</header>
+<div class="tiles">{{TILES}}</div>
+{{NEXT}}
+{{ERRORS}}
+{{DECISIONS}}
+<section class="card" aria-labelledby="timeline-heading">
+  <h2 id="timeline-heading">Chronology of the job</h2>
+  {{TIMELINE}}
+</section>
+<section class="card" aria-labelledby="steps-heading">
+  <h2 id="steps-heading">Steps</h2>
+  {{STEPS}}
+</section>
+<section class="card" aria-labelledby="chrono-heading">
+  <h2 id="chrono-heading">What happened, in time order</h2>
+  {{CHRONOLOGY}}
+</section>
+{{FOLDERS}}
+{{ITEMS}}
+{{WARNINGS}}
+<section class="card" aria-labelledby="files-heading">
+  <h2 id="files-heading">Files of the job</h2>
+  {{FILES}}
+</section>
+<footer>{{GENERATED}}</footer>
+{{DATA}}
+<script>
+  (() => {
+    const chips = document.querySelectorAll("button.chip[data-filter]");
+    const rows = document.querySelectorAll("tr[data-kind]");
+    chips.forEach(chip => chip.addEventListener("click", () => {
+      const kinds = chip.getAttribute("data-filter").split(" ");
+      chips.forEach(c => c.setAttribute("aria-pressed", c === chip ? "true" : "false"));
+      rows.forEach(r => { r.hidden = kinds[0] !== "all" && kinds.indexOf(r.getAttribute("data-kind")) < 0; });
+    }));
+    document.querySelectorAll("input[data-search]").forEach(box => box.addEventListener("input", () => {
+      const needle = box.value.trim().toLowerCase();
+      document.querySelectorAll("#" + box.getAttribute("data-search") + " tbody tr").forEach(r => { r.hidden = needle !== "" && r.textContent.toLowerCase().indexOf(needle) < 0; });
+    }));
+  })();
+</script>
+</body></html>

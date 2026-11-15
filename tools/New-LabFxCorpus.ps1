@@ -43,10 +43,10 @@
     then holds the id, the name and how to find the path), the counts, and a manifest written to -OutputPath even when items failed.
 
 .PARAMETER UserPrincipalName
-    The lab user (default: Lab.UserPrincipalName of package\config\MailboxTransfer.config.psd1).
+    The lab user (default: Tenant.UserPrincipalName of package\config\MailboxTransfer.config.psd1, then of the local configuration file).
 
 .PARAMETER TenantId
-    Default: Lab.TenantId of the configuration.
+    Default: Tenant.TenantId of the configuration.
 
 .PARAMETER ClientId
     Public client application (default 14d82eec-204b-4c2f-b7e8-296a70dab67e, Microsoft Graph Command Line Tools).
@@ -73,7 +73,7 @@
     Manifest of the run, JSON (default <repository>\out\fxics-corpus-created.json; out\ is git-ignored).
 
 .PARAMETER ConfigPath
-    Configuration file read for the Lab defaults (default package\config\MailboxTransfer.config.psd1).
+    Configuration file read for the Tenant defaults (default package\config\MailboxTransfer.config.psd1).
 
 .PARAMETER AccessToken
     A Graph access token to use as is instead of signing in (no renewal). Meant for the tests against a local fake service.
@@ -127,17 +127,28 @@ $repo = Split-Path $PSScriptRoot -Parent
 #region Defaults and plan ---------------------------------------------------------------------------------------------------------
 
 if (-not $ConfigPath) { $ConfigPath = Join-Path $repo 'package\config\MailboxTransfer.config.psd1' }
-$lab = if (Test-Path -LiteralPath $ConfigPath) { (Import-PowerShellDataFile -LiteralPath $ConfigPath).Lab } else { $null }
-# the private local file (see Import-MbtConfiguration) overrides the Lab defaults
-$localConfig = if ($null -ne $env:MAILBOXTRANSFER_LOCAL_CONFIG) { $env:MAILBOXTRANSFER_LOCAL_CONFIG } else { Join-Path $repo 'package\config\MailboxTransfer.config.local.psd1' }
-if ($localConfig -and (Test-Path -LiteralPath $localConfig)) {
-    $localLab = (Import-PowerShellDataFile -LiteralPath $localConfig).Lab
-    if ($localLab) { $merged = @{}; if ($lab) { foreach ($k in $lab.Keys) { $merged[$k] = $lab[$k] } }; foreach ($k in $localLab.Keys) { if ($localLab[$k]) { $merged[$k] = $localLab[$k] } }; $lab = $merged }
+function Get-FxcConfigDefault {
+    # Value of a key in the Tenant section of a configuration file, else in its Lab section (the older name of the same keys); '' when absent
+    param([string]$Path, [string]$Key)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return '' }
+    $data = Import-PowerShellDataFile -LiteralPath $Path
+    foreach ($section in 'Tenant', 'Lab') {
+        if ($data.ContainsKey($section) -and $data[$section] -is [hashtable] -and $data[$section].ContainsKey($Key) -and $data[$section][$Key]) { return [string]$data[$section][$Key] }
+    }
+    ''
 }
-if (-not $UserPrincipalName -and $lab) { $UserPrincipalName = $lab.UserPrincipalName }
-if (-not $TenantId -and $lab) { $TenantId = $lab.TenantId }
-if (-not $UserPrincipalName) { throw 'No -UserPrincipalName and no Lab.UserPrincipalName in the configuration.' }
-if (-not $TenantId) { throw 'No -TenantId and no Lab.TenantId in the configuration.' }
+# the private local file (see Import-MbtConfiguration) overrides the defaults of the shipped file
+$localConfig = if ($null -ne $env:MAILBOXTRANSFER_LOCAL_CONFIG) { $env:MAILBOXTRANSFER_LOCAL_CONFIG } else { Join-Path $repo 'package\config\MailboxTransfer.config.local.psd1' }
+if (-not $UserPrincipalName) {
+    $UserPrincipalName = Get-FxcConfigDefault -Path $localConfig -Key 'UserPrincipalName'
+    if (-not $UserPrincipalName) { $UserPrincipalName = Get-FxcConfigDefault -Path $ConfigPath -Key 'UserPrincipalName' }
+}
+if (-not $TenantId) {
+    $TenantId = Get-FxcConfigDefault -Path $localConfig -Key 'TenantId'
+    if (-not $TenantId) { $TenantId = Get-FxcConfigDefault -Path $ConfigPath -Key 'TenantId' }
+}
+if (-not $UserPrincipalName) { throw 'No -UserPrincipalName and no Tenant.UserPrincipalName in the configuration.' }
+if (-not $TenantId) { throw 'No -TenantId and no Tenant.TenantId in the configuration.' }
 if (-not $DeviceCodeFile) { $DeviceCodeFile = Join-Path $repo 'out\device-code-fxcorpus.txt' }
 if (-not $TokenCachePath) { $TokenCachePath = Join-Path $env:LOCALAPPDATA 'MailboxTransfer\lab-fxcorpus-token.cache' }
 if (-not $OutputPath) { $OutputPath = Join-Path $repo 'out\fxics-corpus-created.json' }
@@ -454,7 +465,7 @@ if ($AccessToken) {
     $script:Auth.DeviceCode = $useDeviceCode
     $script:Auth.DeviceCodeFile = $DeviceCodeFile
     if (Test-Path -LiteralPath $DeviceCodeFile) { Remove-Item -LiteralPath $DeviceCodeFile -Force -ErrorAction SilentlyContinue }
-    Write-Fxc INFO ("signing in as {0} ({1})" -f $UserPrincipalName, $(if ($useDeviceCode) { "device code: read the line 'DEVICE CODE:' (also in $DeviceCodeFile)" } else { 'browser or cache' }))
+    Write-Fxc INFO ("signing in as {0} ({1})" -f $UserPrincipalName, $(if ($useDeviceCode) { "device code: read the line 'DEVICE CODE:' (also in $DeviceCodeFile)" } else { 'Windows sign-in window or cache' }))
     [void]$script:Auth.SignIn()
     Write-Fxc OK "signed in as $($script:Auth.Account)"
 }

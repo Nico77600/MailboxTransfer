@@ -22,6 +22,7 @@ $script:StopWatcher = $null
 $script:KeepAwake = $null
 $script:JobInfo = $null
 $script:JobProgress = $null
+$script:PhaseProgress = $null
 
 #region Event log ------------------------------------------------------------------------------
 
@@ -38,6 +39,11 @@ function Open-MbtEventLog {
         [string]$Title,
         [string]$Mode,
         [string]$Store,
+        # what the job reads from and writes to, in a few words: the report of the job says it (status.json: source, destination)
+        [string]$Source,
+        [string]$Destination,
+        # the batch this job belongs to (status.json: batch): the overview lists the jobs of a batch together; left out, the job belongs to none
+        [string]$Batch,
         # period of the heartbeat that detects a sleep (milliseconds, 0 = none)
         [int]$HeartbeatMs = 5000
     )
@@ -47,14 +53,45 @@ function Open-MbtEventLog {
     $script:EventLog = [MailboxTransfer.EventLog]::new($full, $null, $HeartbeatMs, 120)
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
     $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false }
-    $script:JobProgress = @{ Step = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store
+    $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
+    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch
 }
 
 function Close-MbtEventLog {
     [CmdletBinding()]
     param()
     if ($script:EventLog) { $script:EventLog.Dispose(); $script:EventLog = $null }
+}
+
+function Start-MbtPhaseProgress {
+    <#
+    .SYNOPSIS
+        A read-only job that reads the folder trees before it transfers anything: the trees are read once for the whole run (the reading of the selection and the export share them),
+        and the reading says how far it is, as step events of -Step (the first one at once, then every second at most): "1,240 folders read".
+    .DESCRIPTION
+        Needs Connect-MbtGraph first. Without an event log (no -EventsFile) only the sharing of the trees is switched on. Call Stop-MbtPhaseProgress when the phase is over.
+    #>
+    [CmdletBinding()]
+    param([string]$Step = 'tree')
+    Initialize-MbtEngine
+    Stop-MbtPhaseProgress
+    $session = Get-MbtSession
+    $session.Api.CacheFolderTrees = $true
+    if ($script:EventLog) {
+        $script:PhaseProgress = [MailboxTransfer.PhaseProgress]::new($script:EventLog, $Step)
+        $session.Api.TreeProgress = $script:PhaseProgress.FolderCount()
+    }
+}
+
+function Stop-MbtPhaseProgress {
+    <# Writes the last progress text and stops the reports. The trees already read stay shared. #>
+    [CmdletBinding()]
+    param()
+    if ($script:PhaseProgress) {
+        $script:PhaseProgress.Dispose()
+        $script:PhaseProgress = $null
+        if ($script:Session) { $script:Session.Api.TreeProgress = $null }
+    }
 }
 
 function Write-MbtEvent {
@@ -183,19 +220,19 @@ function Write-MbtJobStatus {
     .SYNOPSIS
         Writes (or updates) status.json in a job folder: what the Continue list of the console reads.
     .DESCRIPTION
-        Fields: v, jobId, task, title, mode, store, state (running | stopped | resumable | needs-decision | complete | error), exitCode,
+        Fields: v, jobId, task, title, mode, store, source, destination, batch (when the job belongs to one), state (running | stopped | resumable | needs-decision | complete | error), exitCode,
         counts, next, reason, started, updated, lastEvent, pid. A call updates the fields it is given and keeps the others.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$JobFolder,
         [Parameter(Mandatory)][ValidateSet('running', 'stopped', 'resumable', 'needs-decision', 'complete', 'error')][string]$State,
-        [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store,
+        [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store, [string]$Source, [string]$Destination, [string]$Batch,
         [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason
     )
     if (-not (Test-Path -LiteralPath $JobFolder)) { New-Item -ItemType Directory -Path $JobFolder -Force | Out-Null }
     $file = Join-Path $JobFolder 'status.json'
-    $s = [ordered]@{ v = 1; jobId = $null; task = $null; title = $null; mode = $null; store = $null; state = $null; exitCode = $null; counts = @{}; next = $null; reason = $null; started = $null; updated = $null; lastEvent = $null; pid = $PID }
+    $s = [ordered]@{ v = 1; jobId = $null; task = $null; title = $null; mode = $null; store = $null; source = $null; destination = $null; batch = $null; state = $null; exitCode = $null; counts = @{}; next = $null; reason = $null; started = $null; updated = $null; lastEvent = $null; pid = $PID }
     if (Test-Path -LiteralPath $file) {
         try { $old = Read-MbtJsonFile -Path $file -AsHashtable; foreach ($k in $old.Keys) { $s[$k] = $(if ($old[$k] -is [datetime]) { $old[$k].ToUniversalTime().ToString('yyyy-MM-dd\THH:mm:ss.fff\Z') } else { $old[$k] }) } } catch { }
     }
@@ -203,7 +240,7 @@ function Write-MbtJobStatus {
     if (-not $s.started) { $s.started = $now }
     $s.state = $State; $s.updated = $now; $s.pid = $PID
     $s.lastEvent = if ($script:EventLog) { [MailboxTransfer.EventLog]::Iso($script:EventLog.LastEventUtc) } else { $now }
-    foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
+    foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('source', $Source), @('destination', $Destination), @('batch', $Batch), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
     if ($Counts) { $s.counts = $Counts }
     if ($PSBoundParameters.ContainsKey('ExitCode') -and $null -ne $ExitCode) { $s.exitCode = [int]$ExitCode }
     $json = $s | ConvertTo-Json -Depth 6
@@ -215,16 +252,20 @@ function Write-MbtJobStatus {
 function Get-MbtJob {
     <#
     .SYNOPSIS
-        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job".
+        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job". -ExcludeFolder: names of job folders that are left out without being read.
     .DESCRIPTION
         A job whose state is running but whose process is gone (crash, power loss, killed) is reported with EffectiveState resumable and
         Interrupted = $true; if the process is still there, Alive is $true ("running elsewhere").
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50)
+    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50, [string[]]$ExcludeFolder)
     $jobs = Join-Path $WorkFolder 'jobs'
     if (-not (Test-Path -LiteralPath $jobs)) { return }
-    $found = foreach ($dir in Get-ChildItem -LiteralPath $jobs -Directory -ErrorAction SilentlyContinue) {
+    # the newest folders only (a status.json is replaced with every update, which touches its folder), and not the ones the caller already knows about (the jobs of a batch that is complete)
+    $skip = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $ExcludeFolder) { if ($n) { [void]$skip.Add($n) } }
+    $newest = @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { -not $skip.Contains($_.Name) } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([math]::Max($Limit * 4, 200)))
+    $found = foreach ($dir in $newest) {
         $file = Join-Path $dir.FullName 'status.json'
         if (-not (Test-Path -LiteralPath $file)) { continue }
         try { $s = Read-MbtJsonFile -Path $file } catch { continue }
@@ -241,11 +282,149 @@ function Get-MbtJob {
         $effective = if ($state -eq 'running' -and -not $alive) { 'resumable' } else { $state }
         [pscustomobject]@{
             JobId = & $get 'jobId'; Task = & $get 'task'; Title = & $get 'title'; Mode = & $get 'mode'; Store = & $get 'store'; State = $state; EffectiveState = $effective
-            Alive = $alive; Interrupted = ($state -eq 'running' -and -not $alive); ExitCode = & $get 'exitCode'; Counts = & $get 'counts'; Next = & $get 'next'; Reason = & $get 'reason'
+            Alive = $alive; Interrupted = ($state -eq 'running' -and -not $alive); ExitCode = & $get 'exitCode'; Counts = & $get 'counts'; Next = & $get 'next'; Reason = & $get 'reason'; Batch = & $get 'batch'
             Started = $started; Updated = $updated; Folder = $dir.FullName; EventsFile = (Join-Path $dir.FullName 'events.jsonl')
         }
     }
     @($found | Sort-Object Updated -Descending | Select-Object -First $Limit)
+}
+
+function Remove-MbtFolderTree {
+    <# Removes what is in a folder, the folder itself stays; a link (junction or symbolic link) is removed and never followed, so what it points to is never touched. -KeepFirst: a file of the folder that is left for the caller. #>
+    param([Parameter(Mandatory)][string]$Path, [string]$KeepFirst)
+    foreach ($entry in [IO.DirectoryInfo]::new($Path).EnumerateFileSystemInfos()) {
+        if ($KeepFirst -and $entry.Name -ieq $KeepFirst) { continue }
+        $link = [bool]($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        if ($entry -is [IO.DirectoryInfo]) {
+            if (-not $link) { Remove-MbtFolderTree -Path $entry.FullName }
+            [IO.Directory]::Delete($entry.FullName)
+        } else {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReadOnly) { $entry.Attributes = [IO.FileAttributes]::Normal }
+            $entry.Delete()
+        }
+    }
+}
+
+function Invoke-MbtJobRetention {
+    <#
+    .SYNOPSIS
+        Deletes the folders of the jobs that are finished and older than the retention (Jobs.RetentionDays of the configuration, 90 days; 0 keeps everything).
+    .DESCRIPTION
+        Only the direct subfolders of <WorkFolder>\jobs are ever looked at, and only a job whose status.json says that it is finished (state complete or error) and whose last
+        update is older than the retention is deleted. Kept, always: a job that can still be continued (not complete or error: stopped, partial, waiting for a decision, still
+        running, or that never wrote its end), a job of a batch that is not finished (a mailbox of the batch is not complete: the batch may be run again), a folder without a readable status.json, a folder that is a link
+        to somewhere else, the folder named by -Keep (the job that is starting), and a folder that a job that is kept names in its request (a store, an output, a file). The checks of a plan
+        (task ending in -plan) write nothing: their folders are removed after one day, whatever their state. The stores, the selections and the files a job wrote
+        (PST, EML) are not in the jobs folder: they are never touched. The overview of all the jobs is written again when something was removed. What was removed is written
+        to the log, one line for each folder. Returns RetentionDays, JobsFolder, Removed, Failed, Protected (names of folders) and Overview.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Work')][string]$WorkFolder,
+        [Parameter(Mandatory, ParameterSetName = 'Job')][string]$JobFolder,
+        [ValidateRange(0, 3650)][Nullable[int]]$RetentionDays,
+        [Parameter(ParameterSetName = 'Work')][string]$Keep,
+        # the overview that is written after a purge is stopped after this many seconds (0 = no limit): the next job or the console finishes it
+        [ValidateRange(0, 86400)][int]$OverviewBudgetSeconds = 0
+    )
+    Set-StrictMode -Version Latest
+    if ($PSCmdlet.ParameterSetName -eq 'Job') {
+        # the entry script knows its own job folder only: its work folder is the one that holds its jobs folder, and the job that starts is never removed
+        $parent = Split-Path ([IO.Path]::GetFullPath($JobFolder)) -Parent
+        if (-not $parent -or (Split-Path $parent -Leaf) -ine 'jobs') { return $null }
+        $WorkFolder = Split-Path $parent -Parent
+        $Keep = $JobFolder
+    }
+    $days =if ($null -ne $RetentionDays) { [int]$RetentionDays } else { [int](Import-MbtConfiguration).Jobs.RetentionDays }
+    $jobsFolder = [IO.Path]::GetFullPath((Join-Path $WorkFolder 'jobs')).TrimEnd('\')
+    $result = [pscustomobject]@{ RetentionDays = $days; JobsFolder = $jobsFolder; Removed = @(); Failed = @(); Protected = @(); Overview = $null }
+    $batchHeld = [Collections.Generic.List[string]]::new()
+    if ($days -le 0 -or -not [IO.Directory]::Exists($jobsFolder)) { return $result }
+    $epoch = [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+    $limit = [datetime]::UtcNow.AddDays(-$days)
+    $limitSeconds = [long][math]::Floor(($limit - $epoch).TotalSeconds)
+    $planLimit = [datetime]::UtcNow.AddDays(-1)
+    $planLimitSeconds = [long][math]::Floor(($planLimit - $epoch).TotalSeconds)
+    $keepName = if ($Keep) { [IO.Path]::GetFileName([IO.Path]::GetFullPath($Keep).TrimEnd('\')) } else { '' }
+    $held = Get-MbtBatchProtection -WorkFolder $WorkFolder
+
+    # the folders of finished jobs that were last touched before the limit (a folder that was touched since cannot be old: its status.json is rewritten with every update), and the checks of a plan after a day
+    $old = [Collections.Generic.List[IO.DirectoryInfo]]::new()
+    $planFolder = [regex]::new('-plan-[0-9a-fA-F]{4}$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    foreach ($dir in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) {
+        if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $dir.Name -ieq $keepName) { continue }
+        if ($dir.LastWriteTimeUtc -ge $planLimit) { continue }
+        $isPlan = $planFolder.IsMatch($dir.Name)
+        if (-not $isPlan -and $dir.LastWriteTimeUtc -ge $limit) { continue }
+        $status = Read-MbtOverviewStatus -Path ([IO.Path]::Combine($dir.FullName, 'status.json'))
+        # the check of a plan is a job of its own that writes nothing: its folder name says it (<time>-<task>-plan-<id>)
+        if ($isPlan) {
+            $stamp = if ($null -ne $status) { ConvertTo-MbtOverviewSeconds $(if ($status.ContainsKey('updated')) { $status.updated } elseif ($status.ContainsKey('lastEvent')) { $status.lastEvent } else { $null }) } else { $null }
+            if ($null -eq $stamp) { $stamp = [long][math]::Floor(($dir.LastWriteTimeUtc - $epoch).TotalSeconds) }
+            if ($stamp -lt $planLimitSeconds) { $old.Add($dir) }
+            continue
+        }
+        if ($null -eq $status -or -not $status.ContainsKey('state') -or [string]$status.state -notin 'complete', 'error') { continue }
+        $updated = ConvertTo-MbtOverviewSeconds $(if ($status.ContainsKey('updated')) { $status.updated } elseif ($status.ContainsKey('lastEvent')) { $status.lastEvent } else { $null })
+        if ($null -eq $updated -or $updated -ge $limitSeconds) { continue }
+        # a job of a batch that is not finished stays: the batch may be run again
+        $jobBatch = if ($status.ContainsKey('batch')) { [string]$status.batch } else { '' }
+        if ($held.Jobs.Contains($dir.Name) -or ($jobBatch -and $held.Batches.Contains($jobBatch))) { $batchHeld.Add($dir.Name); continue }
+        $old.Add($dir)
+    }
+    if (-not $old.Count) { $result.Protected = $batchHeld.ToArray(); return $result }
+
+    # a folder that a job that stays names in its request (a store, an output, a file) is not removed with its job
+    $own = @('events.jsonl', 'status.json', 'stop.request', 'stdout.txt', 'stderr.txt', 'request.json', 'report.json', 'report.csv', 'report.html', 'temp', 'choice.folders.txt', 'choice.items.txt')
+    $prefix = $jobsFolder + '\'
+    $oldNames = @{}
+    foreach ($dir in $old) { $oldNames[$dir.Name] = $true }
+    $named = @{}
+    $reads = {
+        param([string]$Folder, [bool]$IsOwn)
+        $leaf = [IO.Path]::GetFileName($Folder)
+        $file =[IO.Path]::Combine($Folder, 'request.json')
+        if (-not [IO.File]::Exists($file)) { return }
+        $text = $null
+        try { $text = [IO.File]::ReadAllText($file) } catch { return }
+        foreach ($m in [regex]::Matches($text, '"([^"]*[\\/][^"]*)"')) {
+            $path = $m.Groups[1].Value.Replace('\\', '\').Replace('/', '\')
+            if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $parts = $path.Substring($prefix.Length).Split('\')
+            if ($parts[0] -ine $leaf) { $named[$parts[0]] = $true }
+            elseif ($IsOwn -and $parts.Count -gt 1 -and $parts[1] -notin $own) { $named[$leaf] = $true }
+        }
+    }
+    foreach ($dir in [IO.Directory]::EnumerateDirectories($jobsFolder)) {
+        $leaf = [IO.Path]::GetFileName($dir)
+        if ($oldNames.ContainsKey($leaf)) { & $reads $dir $true } else { & $reads $dir $false }
+    }
+
+    $removed = [Collections.Generic.List[string]]::new(); $failed = [Collections.Generic.List[string]]::new(); $protected = [Collections.Generic.List[string]]::new()
+    foreach ($dir in $old) {
+        $name = $dir.Name
+        if ($named.ContainsKey($name)) { $protected.Add($name); continue }
+        # never anything but a direct subfolder of the jobs folder
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($dir.FullName), $jobsFolder, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not $PSCmdlet.ShouldProcess($dir.FullName, 'Remove the folder of a finished job')) { $removed.Add($name); continue }
+        try {
+            # status.json goes last: a folder that could not be removed whole still says that it is finished, and the next job tries again; a link is removed, never followed
+            Remove-MbtFolderTree -Path $dir.FullName -KeepFirst 'status.json'
+            [IO.File]::Delete([IO.Path]::Combine($dir.FullName, 'status.json'))
+            [IO.Directory]::Delete($dir.FullName)
+            $removed.Add($name)
+            Write-MbtLog INFO "Job folder removed (finished, older than $days days): $($dir.FullName)"
+        } catch {
+            $failed.Add($name)
+            Write-MbtLog WARN "Job folder not removed ($($dir.FullName)): $($_.Exception.Message)"
+        }
+    }
+    $result.Removed = $removed.ToArray(); $result.Failed = $failed.ToArray(); $result.Protected = @($protected.ToArray()) + @($batchHeld.ToArray())
+    if ($removed.Count -and -not $WhatIfPreference) {
+        try { $result.Overview = Write-MbtJobOverview -WorkFolder $WorkFolder -TimeBudgetSeconds $OverviewBudgetSeconds }
+        catch { Write-MbtLog WARN "The overview of all the jobs could not be written: $($_.Exception.Message)" }
+    }
+    return $result
 }
 
 #endregion
@@ -382,6 +561,12 @@ function Update-MbtJobProgress {
         Write-MbtJobStep -Id $current -State running
         $p.Step = $current
     }
+    # what the step says it does now ("1,240 folders read"): written when it changes
+    $detail = if ($snap.PSObject.Properties['Detail']) { [string]$snap.Detail } else { '' }
+    if ($p.Step -and $detail -and $detail -ne $p.Detail -and $script:JobInfo.Steps[$p.Step] -eq 'running') {
+        $p.Detail = $detail
+        Write-MbtJobStep -Id $p.Step -State running -Msg $detail
+    }
     $counting = if ($export) { 'download' } else { 'send' }
     # the folders that changed since the last poll (the Run page lists them)
     try { if ($Job.Metrics -and $Job.Metrics.Folders) { [void][MailboxTransfer.FolderEventPump]::Write($script:EventLog, $Job.Metrics.Folders, $counting) } } catch { }
@@ -511,10 +696,10 @@ function Write-MbtPstExportEvent {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA1Te8LThY0Rqu6
-# Hd+NO4isWh+TLiq08otxxfuMDre8lqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD2RIyps03zhRPy
+# WM9jB1Z5t3kMPo8C3+/n+r0WcuaBOqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -586,28 +771,28 @@ function Write-MbtPstExportEvent {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA790mNJVBd
-# wdjj2QMWm9LbODbSFyOI0U9E2qgvzRQ7dzANBgkqhkiG9w0BAQEFAASCAgAXEOPl
-# CclTM1sbZZjIod1YuttBr4jThR+Dstp7lLBOHvwLN34gPzQa/OnMnHHQc7sW6T8b
-# ZYlg1TtIi3dKw+7nm9wAkwHw+Cge5e8Knjtxp2sTwl437SwxQa5DTWaVSZt4c1+1
-# 5B/uKVgkBAB9Uc4/Mt7hYa219tPh/fNWas2ML+VsEnIV80bDo8YLAsmRE0NUObcb
-# eaBXeQbFhLz58D5w1fRwagQuSDLP8fuyCVrQxN+jmKx7pemLWW9oCFGNkNonOngr
-# PCJQU8R8oOjt5FnSdxhA9CrOoDMwiXvUX/x7XdAGkuXMsDRmrGVJ4bVCMRDfn5bQ
-# +fYJ772yM4Zm5Ce5BAEhAo1Rn96ezRCyQYuC4DHk514RMXb7qJhNzeVBwQuNeB41
-# YsdHjkAuRh70vCagKXY0X8cp0LhgdoBVuu6x0rzjSippHenjaQBGL1P8dj9ZE+8z
-# aJhCs+4++fU4VqIRuqgwqtO4nZB4G+7A0bKRm1e1XRSL2YXGFEJTPHK3+tc0oked
-# ywhsdLK+xGEKYnFrLRyKx59uS1ZoUCGXbxDybKHgVrmW93pDr4Ye5fJssOFF2zry
-# SbH5yS62vDYwLcaE455OJxhXyjOkiNpbV6WWGnKt11V53WH1hcNWBafjNsb7Qp8H
-# gYBlDgiNXQsnPIgTKGKL3y2Ma8PDHann8ZKu66GCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCB15LorvGLU
+# C/WRuyBwFkvidSZFiKfm3KCZKI3l1BFkvzANBgkqhkiG9w0BAQEFAASCAgBw1VpS
+# dZmZ4fFg4yBI3TprWlfgokqfiW5e+65CHQ6+tObkr9WQV+ASyOfSFw9HvWjo8g8V
+# PUkZydHAMseS/BRtgJBm3aflJ6NY07+eeCq7MSx0rju5P6HdEJ2yP4qidwPzZyHE
+# Z1eWu/7avu3N4fjbAEvDUxpBHeYUrFgh/0E87Wg9n8HYUClnP4d2NK8+cpvP0amU
+# 6vxTfKHPfrHCD8qa8kvOBGA0lUD0yJVo4RlvCZYCCOJ2ZtFQIOebG8ETRyEdqkOB
+# MWxJZV9z8RbZTuglAwdF7D4IbyxnTmAuivM9fq1hEn3XnfUt4RASMV7JsA+eEw8v
+# HkznKujgEKeFTcmlrSMav4cI1JxI5So+5tVa5REEO1/Grx/YF3e0PzbGIprb9NAn
+# lYgli4MQ379D+3QA58eUrZEjEuQzkvjvlqV3d45joFxxTndc37AoX+A4ng0rNHM4
+# J3edWun6lCzrQOVUbs7DwiEae/iYex09zKZSj2Vkd6a0bAUHl8eCP1ws8xjUEpYr
+# qwOfpBuDu7V12HkFkQPtNtpmI6LGna4WaTlvU5DER8i2pROk26BKVV78m6Y69pbl
+# h7ZG6aqjqqxdjYWVbglCOo8Y4rv11Qb7N4iMdXCEI9HLd1zs9oODiPUCLHy9qvXK
+# +3s3yRGhNirmNP8zEH0LL5dx7nuW7tQcaByGvaGCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIBzdyQOvnnW0IEhxvrbfK64xHMYCwKzWrBfTYHnMT5+FAghi30SfjFg5
-# axgPMjAyNjExMTAwODIxNTVaMAMCAQECEDN6srsTstzIf/hLcLMxRUCgghGnMIIE
+# BAIBBQAEIAG2H9am/bnIujg4OTQ5lx97dsA9aDTDTi4HdXg4LpqqAghVqsuPrKXE
+# jBgPMjAyNjExMTUxNDM0MjhaMAMCAQECEGM8TzVN+5vkSD/irwUNar+gghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -702,17 +887,17 @@ function Write-MbtPstExportEvent {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjE1NVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIIeB
-# Hz8nVcJ4sCUmNJJjSjDUUIZqs/t2RxgiHyOJ0NDDMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQyOFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIE6p
+# sIia9Ts+F16cxpBxXtiWY5Kd3gXDvEodP46jKEq8MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEAwSBW0wPRFb8c3RYPerl5/JbkEJ3/Rcmf2gMbdNXthxACIAU+
-# pchmbo49TlXDEDtKD3B6i1NXULsjpKt+U6ynx58n
+# zj0EAwIESDBGAiEAigpKQXzoU+R/KQTK4xj6+l4xvp8fkzHVYvOBdSdDKwUCIQDc
+# 5VnaqQsg4IBguwzFxwYNGPnBnPZrlX3gjDor/DWCmA==
 # SIG # End signature block

@@ -341,8 +341,8 @@ namespace MailboxTransfer
 
         public string Describe()
         {
-            return "scan of " + BytesScanned.ToString("N0") + " bytes: " + BlocksFound.ToString("N0") + " valid blocks, " + NbtLeafPages.ToString("N0") + " node B-tree leaf pages (" + NodeEntries.ToString("N0") + " entries, "
-                + NodesKept.ToString("N0") + " nodes kept, " + StaleEntries.ToString("N0") + " older entries ignored, " + DamagedNodes.ToString("N0") + " nodes with a missing block)";
+            return "scan of " + BytesScanned.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " bytes: " + BlocksFound.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " valid blocks, " + NbtLeafPages.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " node B-tree leaf pages (" + NodeEntries.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " entries, "
+                + NodesKept.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " nodes kept, " + StaleEntries.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " older entries ignored, " + DamagedNodes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " nodes with a missing block)";
         }
 
         public bool TryFindBlock(ulong bid, out PstBbtEntry e)

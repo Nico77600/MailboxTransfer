@@ -368,6 +368,108 @@ Describe 'Progress of the long jobs' {
     }
 }
 
+Describe 'PhaseProgress: what a long silent phase says' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'support\Import-TestFixtures.ps1')
+        Import-TestFixtures -TestsRoot $PSScriptRoot
+        function Read-StepMessages { param([string]$Path) @(Read-Events $Path | Where-Object { $_.e -eq 'step' } | ForEach-Object { $_.msg }) }
+    }
+    AfterEach { Stop-MbtPhaseProgress; Close-MbtEventLog }
+
+    It 'writes the first text at once, then the latest text when it changed, never the same text twice' {
+        $path = Join-Path $TestDrive 'phase-1.jsonl'
+        $log = [MailboxTransfer.EventLog]::new($path, $null, 0)
+        $p = [MailboxTransfer.PhaseProgress]::new($log, 'tree', 0)
+        $p.Report('Reading your selection')
+        @(Read-StepMessages $path) | Should -Be @('Reading your selection') -Because 'the first text is written at once'
+        $p.Report('1 folder read'); $p.Report('2 folders read'); $p.Report('3 folders read')
+        @(Read-StepMessages $path).Count | Should -Be 1 -Because 'the others wait for the next flush'
+        $p.Flush() | Should -BeTrue
+        $p.Flush() | Should -BeFalse -Because 'nothing changed'
+        $p.Report('3 folders read')
+        $p.Flush() | Should -BeFalse
+        $p.Report('4 folders read')
+        $p.Dispose()
+        $log.Dispose()
+        @(Read-StepMessages $path) | Should -Be @('Reading your selection', '3 folders read', '4 folders read') -Because 'the last text is written when the phase is closed'
+        $first = @(Read-Events $path)[0]
+        $first.e | Should -Be 'step'; $first.id | Should -Be 'tree'; $first.state | Should -Be 'running'
+        $first.PSObject.Properties.Name | Should -Not -Contain 'done' -Because 'unknown is left out, not zero'
+    }
+    It 'with a period, says something at least every second while the phase goes on, and writes far fewer events than reports' {
+        $path = Join-Path $TestDrive 'phase-2.jsonl'
+        $log = [MailboxTransfer.EventLog]::new($path, $null, 0)
+        $p = [MailboxTransfer.PhaseProgress]::new($log, 'tree', 100)
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        $n = 0
+        while ($watch.ElapsedMilliseconds -lt 800) { $n++; $p.Report("$n folders read"); Start-Sleep -Milliseconds 5 }
+        $p.Dispose(); $log.Dispose()
+        $msgs = @(Read-StepMessages $path)
+        $msgs.Count | Should -BeGreaterOrEqual 4
+        $msgs.Count | Should -BeLessThan ($n / 3)
+        $msgs[-1] | Should -Be "$n folders read"
+    }
+    It 'says folders in the singular for one, and thousands with a comma' {
+        [MailboxTransfer.ProgressText]::FoldersRead(1) | Should -Be '1 folder read'
+        [MailboxTransfer.ProgressText]::FoldersRead(0) | Should -Be '0 folders read'
+        [MailboxTransfer.ProgressText]::FoldersRead(1240) | Should -Be '1,240 folders read'
+    }
+    It 'turns the progress of the reading of a selection into the words of the console' {
+        $path = Join-Path $TestDrive 'phase-3.jsonl'
+        $log = [MailboxTransfer.EventLog]::new($path, $null, 0)
+        $p = [MailboxTransfer.PhaseProgress]::new($log, 'tree', 0)
+        $cb = $p.Browse()
+        $cb.Invoke([MailboxTransfer.BrowseProgress]@{ Stage = 'folders'; Done = 400; Total = -1; Message = 'page 2' }); $p.Flush() | Out-Null
+        $cb.Invoke([MailboxTransfer.BrowseProgress]@{ Stage = 'folders'; Done = 12; Total = 280; Message = 'non-mail children of the folders' }); $p.Flush() | Out-Null
+        $cb.Invoke([MailboxTransfer.BrowseProgress]@{ Stage = 'plan'; Done = 1; Total = 3; Message = 'Inbox' }); $p.Flush() | Out-Null
+        $p.Dispose(); $log.Dispose()
+        @(Read-StepMessages $path) | Should -Be @('400 folders read', 'Reading the other folders: 12 of 280', 'Checking your selection: 1 of 3 entries')
+    }
+    It 'Update-MbtJobProgress writes what the running step says once each time it changes' {
+        $dir = Join-Path $TestDrive 'jobs\detailjob'
+        Open-MbtEventLog -Path (Join-Path $dir 'events.jsonl') -Task export
+        Write-MbtJobPlan -Steps @(@{ Id = 'tree'; Title = 'Read the folder tree' }, @{ Id = 'list'; Title = 'List the items you chose' }, @{ Id = 'download'; Title = 'Download the items' }, @{ Id = 'verify'; Title = 'Check the downloads' })
+        $job = [pscustomobject]@{ Phase = 'tree'; Detail = '120 folders read'; Cancelled = $false; Error = $null }
+        $job | Add-Member ScriptMethod Snapshot { [pscustomobject]@{ Phase = $this.Phase; Detail = $this.Detail; Items = 0; TotalItems = 0; Bytes = 0; TotalBytes = 0 } }
+        $job | Add-Member ScriptMethod GetThrottleEvents { , @() }
+        $job | Add-Member ScriptMethod GetWindows { , @() }
+        InModuleScope MailboxTransfer -Parameters @{ Job = $job } { Update-MbtJobProgress -Job $Job }
+        InModuleScope MailboxTransfer -Parameters @{ Job = $job } { Update-MbtJobProgress -Job $Job }
+        $job.Detail = '4,443 folders read'
+        InModuleScope MailboxTransfer -Parameters @{ Job = $job } { Update-MbtJobProgress -Job $Job }
+        $job.Phase = 'inventory'; $job.Detail = $null
+        InModuleScope MailboxTransfer -Parameters @{ Job = $job } { Update-MbtJobProgress -Job $Job }
+        Close-MbtEventLog
+        $steps = @(Read-Events (Join-Path $dir 'events.jsonl') | Where-Object { $_.e -eq 'step' -and $_.id -eq 'tree' -and $_.state -eq 'running' })
+        @($steps | Where-Object msg).msg | Should -Be @('120 folders read', '4,443 folders read')
+    }
+    It 'Start-MbtPhaseProgress shares the trees for the job and the reading of a tree says how far it is, in step events' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $mbx = 'MBX:11111111-2222-3333-4444-555555555555@1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
+        $svc.RootOnlyFolders = $true
+        $null = $svc.AddMailbox($mbx)
+        foreach ($a in 1..3) { $null = $svc.AddFolder($mbx, "T$a", "Top $a"); $null = $svc.AddFolder($mbx, "T$a-1", 'Child', "T$a") }
+        $o = [MailboxTransfer.GraphOptions]::new(); $o.DelayScale = 0
+        $session = Set-MbtSession -Graph ([MailboxTransfer.GraphClient]::new([MailboxTransfer.Tests.FixedToken]::Provider, $o, $svc))
+        $path = Join-Path $TestDrive 'phase-4\events.jsonl'
+        try {
+            Open-MbtEventLog -Path $path -Task export
+            Start-MbtPhaseProgress -Step tree
+            $session.Api.CacheFolderTrees | Should -BeTrue
+            $tree = @($session.Api.GetFolderTree($mbx))
+            @($session.Api.GetFolderTree($mbx)).Count | Should -Be $tree.Count
+            $session.Api.TreesRead | Should -Be 1
+            Stop-MbtPhaseProgress
+            $session.Api.TreeProgress | Should -BeNullOrEmpty
+            Close-MbtEventLog
+            $msgs = @(Read-StepMessages $path)
+            $msgs.Count | Should -BeGreaterThan 0
+            $msgs | ForEach-Object { $_ | Should -Match '^[\d,]+ folders? read$' }
+            $msgs[-1] | Should -Be '6 folders read'
+        } finally { Disconnect-MbtGraph }
+    }
+}
+
 Describe 'Get-MbtCapability' {
     It 'reads the real entry script' {
         $c = Get-MbtCapability
@@ -452,6 +554,7 @@ Describe 'Invoke-MailboxTransfer.ps1 -EventsFile (child pwsh)' {
         $x.Events[1].exit | Should -Be 0; $x.Events[1].complete | Should -BeTrue; $x.Events[1].next | Should -Be 'done'
         $s = Get-Content (Join-Path (Split-Path $ev) 'status.json') -Raw | ConvertFrom-Json
         $s.state | Should -Be 'complete'; $s.jobId | Should -Be 'st-1'; $s.exitCode | Should -Be 0
+        (Join-Path (Split-Path $ev) 'report.html') | Should -Not -Exist -Because 'the state of a store is not a job with a report'
         $x.Output | Should -Match 'the C# engine compiles'
     }
 
@@ -470,6 +573,14 @@ Describe 'Invoke-MailboxTransfer.ps1 -EventsFile (child pwsh)' {
         $res.e | Should -Be 'result'; $res.exit | Should -Be 0; $res.complete | Should -BeTrue; $res.reason | Should -Be 'clean'
         $res.counts.errors | Should -Be 0
         (Get-Content (Join-Path (Split-Path $ev) 'status.json') -Raw | ConvertFrom-Json).state | Should -Be 'complete'
+        $status = Get-Content (Join-Path (Split-Path $ev) 'status.json') -Raw | ConvertFrom-Json
+        $status.source | Should -Be $script:Good -Because 'the report says what the job read'
+        $report = Join-Path (Split-Path $ev) 'report.html'
+        $report | Should -Exist
+        $x.Output | Should -Match ('(?m)^\s+\S*\s*Report\s+' + [regex]::Escape($report))
+        $html = Get-Content -LiteralPath $report -Raw
+        $html | Should -Match '<div class="tile-value">Clean</div>'
+        $html | Should -Match 'Check the file'
     }
 
     It 'Mode CheckPst on a damaged PST: exit code of the checker, one item event per finding code, next = repair, the file untouched' {

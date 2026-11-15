@@ -73,6 +73,10 @@ namespace MailboxTransfer
         /// FolderPath below "Recoverable Items", which asks for them by itself. Primary, Archive and AuxArchive.
         /// </summary>
         public bool IncludeRecoverableItems;
+        /// <summary>
+        /// Read the tree of the whole mailbox even when the plan needs only its folders, the ones below them and the ones above them. The store gets the same folders and items either way.
+        /// </summary>
+        public bool WholeFolderTree;
         /// <summary>Names of the folders of Recoverable Items to export (see RecoverableItems.KnownFolders); null or empty: the default set.</summary>
         public string[] RecoverableItemsFolders;
     }
@@ -80,7 +84,10 @@ namespace MailboxTransfer
     public sealed class ExportResult
     {
         public long Exported, Failed, Bytes, Inventoried, PendingAtStart, RequeuedFailed;
+        /// <summary>Folders read: the tree of the mailbox, or with <see cref="FolderTreeNarrow"/> the folders of the selection, the ones below them and the ones above them.</summary>
         public int Folders, FoldersNotListed, PreviewWarnings;
+        /// <summary>The tree of the whole mailbox was not read: only the folders of the selection and the path to each of them (<see cref="Folders"/> counts those).</summary>
+        public bool FolderTreeNarrow;
         public List<string> Problems = new List<string>();
         public TransferSnapshot Final;
         public bool Completed;
@@ -174,8 +181,10 @@ namespace MailboxTransfer
             string mailbox = _o.MailboxId;
 
             Metrics.Phase = "tree";
-            List<FolderInfo> tree = _api.GetFolderTree(mailbox, ct);
+            bool narrow;
+            List<FolderInfo> tree = ReadTree(ct, out narrow);
             tree = AddRecoverableItems(tree, ct);
+            Metrics.Detail = null;
             _tree = tree;
             _store.UpsertMailbox(new StoreMailbox { Id = mailbox, Kind = _kind, Upn = _o.Upn, DisplayName = _kind + " mailbox" });
             _store.RecordLocation(new StoreMailboxLocation { MailboxId = mailbox, Kind = _kind, Upn = _o.Upn, Source = "ExportTarget", Detail = "mailbox exported", Rank = StoreMailboxLocation.RankGiven });
@@ -191,7 +200,8 @@ namespace MailboxTransfer
                 SourceItemCount = f.TotalItemCount, SourceSize = f.TotalSize >= 0 ? (long?)f.TotalSize : null
             }).ToList());
             _result.Folders = tree.Count;
-            Log("tree: " + tree.Count + " folders" + (_folderOwner.Count > 0 ? " (" + _folderOwner.Count + " of them already recorded in the main archive tree)" : ""));
+            _result.FolderTreeNarrow = narrow;
+            Log("tree: " + tree.Count + " folders" + (narrow ? " read (the folders of the selection, the folders below them and the folders above them; the rest of the mailbox was not read)" : "") + (_folderOwner.Count > 0 ? " (" + _folderOwner.Count + " of them already recorded in the main archive tree)" : ""));
             foreach (string move in _result.MovesInProgress) Log(move);
 
             if (!string.IsNullOrEmpty(_o.FolderPath) && scope.Count == 0) throw new InvalidOperationException("Folder '" + _o.FolderPath + "' not found in this mailbox.");
@@ -227,6 +237,31 @@ namespace MailboxTransfer
             _result.Completed = !ct.IsCancellationRequested;
             Metrics.Phase = "done";
             _result.Final = Snapshot();
+        }
+
+        /// <summary>
+        /// The folder tree the export works on. A plan of ordinary folders of this mailbox needs the folders it names, the ones below those that take their subfolders, and the ones above
+        /// each of them (the path to it): only those are read. The tree of the whole mailbox is read for everything else: no plan (the whole mailbox, a folder path), Recoverable Items
+        /// (they are not in the top-level listing), an auxiliary archive (its folders are matched with the main archive tree, and every move in progress is reported), and a
+        /// selection that cannot be read as the whole tree would be (see <see cref="MailboxApi.GetFolderSubtrees"/>).
+        /// </summary>
+        List<FolderInfo> ReadTree(CancellationToken ct, out bool narrow)
+        {
+            narrow = false;
+            Action<int> report = n => Metrics.Detail = ProgressText.FoldersRead(n);
+            if (CanReadSelectionOnly())
+            {
+                var withSubfolders = new HashSet<string>(_o.Plan.Folders.Where(f => f.IncludeSubfolders).Select(f => f.ExportFolderId), StringComparer.Ordinal);
+                List<FolderInfo> part = _api.GetFolderSubtrees(_o.MailboxId, _o.Plan.Folders.Select(f => f.ExportFolderId), withSubfolders, ct, report, _o.Concurrency);
+                if (part != null) { narrow = true; return part; }
+            }
+            return _api.GetFolderTree(_o.MailboxId, ct, report, _o.Concurrency);
+        }
+
+        bool CanReadSelectionOnly()
+        {
+            if (_o.Plan == null || _o.WholeFolderTree || _kind == StoreMailboxKind.AuxArchive || _o.IncludeRecoverableItems || !string.IsNullOrEmpty(_o.FolderPath)) return false;
+            return _o.Plan.Folders.Count > 0 && _o.Plan.Folders.All(f => f.Resolved && !RecoverableItems.IsPath(f.Path) && (f.MailboxId == null || MailboxApi.SameMailbox(f.MailboxId, _o.MailboxId)));
         }
 
         // Recoverable Items below the root that a plan did not ask for by name (they are not in the subtree of "Recoverable Items" unless the plan names them)

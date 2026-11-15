@@ -1,0 +1,259 @@
+<!doctype html>
+<!--
+    Mailbox Transfer - overview of all the jobs (template)
+    Author  : Nicolas Fabert
+    Written by Write-MbtJobOverview (module\MailboxTransfer.Overview.ps1) in <work folder>\jobs, at the end of every job, from the status.json of every job folder.
+    Every marker in the page below (an upper-case name in double braces) is replaced once, in one pass, by text that the code has already HTML-encoded:
+      TITLE, HEADING, VERSION, SUBTITLE   texts of the header
+      TILES        totals (all the jobs of the page)
+      CAP          the line that says that older jobs are not listed, when there are some
+      GENERATED    when and how the page was written
+      DATA         the rows as JSON (script element, application/json): columns, results, strings shared by the rows, rows (arrays, one value for each column)
+    The table is built in the browser from that data with textContent only: no text of a job is ever put in the page as markup, and the links are relative to this folder.
+    The page needs no network and no other file. It follows the theme of the system (add ?theme=dark or ?theme=light to choose), and ?batch=<name> shows one batch.
+-->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{TITLE}}</title>
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("theme");
+    const theme = param === "light" || param === "dark" ? param : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --cp-bg: #f7f4ef; --cp-bg-elevated: #fcfbf8; --cp-surface: #ffffff; --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede; --cp-border-strong: #919191; --cp-text: #242424; --cp-text-muted: #5c5c5c; --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b; --cp-accent-hover: #9a1a41; --cp-accent-soft: rgba(177, 31, 75, 0.08); --cp-accent-fg: #ffffff;
+  --cp-success: #16a34a; --cp-danger: #dc2626; --cp-warning: #d97706; --cp-link: #0078d4; --cp-violet: #7c3aed; --cp-gray: #9ca3af;
+  --cp-highlight: rgba(177, 31, 75, 0.12);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --cp-bg: #3d3b3a; --cp-bg-elevated: #343231; --cp-surface: #292929; --cp-surface-soft: #2e2e2e;
+  --cp-border: #474747; --cp-border-strong: #5f5f5f; --cp-text: #dedede; --cp-text-muted: #a0a0a0; --cp-text-soft: #b0b0b0;
+  --cp-accent: #fd8ea1; --cp-accent-hover: #fb7b91; --cp-accent-soft: rgba(253, 142, 161, 0.14); --cp-accent-fg: #1a1a1a;
+  --cp-success: #4ade80; --cp-danger: #f87171; --cp-warning: #fbbf24; --cp-link: #4da6ff; --cp-violet: #a78bfa; --cp-gray: #8b8b8b;
+  --cp-highlight: rgba(253, 142, 161, 0.12);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 32px; background: var(--cp-bg); color: var(--cp-text); font: 14px "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; }
+h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; margin: 8px 0 6px; }
+h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+p { line-height: 1.5; margin: 8px 0; }
+.muted, small { color: var(--cp-text-muted); }
+a { color: var(--cp-link); }
+[hidden] { display: none !important; }
+header.hero { position: relative; overflow: hidden; border: 1px solid var(--cp-border); border-top: 4px solid var(--cp-accent); border-radius: 16px; padding: 24px; margin-bottom: 20px; background: linear-gradient(125deg, var(--cp-surface) 35%, var(--cp-accent-soft)); }
+header.hero::before { content: ""; position: absolute; width: 280px; height: 280px; right: -100px; top: -160px; border: 40px solid var(--cp-highlight); border-radius: 50%; pointer-events: none; }
+.origin { position: relative; color: var(--cp-accent); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700; }
+.subtitle { position: relative; color: var(--cp-text-muted); margin: 0; overflow-wrap: anywhere; }
+header.hero h1 { position: relative; overflow-wrap: anywhere; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; margin: 0 0 20px; }
+.tile { position: relative; overflow: hidden; padding: 16px 18px; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); transition: transform 160ms ease, border-color 160ms ease; }
+.tile:hover { transform: translateY(-3px); border-color: var(--cp-accent); }
+.tile::after { content: ""; position: absolute; width: 70px; height: 70px; right: -26px; bottom: -30px; border: 12px solid var(--cp-highlight); border-radius: 50%; pointer-events: none; }
+.tile-label { font-size: 12px; font-weight: 600; color: var(--cp-text-muted); }
+.tile-value { font-size: 26px; font-weight: 650; margin-top: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-note { font-size: 11px; color: var(--cp-text-muted); margin-top: 4px; }
+.tile.ok .tile-value { color: var(--cp-success); } .tile.warn .tile-value { color: var(--cp-warning); } .tile.fail .tile-value { color: var(--cp-danger); } .tile.info .tile-value { color: var(--cp-link); }
+.tile.main { background: linear-gradient(125deg, var(--cp-accent-hover), var(--cp-accent)); border-color: var(--cp-accent); }
+.tile.main .tile-label, .tile.main .tile-value, .tile.main .tile-note { color: var(--cp-accent-fg); }
+.card { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+.caption { font-size: 12px; color: var(--cp-text-muted); margin: 0 0 12px; }
+.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+button.chip { font: inherit; font-size: 12px; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--cp-border); color: var(--cp-text-muted); background: var(--cp-surface); cursor: pointer; }
+button.chip[aria-pressed="true"] { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+button.chip .n { opacity: 0.8; margin-left: 4px; font-variant-numeric: tabular-nums; }
+button.link { font: inherit; font-size: 12px; padding: 3px 8px; border: 0; background: none; color: var(--cp-link); cursor: pointer; text-decoration: underline; }
+input[type="search"], select { font: inherit; color: var(--cp-text); background: var(--cp-surface); border: 1px solid var(--cp-border); padding: 6px 10px; border-radius: 10px; }
+input[type="search"] { min-width: 260px; }
+label.field { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--cp-text-muted); }
+:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+.scroll { overflow: auto; max-height: 72vh; border: 1px solid var(--cp-border); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { position: sticky; top: 0; background: var(--cp-surface-soft); text-align: left; padding: 0; border-bottom: 1px solid var(--cp-border); white-space: nowrap; font-weight: 600; z-index: 1; }
+th button { font: inherit; font-weight: 600; color: inherit; background: none; border: 0; padding: 8px 10px; cursor: pointer; width: 100%; text-align: inherit; }
+th button:hover { color: var(--cp-accent); }
+th[aria-sort="ascending"] button::after { content: " \25B2"; font-size: 9px; } th[aria-sort="descending"] button::after { content: " \25BC"; font-size: 9px; }
+th.plain { padding: 8px 10px; }
+td { padding: 7px 10px; border-bottom: 1px solid var(--cp-border); vertical-align: top; overflow-wrap: anywhere; }
+tbody tr:hover td { background: var(--cp-accent-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.num button { text-align: right; }
+td.task, td.address { white-space: nowrap; }
+td.when { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--cp-text-muted); }
+tr.attention td:first-child { box-shadow: inset 3px 0 0 var(--cp-danger); } tr.warn td:first-child { box-shadow: inset 3px 0 0 var(--cp-warning); }
+.badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-weight: 600; font-size: 11.5px; border: 1px solid currentColor; white-space: nowrap; }
+.badge.ok { color: var(--cp-success); } .badge.warn { color: var(--cp-warning); } .badge.fail { color: var(--cp-danger); } .badge.info { color: var(--cp-link); } .badge.wait { color: var(--cp-text-muted); }
+.empty { padding: 18px; text-align: center; color: var(--cp-text-muted); }
+.failed { color: var(--cp-danger); }
+footer { color: var(--cp-text-muted); font-size: 12px; line-height: 1.6; margin-top: 8px; }
+@media (max-width: 700px) { body { padding: 14px 12px; } h1 { font-size: 24px; } .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .tile-value { font-size: 22px; } header.hero { padding: 16px; } .card { padding: 14px; } input[type="search"] { min-width: 0; width: 100%; } }
+@media print { body { padding: 0; background: #fff; } .bar { display: none; } .scroll { max-height: none; overflow: visible; } .tile:hover { transform: none; } }
+</style></head>
+<body>
+<header class="hero">
+  <div class="origin">Mailbox Transfer &middot; v{{VERSION}}</div>
+  <h1>{{HEADING}}</h1>
+  <p class="subtitle">{{SUBTITLE}}</p>
+</header>
+<div class="tiles">{{TILES}}</div>
+<section class="card" aria-labelledby="jobs-heading">
+  <h2 id="jobs-heading">Jobs</h2>
+  {{CAP}}
+  <div class="bar">
+    <div class="chips" id="chips" role="group" aria-label="Filter by result"></div>
+  </div>
+  <div class="bar">
+    <input type="search" id="find" placeholder="Find a mailbox, a folder or a job" aria-label="Find a mailbox, a folder or a job">
+    <label class="field">Task <select id="task" aria-label="Task"></select></label>
+    <label class="field">Period <select id="period" aria-label="Period"><option value="0">All time</option><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label>
+    <label class="field" id="batchField" hidden>Batch <select id="batch" aria-label="Batch"></select></label>
+    <button type="button" class="link" id="reset">Reset the filters and the order</button>
+  </div>
+  <p class="caption" id="shown" aria-live="polite"></p>
+  <p class="caption" id="folder" hidden></p>
+  <noscript><p class="empty">This page needs JavaScript to list the jobs. The report of each job is report.html in its own folder.</p></noscript>
+  <div class="scroll"><table id="jobs">
+    <thead><tr>
+      <th data-sort="started" aria-sort="none"><button type="button">Started</button></th>
+      <th data-sort="task" aria-sort="none"><button type="button">Task</button></th>
+      <th data-sort="source" aria-sort="none"><button type="button">Mailbox or source</button></th>
+      <th data-sort="destination" aria-sort="none"><button type="button">Destination</button></th>
+      <th data-sort="result" aria-sort="none"><button type="button">Result</button></th>
+      <th class="num" data-sort="done" aria-sort="none"><button type="button">Items</button></th>
+      <th class="num" data-sort="bytes" aria-sort="none"><button type="button">Data</button></th>
+      <th class="num" data-sort="seconds" aria-sort="none"><button type="button">Duration</button></th>
+      <th class="plain">Report</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <div class="bar" style="margin-top:12px"><button type="button" class="chip" id="more" hidden>Show more</button></div>
+</section>
+<footer>{{GENERATED}}</footer>
+{{DATA}}
+<script>
+  (() => {
+    const data = JSON.parse(document.getElementById("mbt-overview-data").textContent);
+    const col = {}; data.columns.forEach((name, i) => { col[name] = i; });
+    const S = data.strings, results = {}; data.results.forEach(r => { results[r.code] = r; });
+    const PAGE = 200, DAY = 86400, en = new Intl.NumberFormat("en-US");
+    const $ = id => document.getElementById(id);
+    const state = { result: "all", task: "", period: 0, batch: "", text: "", sort: "", dir: 1, shown: PAGE };
+    const query = new URLSearchParams(window.location.search);
+    const asked = query.get("batch");
+    const text = (row, name) => S[row[col[name]]];
+    const pad = n => (n < 10 ? "0" : "") + n;
+    const when = sec => { const d = new Date(sec * 1000); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+    const bytes = n => { if (n < 0) return ""; const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return (i === 0 ? n.toFixed(0) : n.toFixed(1)) + " " + u[i]; };
+    const length = s => { if (s < 10) return s.toFixed(1) + " s"; s = Math.round(s); if (s < 60) return s + " s"; if (s < 3600) return Math.floor(s / 60) + " min " + pad(s % 60) + " s"; if (s < DAY) return Math.floor(s / 3600) + " h " + pad(Math.floor((s % 3600) / 60)) + " min"; return Math.floor(s / DAY) + " d " + pad(Math.floor((s % DAY) / 3600)) + " h"; };
+    const linkKinds = { 1: { label: "Report", file: "report.html" }, 2: { label: "CSV", file: "report.csv" }, 3: { label: "Status", file: "status.json" } };
+    const element = (tag, cls, content) => { const e = document.createElement(tag); if (cls) e.className = cls; if (content !== undefined) e.textContent = content; return e; };
+
+    // the folder that every destination that is a path starts with: said once above the table and left out of the rows
+    const folder = (() => {
+      const paths = data.rows.map(r => text(r, "destination")).filter(p => /^[A-Za-z]:\\|^\\\\/.test(p));
+      if (paths.length < 2) return "";
+      let common = paths[0];
+      paths.forEach(p => { let i = 0; const n = Math.min(common.length, p.length); while (i < n && common[i].toLowerCase() === p[i].toLowerCase()) i++; common = common.slice(0, i); });
+      const cut = common.lastIndexOf("\\");
+      return cut > 10 ? common.slice(0, cut + 1) : "";
+    })();
+    if (folder) { const note = $("folder"); note.textContent = "Destinations start with " + folder + " (left out of the table; point at one to see the whole path)."; note.hidden = false; }
+
+    const tasks = Array.from(new Set(data.rows.map(r => text(r, "task")))).sort();
+    const taskBox = $("task"); taskBox.appendChild(new Option("All tasks", ""));
+    tasks.forEach(t => taskBox.appendChild(new Option(t, t)));
+    const batches = Array.from(new Set(data.rows.map(r => r[col.batch]).filter(i => i >= 0).map(i => S[i]))).sort();
+    if (batches.length) { $("batchField").hidden = false; $("batch").appendChild(new Option("All batches", "")); batches.forEach(b => $("batch").appendChild(new Option(b, b))); }
+    if (asked && batches.some(b => b.toLowerCase() === asked.toLowerCase())) { state.batch = batches.filter(b => b.toLowerCase() === asked.toLowerCase())[0]; $("batch").value = state.batch; }
+
+    const rank = row => results[row[col.code]].rank;
+    const keyOf = {
+      started: r => r[col.started], seconds: r => r[col.seconds], done: r => r[col.done], bytes: r => r[col.bytes],
+      task: r => text(r, "task").toLowerCase(), source: r => text(r, "source").toLowerCase(), destination: r => text(r, "destination").toLowerCase(), result: r => rank(r)
+    };
+
+    const withoutResult = row => {
+      if (state.task && text(row, "task") !== state.task) return false;
+      if (state.batch && (row[col.batch] < 0 || S[row[col.batch]] !== state.batch)) return false;
+      if (state.period > 0 && row[col.started] < Date.now() / 1000 - state.period * DAY) return false;
+      if (state.text) {
+        const hay = (row[col.id] + " " + text(row, "task") + " " + text(row, "source") + " " + text(row, "destination") + " " + text(row, "result")).toLowerCase();
+        if (hay.indexOf(state.text) < 0) return false;
+      }
+      return true;
+    };
+    const pressed = (button, on) => button.setAttribute("aria-pressed", on ? "true" : "false");
+
+    const drawChips = base => {
+      const box = $("chips"); box.textContent = "";
+      const counts = {}; base.forEach(r => { counts[r[col.code]] = (counts[r[col.code]] || 0) + 1; });
+      const attention = [1, 2, 3, 4, 6].reduce((n, c) => n + (counts[c] || 0), 0);
+      const add = (key, label, n) => { const b = element("button", "chip"); b.type = "button"; b.dataset.key = key; b.appendChild(document.createTextNode(label)); b.appendChild(element("span", "n", en.format(n))); pressed(b, state.result === key); b.addEventListener("click", () => { state.result = key; state.shown = PAGE; draw(); }); box.appendChild(b); };
+      add("all", "All", base.length);
+      add("attention", "Need a look", attention);
+      data.results.forEach(r => { if ((counts[r.code] || 0) > 0 || state.result === String(r.code)) add(String(r.code), r.name, counts[r.code] || 0); });
+    };
+
+    const draw = () => {
+      const base = data.rows.filter(withoutResult);
+      drawChips(base);
+      let list = base;
+      if (state.result === "attention") list = base.filter(r => [1, 2, 3, 4, 6].indexOf(r[col.code]) >= 0);
+      else if (state.result !== "all") list = base.filter(r => String(r[col.code]) === state.result);
+      const key = state.sort ? keyOf[state.sort] : null;
+      list = list.slice().sort((a, b) => {
+        if (key) { const x = key(a), y = key(b); if (x < y) return -state.dir; if (x > y) return state.dir; return b[col.started] - a[col.started]; }
+        return rank(a) - rank(b) || b[col.started] - a[col.started];
+      });
+      document.querySelectorAll("#jobs th[data-sort]").forEach(th => th.setAttribute("aria-sort", th.dataset.sort === state.sort ? (state.dir > 0 ? "ascending" : "descending") : "none"));
+      let done = 0, failed = 0, size = 0;
+      list.forEach(r => { if (r[col.done] > 0) done += r[col.done]; if (r[col.failed] > 0) failed += r[col.failed]; if (r[col.bytes] > 0) size += r[col.bytes]; });
+      $("shown").textContent = list.length === data.rows.length ? ("All " + en.format(list.length) + (list.length === 1 ? " job" : " jobs") + " are shown" + (state.sort ? "." : ", the ones that need a look first.")) :
+        (en.format(list.length) + " of " + en.format(data.rows.length) + (data.rows.length === 1 ? " job" : " jobs") + " shown: " + en.format(done) + (done === 1 ? " item" : " items") + " done, " + en.format(failed) + " failed, " + bytes(size || 0) + ".");
+      const body = $("rows"); body.textContent = "";
+      if (!list.length) { const tr = element("tr"); const td = element("td", "empty", data.rows.length ? "No job matches these filters." : "No job yet."); td.colSpan = 9; tr.appendChild(td); body.appendChild(tr); }
+      list.slice(0, state.shown).forEach(r => {
+        const res = results[r[col.code]];
+        const tr = element("tr", [1, 4].indexOf(r[col.code]) >= 0 ? "attention" : ([2, 3, 6].indexOf(r[col.code]) >= 0 ? "warn" : ""));
+        tr.appendChild(element("td", "when", when(r[col.started])));
+        tr.appendChild(element("td", "task", text(r, "task")));
+        const source = text(r, "source"), destination = text(r, "destination");
+        const from = element("td", /^[^\s\\/]+@[^\s\\/]+$/.test(source) ? "address" : "", source); from.title = source; tr.appendChild(from);
+        const to = element("td", "", folder && destination.slice(0, folder.length).toLowerCase() === folder.toLowerCase() ? "\u2026\\" + destination.slice(folder.length) : destination); to.title = destination; tr.appendChild(to);
+        const status = element("td"); status.appendChild(element("span", "badge " + res.tone, text(r, "result"))); tr.appendChild(status);
+        const items = element("td", "num", r[col.done] >= 0 ? en.format(r[col.done]) : "");
+        if (r[col.failed] > 0) { items.appendChild(document.createTextNode(" ")); items.appendChild(element("span", "failed", "(" + en.format(r[col.failed]) + " failed)")); }
+        tr.appendChild(items);
+        tr.appendChild(element("td", "num", bytes(r[col.bytes])));
+        tr.appendChild(element("td", "num", r[col.code] === 7 ? "" : length(r[col.seconds])));
+        const link = element("td");
+        if (r[col.link] > 0) { const kind = linkKinds[r[col.link]]; const a = element("a", "", kind.label); a.href = (data.base || "./") + encodeURIComponent(r[col.id]) + "/" + kind.file; link.appendChild(a); }
+        tr.appendChild(link);
+        body.appendChild(tr);
+      });
+      $("more").hidden = list.length <= state.shown;
+      $("more").textContent = "Show " + Math.min(PAGE, list.length - state.shown) + " more of the " + en.format(list.length - state.shown) + " left";
+    };
+
+    $("find").addEventListener("input", () => { state.text = $("find").value.trim().toLowerCase(); state.shown = PAGE; draw(); });
+    taskBox.addEventListener("change", () => { state.task = taskBox.value; state.shown = PAGE; draw(); });
+    $("period").addEventListener("change", () => { state.period = Number($("period").value); state.shown = PAGE; draw(); });
+    $("batch").addEventListener("change", () => { state.batch = $("batch").value; state.shown = PAGE; draw(); });
+    $("more").addEventListener("click", () => { state.shown += PAGE; draw(); });
+    $("reset").addEventListener("click", () => { Object.assign(state, { result: "all", task: "", period: 0, batch: "", text: "", sort: "", dir: 1, shown: PAGE }); $("find").value = ""; taskBox.value = ""; $("period").value = "0"; $("batch").value = ""; draw(); });
+    document.querySelectorAll("#jobs th[data-sort]").forEach(th => th.querySelector("button").addEventListener("click", () => {
+      const name = th.dataset.sort;
+      if (state.sort === name) state.dir = -state.dir; else { state.sort = name; state.dir = (name === "started" || name === "done" || name === "bytes" || name === "seconds") ? -1 : 1; }
+      state.shown = PAGE; draw();
+    }));
+    draw();
+  })();
+</script>
+</body></html>

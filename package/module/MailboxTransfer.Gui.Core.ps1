@@ -117,7 +117,7 @@ function Set-MbtGuiTheme {
 
 #region Text and numbers --------------------------------------------------------------------
 
-# Glyphs of Segoe Fluent Icons (Segoe MDL2 Assets as the fallback), by the names the mockup uses.
+# Glyphs of Segoe Fluent Icons (Segoe MDL2 Assets as the fallback), by the names the pages use.
 $script:Glyphs = @{
     mail = 0xE715; folder = 0xE8B7; archive = 0xE7B8; cal = 0xE787; people = 0xE716; trash = 0xE74D; send = 0xE724; pencil = 0xE70F; person = 0xE77B
     cloud = 0xE753; down = 0xE896; up = 0xE898; pst = 0xE8A5; wrench = 0xE90F; search = 0xE721; check = 0xE73E; warn = 0xE7BA; x = 0xE711; chev = 0xE76C
@@ -161,19 +161,33 @@ function Format-MbtGuiBytes {
 
 function Format-MbtGuiCount { param([double]$N) return ([long]$N).ToString('N0', [cultureinfo]::InvariantCulture) }
 
+function Get-MbtGuiPlural {
+    <# The word that goes with a count: the singular for exactly one, the plural for any other number. The plural is the singular and an s unless it is given. Also for a verb: Get-MbtGuiPlural $n 'is' 'are'. #>
+    param([double]$Count, [Parameter(Mandatory)][string]$Singular, [string]$Plural)
+    if ([long]$Count -eq 1) { return $Singular }
+    if ($Plural) { return $Plural }
+    return ($Singular + 's')
+}
+
+function Format-MbtGuiQuantity {
+    <# A count and its noun: "1 location", "0 locations", "1,284 items", "2 entries" (-Plural 'entries'). #>
+    param([double]$Count, [Parameter(Mandatory)][string]$Singular, [string]$Plural)
+    return ('{0} {1}' -f (Format-MbtGuiCount $Count), (Get-MbtGuiPlural $Count $Singular $Plural))
+}
+
 function Format-MbtGuiSelectionSize {
     <# The size of a selection in words: a folder whose size Microsoft does not give (an auxiliary archive, a PST folder) is never counted as 0 B. #>
     param([Parameter(Mandatory)]$Selection)
     $known = [double]$Selection.Bytes; $unknown = [int]$Selection.UnknownSize
     if ($unknown -le 0) { return (Format-MbtGuiBytes $known) }
     if ($known -le 0) { return 'size unknown' }
-    return ('{0} + {1} folder{2} of unknown size' -f (Format-MbtGuiBytes $known), $unknown, $(if ($unknown -gt 1) { 's' } else { '' }))
+    return ('{0} + {1} of unknown size' -f (Format-MbtGuiBytes $known), (Format-MbtGuiQuantity $unknown 'folder'))
 }
 
 function Format-MbtGuiSelectionItems {
-    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). #>
-    param([Parameter(Mandatory)]$Selection)
-    $n = Format-MbtGuiCount $Selection.Items
+    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). -WithNoun: "1 item", "at least 1,500 items". #>
+    param([Parameter(Mandatory)]$Selection, [switch]$WithNoun)
+    $n = if ($WithNoun) { Format-MbtGuiQuantity $Selection.Items 'item' } else { Format-MbtGuiCount $Selection.Items }
     if ($Selection.SubtreeUnread) { return "at least $n" }
     return $n
 }
@@ -304,6 +318,40 @@ function New-GuiMessage {
     return $b
 }
 
+function ConvertTo-MbtGuiHandler {
+    <#
+        The handler of a control, written as a script block in the function that builds the page. The control raises its event after that function
+        has returned, so the block gets a copy of the variables of that function (taken when the control is made, like a closure) and keeps its own
+        scope, where the functions and the script variables of the console are. A block that is already a closure is left as it is.
+        -CallerScope: how many scopes up from this function the function that wrote the block is (2 when a New-Gui... function of this file calls it, 1 when the builder calls it).
+    #>
+    param([Parameter(Mandatory)][scriptblock]$Block, [int]$CallerScope = 2)
+    if ($Block.Module) { return $Block }
+    $skip = @('args', 'input', 'this', 'PSCmdlet', 'MyInvocation', 'PSBoundParameters', 'PSCommandPath', 'PSScriptRoot', 'foreach', 'switch', 'Error', '_', 'ExecutionContext', 'Host', 'StackTrace', 'null', 'true', 'false', '?', '^', '$')
+    $locked = [Management.Automation.ScopedItemOptions]::Constant -bor [Management.Automation.ScopedItemOptions]::ReadOnly -bor [Management.Automation.ScopedItemOptions]::AllScope
+    $vars = [Collections.Generic.List[psvariable]]::new()
+    foreach ($v in @(Get-Variable -Scope $CallerScope -ErrorAction SilentlyContinue)) {
+        if ($v.Name -notin $skip -and -not ($v.Options -band $locked)) { $vars.Add([psvariable]::new($v.Name, $v.Value)) }
+    }
+    $inner = $Block
+    return {
+        param($sender, $e)
+        try { $null = $inner.InvokeWithContext($null, $vars, @($sender, $e)) }
+        catch {
+            $record = if ($_.Exception.InnerException -is [Management.Automation.IContainsErrorRecord]) { $_.Exception.InnerException.ErrorRecord } else { $_ }
+            Write-MbtGuiFault 'a control of the page' $record
+            throw
+        }
+    }.GetNewClosure()
+}
+
+function Add-MbtGuiHandler {
+    <# Subscribes a script block to an event of a control (Click, Checked, SelectionChanged...). Every handler of the console goes through here or through a New-Gui... function: see ConvertTo-MbtGuiHandler. #>
+    param([Parameter(Mandatory)]$Control, [Parameter(Mandatory)][string]$Event, [Parameter(Mandatory)][scriptblock]$Block)
+    $handler = ConvertTo-MbtGuiHandler -Block $Block -CallerScope 2
+    $null = $Control.('Add_' + $Event).Invoke($handler)
+}
+
 function New-GuiButton {
     param(
         [Parameter(Mandatory)][string]$Text, [scriptblock]$OnClick, [switch]$Accent, [switch]$Small, [switch]$Danger, [string]$Icon, [switch]$Disabled, [string]$Name, [double]$MinWidth = 0
@@ -325,7 +373,7 @@ function New-GuiButton {
     if ($MinWidth) { $b.MinWidth = $MinWidth }
     $b.IsEnabled = -not $Disabled
     $b.Margin = [Windows.Thickness]::new(0, 0, 8, 0)
-    if ($OnClick) { $b.Add_Click($OnClick.GetNewClosure()) }
+    if ($OnClick) { $b.Add_Click((ConvertTo-MbtGuiHandler $OnClick)) }
     return $b
 }
 
@@ -334,7 +382,7 @@ function New-GuiLink {
     $b = [Windows.Controls.Button]::new()
     $b.Content = $Text
     $b.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtLink')
-    if ($OnClick) { $b.Add_Click($OnClick.GetNewClosure()) }
+    if ($OnClick) { $b.Add_Click((ConvertTo-MbtGuiHandler $OnClick)) }
     return $b
 }
 
@@ -346,7 +394,7 @@ function New-GuiTextBox {
     if ($Name) { $t.Name = $Name }
     if ($Automation) { [Windows.Automation.AutomationProperties]::SetName($t, $Automation) }
     if ($Placeholder) { $t.Tag = $Placeholder; try { $t.SetValue([Windows.Controls.TextBox]::TextProperty, $Text) } catch { } }
-    if ($OnChange) { $t.Add_TextChanged($OnChange.GetNewClosure()) }
+    if ($OnChange) { $t.Add_TextChanged((ConvertTo-MbtGuiHandler $OnChange)) }
     return $t
 }
 
@@ -376,7 +424,7 @@ function New-GuiOption {
     $c.Margin = ConvertTo-MbtGuiThickness ($Margin)
     $c.VerticalContentAlignment = 'Top'
     $c.Padding = [Windows.Thickness]::new(8, 0, 0, 0)
-    if ($OnChange) { $c.Add_Checked($OnChange.GetNewClosure()); if ($Type -eq 'Check') { $c.Add_Unchecked($OnChange.GetNewClosure()) } }
+    if ($OnChange) { $handler = ConvertTo-MbtGuiHandler $OnChange; $c.Add_Checked($handler); if ($Type -eq 'Check') { $c.Add_Unchecked($handler) } }
     return $c
 }
 
@@ -551,6 +599,12 @@ function New-GuiProgressBar {
 
 #region Pickers -----------------------------------------------------------------------------
 
+function Set-MbtGuiClipboard {
+    <# Puts a text on the clipboard. Another program may hold the clipboard for a moment: that is not an error of the console, the button then does not say "Copied". #>
+    param([string]$Text)
+    try { [Windows.Clipboard]::SetText($Text); return $true } catch { Write-Verbose "clipboard: $($_.Exception.Message)"; return $false }
+}
+
 function Select-MbtGuiFile {
     param([string]$Title, [string]$Filter = 'All files (*.*)|*.*', [string]$InitialPath, [switch]$Save)
     $d = if ($Save) { [Microsoft.Win32.SaveFileDialog]::new() } else { [Microsoft.Win32.OpenFileDialog]::new() }
@@ -591,12 +645,29 @@ function Start-MbtGuiWork {
     param([Parameter(Mandatory)]$Worker, [Parameter(Mandatory)][scriptblock]$Script, [object[]]$Arguments = @(), [scriptblock]$OnDone, [scriptblock]$OnError)
     $job = [pscustomobject]@{ Script = $Script; Arguments = $Arguments; OnDone = $OnDone; OnError = $OnError; Shell = $null; Handle = $null }
     if ($Worker.Inline) {
-        try { $result = @(& $Script @Arguments) } catch { if ($OnError) { & $OnError $_.Exception.Message }; return }
+        # as in the runspace of the worker: the text of the block is parsed again (it keeps none of the variables of the function that wrote it) and runs under StrictMode Latest
+        $block = [scriptblock]::Create($Script.ToString())
+        try { $result = @(& { Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'; & $block @Arguments }) } catch { if ($OnError) { & $OnError $_.Exception.Message }; return }
         if ($OnDone) { & $OnDone $result }
         return
     }
     $Worker.Queue.Enqueue($job)
     Step-MbtGuiWork $Worker
+}
+
+function Write-MbtGuiFault {
+    <# A step of the console that failed after an engine call: written to the log (with where it failed), so that a page that stops changing can be explained. #>
+    param([string]$Where, $Record)
+    Write-Verbose "${Where}: $Record"
+    try {
+        $work = if ($script:Gui -and $script:Gui.S -and $script:Gui.S.WorkFolder) { [string]$script:Gui.S.WorkFolder } else { $null }
+        if (-not $work) { return }
+        $dir = Join-Path $work 'logs'
+        $null = [IO.Directory]::CreateDirectory($dir)
+        $trace = (@([string]$Record.ScriptStackTrace -split "`r?`n" | Where-Object { $_ } | Select-Object -First 6) -join ' < ')
+        $line = '{0} [{1,-6}] console: {2} failed: {3} | at {4}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff'), 'FAIL', $Where, ($Record -replace '[\r\n]+', ' '), $trace
+        [IO.File]::AppendAllText((Join-Path $dir ('MailboxTransfer_{0}.log' -f (Get-Date).ToString('yyyyMMdd'))), $line + "`r`n", [Text.UTF8Encoding]::new($false))
+    } catch { Write-Verbose "log: $_" }
 }
 
 function Step-MbtGuiWork {
@@ -611,8 +682,8 @@ function Step-MbtGuiWork {
             if ($cur.Shell.HadErrors) { $err = ($cur.Shell.Streams.Error | Select-Object -First 1).ToString() }
         } catch { $err = $_.Exception.Message }
         $cur.Shell.Dispose()
-        if ($err) { if ($cur.OnError) { try { & $cur.OnError $err } catch { Write-Verbose "OnError: $_" } } }
-        elseif ($cur.OnDone) { try { & $cur.OnDone $result } catch { Write-Verbose "OnDone: $_" } }
+        if ($err) { if ($cur.OnError) { try { & $cur.OnError $err } catch { Write-MbtGuiFault 'OnError' $_ } } }
+        elseif ($cur.OnDone) { try { & $cur.OnDone $result } catch { Write-MbtGuiFault 'OnDone' $_ } }
     }
     if (-not $Worker.Current -and $Worker.Queue.Count -gt 0) {
         $job = $Worker.Queue.Dequeue()
@@ -642,10 +713,10 @@ function Stop-MbtGuiWorker {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAx5rSDOB6y43yo
-# WGLAfT0z4RcNCM1dRqDQauKVEQqLNaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC6pZ3Tq1tlfB5E
+# hivTEDOagBOABwSJfiVc2KoZQxmADKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -717,28 +788,28 @@ function Stop-MbtGuiWorker {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAgfAgFBlm1
-# i6FcJ0QccT0XrqAivQyUH/McqYZfUZaOdzANBgkqhkiG9w0BAQEFAASCAgAZ357h
-# Kn1EoHU6UbCOkNfag+X+V8ECaiM9z6ms7BbeuMxXJnLr5DyvHxuJcg3WpBTU9M65
-# +aGgwwpmKJwrXZWi5kIe04SlAPTHDQEM2XrZUXT/RudALYqC4MHm1RvMgfJ8Z0Sa
-# E800PVWps0CIhaEEPkfZ2aT0hFZzrLtyoc3PxXYHfszHLZshCQcpcAB4UcTE92+k
-# IGIB5c0sgp+5mnKegi4x8Qo9/bN3GreOkDCgmNyWabqZBpbFa1yB/2WLgY63SNkY
-# nO2+Gy9G9mQH8LmELAbGBoKFXrFZ80NSCVKV0OafDVS4uY/mvHJqpm3zAX5haK5V
-# nRwo1xhQXcEFKZiI62KKzrJVm9uOwIE8Iexoef/K3Ez7fM36F3c7sFzOvhUJXerl
-# q2yET7oVqnDcMVbl1W7QfHVtUuWGhilGm9HqnrMxpBWdIqEzVtl6UNsRqt784cV5
-# P9BN/avJyaNZuN7MUbQp/5YSwjRH+AdCT9+HBq5xwM7XVl4OkgIjtgKdfEWNNx4v
-# BRwpCOI9GOy1v+7jf0Dyd6QIKQw3xugxhr5ydDYFsYWXzdn7vK/mQL5vxXBwhOwP
-# ESTSZGT9EbdoOQhDeI7xdJw59TIa8/FBFV35El5tNUqqUbjz+eE5+F2DqldjuPGh
-# TCt+308qZ1PKpXD69MxP3nDSdjFp01OHOBWC+6GCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBCmg3yKOqs
+# WJfZ4W85D536febXK/69yaAIrHonAY13zzANBgkqhkiG9w0BAQEFAASCAgBgg6eV
+# WgfuBsnt2xlGl6DoUjs6sfgXhSWR2YxhtFLSGwyOVLdUxnv+ekZBXNDprlmW5M6I
+# x1rVD1XGnel9W5erSuh73dKp/rK6vgfe90xj+rxVYgwv12qhzTBMSWXO5NWYTKrJ
+# xLMihdJqi9KgnQ6+MkCu0XSeDtYD9rPz+QkSJwrJ9J5FDhZ6Pw46wX3mAVQ9gRFq
+# JxXsq3o7V88zCW4WOo1m8Ik9xOnkJUjrfoYHbqNVCQysDbpo4gI9LWiUAaVY1VxU
+# ErrPNcZfgSEO+8b+I8dLKbRpwyh3JLjD38ZxsNiyRuVgLilU3MqZDYGfLH6AVVnx
+# WN+Z1H0hsBZcTQcKx+UBa/q9V5GECR8CKt766IiF5uZ7bDGfqs30luO+dzm4/DJC
+# tEEn34DhSEZgmhJNGm0Bgc3JgGqcg0LtJsagE9Ezn5AFpaXUsW5rH5bYr3FkjJ3w
+# /7uJC+MEX9pUW11bNafHG4DYcDrTDaIjGKgBSLgOcMPBSl8MFo4UNffBeLubNKUp
+# AVcqjMoGBt0gUf4QhQpNRrGFiiWqqsHBKIvoUtxDRF9db1nGlwEhMAp1ZCa1qj57
+# ihonMM1plSmhh4+/mzby4LJzp8vmpLQ0ajMaia5X7bj+BXeKKnMz+2rCksCY+9TM
+# J8lmlYJgMaEjHHRLlK9Q7s7HKbl8gaaJFw9+fqGCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIIuaRQcLO69vxjiWRKqaxGlm6DAdNpFTqSR2esig/L4iAggTsX0Aps3Q
-# cBgPMjAyNjExMTAwODIyMDJaMAMCAQECECc6YAbdAMnErIkoZDi5cQOgghGnMIIE
+# BAIBBQAEIOrhcIf10bZeZv+eFjmtYLElOjyDO0CGS6ZOxc1fOyyOAggGWx6W8kyd
+# shgPMjAyNjExMTUxNDM0NTlaMAMCAQECEF2Y0pr1iuiJhMsmp44wtlWgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -833,17 +904,17 @@ function Stop-MbtGuiWorker {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIwMlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIC7H
-# VJkTxIfjUSIgILCpHAAJpGUX7Lm5LqRNKh3LuhyjMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQ1OVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINUC
+# oIn0t2y/+Z2ge1YF/yQ+i87usWxYQx7UMRp4Klp7MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEA/+ZO/Bj09vhUHAGNBXkRAWKjoHpgizqLT133mIx+sssCIFG3
-# ApBW9XqNFRAVjlbPI9NsoDsk541T3ozkOIM9jJmM
+# zj0EAwIESDBGAiEAnNAG7CLiR87V3SitvLkxvwIz4w5HjDBsz9gQrRmaLPQCIQDr
+# 5Q4pMKDPdNtQTwYjdBzVcR6/8X0x1IvhhUvYFsNFnw==
 # SIG # End signature block

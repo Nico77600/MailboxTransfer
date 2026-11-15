@@ -28,7 +28,7 @@ function Open-MbtGuiSource {
         if ($Use -eq 'import') { $s.ImInfo = $info; $s.ImChecking = $false } else { $s.OpInfo = $info }
         if ($info.Ok) {
             Set-MbtGuiBrowserRoots -Browser $browser -Roots @($info.Roots)
-            if ($Use -eq 'import') { $browser.TrayEmpty = "Nothing ticked: **everything will be imported** ($(Format-MbtGuiCount $info.Items) items, $(Format-MbtGuiBytes $info.Bytes))."; Update-MbtGuiTray $browser }
+            if ($Use -eq 'import') { $browser.TrayEmpty = "Nothing ticked: **everything will be imported** ($(Format-MbtGuiQuantity $info.Items 'item'), $(Format-MbtGuiBytes $info.Bytes))."; Update-MbtGuiTray $browser }
         }
         Show-MbtGuiPage
     }.GetNewClosure() {
@@ -77,7 +77,7 @@ function New-MbtGuiSourceCard {
         $line = [Windows.Controls.WrapPanel]::new(); $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
         $t = New-GuiText 'A damaged PST? ' 'Small'; $t.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
         $line.Children.Add($t) | Out-Null
-        $lk = New-GuiLink 'Check and repair it first' { $s.Task = 'repair'; $s.Sel = 'repair'; $s.Step = 1; if ($s.ImPath) { $s.RpPath = $s.ImPath }; Show-MbtGuiPage }; $lk.FontSize = 12
+        $lk = New-GuiLink 'Check and repair it first' { $s.Task = 'repair'; $s.Sel = 'repair'; $s.Step = $script:Flows.repair.IndexOf('rpFrom'); if ($s.ImPath) { $s.RpPath = $s.ImPath }; Show-MbtGuiPage }; $lk.FontSize = 12
         $line.Children.Add($lk) | Out-Null
         $content.Add($line)
     }
@@ -167,8 +167,44 @@ function Build-MbtGuiImportToPage {
         $t = New-GuiText 'Sign in to choose the mailbox.' 'Muted'; $t.TextAlignment = 'Center'; $t.Margin = [Windows.Thickness]::new(10, 40, 10, 40)
         New-GuiCard -Title 'Where to import' -Content @($t)
     }
-    Set-MbtGuiActions -Footer $(if ($s.Signed) { 'Choose the mailbox and where in it the items go.' } else { 'Sign in first.' }) -Label 'Continue to the plan' -Enabled $s.Signed -OnClick { if ($s.TgtMode -eq 'new' -and (Test-MbtGuiFolderName $s.TgtName)) { Show-MbtGuiPage } else { Move-MbtGuiStep 1 } }
+    Set-MbtGuiActions -Footer $(if ($s.Signed) { 'Choose the mailbox and where in it the items go.' } else { 'Sign in first.' }) -Label 'Continue to Verify' -Enabled $s.Signed -OnClick { if ($s.TgtMode -eq 'new' -and (Test-MbtGuiFolderName $s.TgtName)) { Show-MbtGuiPage } else { Move-MbtGuiStep 1 } }
     return (New-GuiStack @((New-GuiText 'Into which mailbox?' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+}
+
+function New-MbtGuiImportConfirmCard {
+    <# "Before anything is written": the target, the volume, what the import does, and ONE box that says exactly what and where. Start stays grey until it is ticked. #>
+    param([long]$Items, [long]$Bytes, [string]$ItemsQuantity, [bool]$SizeUnknown)
+    $g = $script:Gui; $s = $g.S
+    $mid = [char]0x00B7
+    $mailbox = if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }
+    $where = if ($s.TgtLoc -eq 'Archive' -and -not $s.ImShared) { 'Archive' } else { 'Primary' }
+    $folderText = if ($s.TgtMode -eq 'new') { "new folder $($s.TgtName)" } else { 'folders with the same names' }
+    $target = [Windows.Controls.Border]::new(); $target.CornerRadius = [Windows.CornerRadius]::new(8); $target.Padding = [Windows.Thickness]::new(14, 10, 14, 12); $target.Margin = [Windows.Thickness]::new(0, 4, 0, 0)
+    Set-MbtGuiResource $target ([Windows.Controls.Border]::BackgroundProperty) 'MbtAccentSoft'
+    $eyebrow = New-GuiText 'INTO' 'Small' -NoWrap; $eyebrow.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $eyebrow ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText'
+    $big = New-GuiText $mailbox 'Big' -NoWrap; $big.FontSize = 22
+    $line = [Windows.Controls.StackPanel]::new(); $line.Orientation = 'Horizontal'; $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    $pill = New-GuiPill $where 'run'; $pill.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
+    $fi = New-GuiIcon folder 14; $fi.Margin = [Windows.Thickness]::new(0, 0, 6, 0)
+    $ft = New-GuiText $(if ($s.TgtMode -eq 'new') { "in a new folder named **$($s.TgtName)**" } else { 'in the folders that have the same names' }) 'Body'; $ft.VerticalAlignment = 'Center'
+    $line.Children.Add($pill) | Out-Null; $line.Children.Add($fi) | Out-Null; $line.Children.Add($ft) | Out-Null
+    $target.Child = (New-GuiStack @($eyebrow, $big, $line))
+    $volume = if ($SizeUnknown) { "$ItemsQuantity" } else { "$ItemsQuantity $mid $(Format-MbtGuiBytes $Bytes)" }
+    $vol = New-GuiText $volume 'Big'; $vol.Margin = [Windows.Thickness]::new(0, 12, 0, 0)
+    $sub = New-GuiText 'will be added to this mailbox.' 'Hint'; $sub.Margin = [Windows.Thickness]::new(0)
+    $warn = New-GuiMessage -Kind warn -Icon shield -Text '**Adds only.** Nothing is deleted or overwritten. This tool cannot undo an import: you would delete the items yourself.'
+    $claim = "I checked: add $ItemsQuantity to $mailbox $mid $where $mid $folderText"
+    $box = New-GuiOption -Type Check -Title $claim -Checked $s.Confirmed -Margin '0,12,0,0' -OnChange {
+        param($x, $e)
+        $s.Confirmed = [bool]$x.IsChecked
+        $s.ConfirmKey = $(if ($s.Confirmed) { Get-MbtGuiPlanKey } else { '' })
+        Update-MbtGuiPrimary -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok') -Footer (Get-MbtGuiPlanFooter)
+    }.GetNewClosure()
+    $box.FontWeight = [Windows.FontWeights]::SemiBold
+    $frame = [Windows.Controls.Border]::new(); $frame.BorderThickness = [Windows.Thickness]::new(1); $frame.CornerRadius = [Windows.CornerRadius]::new(8); $frame.Padding = [Windows.Thickness]::new(12, 0, 12, 12); $frame.Margin = [Windows.Thickness]::new(0, 14, 0, 0)
+    Set-MbtGuiResource $frame ([Windows.Controls.Border]::BorderBrushProperty) 'AccentFillColorDefaultBrush'
+    $frame.Child = $box
+    return (New-GuiCard -Title 'Before anything is written' -Content @($target, $vol, $sub, $warn, $frame))
 }
 
 function Build-MbtGuiImportPlanPage {
@@ -179,36 +215,38 @@ function Build-MbtGuiImportPlanPage {
     $items = if ($sel.Items -gt 0) { $sel.Items } else { [long]$info.Items }
     $bytes = if ($sel.Items -gt 0) { $sel.Bytes } else { [long]$info.Bytes }
     $sizeUnknown = ($sel.Items -gt 0 -and $sel.UnknownSize -gt 0 -and $bytes -le 0)
-    $itemsText = if ($sel.Items -gt 0) { Format-MbtGuiSelectionItems $sel } else { Format-MbtGuiCount $items }
+    $itemsQuantity = if ($sel.Items -gt 0) { Format-MbtGuiSelectionItems $sel -WithNoun } else { Format-MbtGuiQuantity $items 'item' }
     $g.ImportTotals = @{ Items = $items; Bytes = $bytes }
     $target = if ($s.TgtMode -eq 'new') { $s.TgtName } else { 'the same folder names' }
-    $steps = @('Check the PST files again.', "Create the folders under **$target**.", "Send $itemsText items, one by one, into the mailbox.", 'For any item Microsoft does not answer for, look in the folder and decide by itself.', 'Final check of the whole job.')
+    $steps = @('Check the PST files again.', "Create the folders under **$target**.", "Send $itemsQuantity, one by one, into the mailbox.", 'For any item Microsoft does not answer for, look in the folder and decide by itself.', 'Final check of the whole job.')
     if ($s.ImSrc -eq 'store') { $steps[0] = 'Check the export store again.' }
     elseif ($s.ImSrc -eq 'eml') { $steps[0] = 'Read the .eml files.' }
     $ol = [Windows.Controls.StackPanel]::new(); $i = 1
     foreach ($t in $steps) { $r = New-GuiText ("$i.  $t") 'Body'; $r.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($r) | Out-Null; $i++ }
     $eta = Get-MbtGuiPlanEta -Task import -Bytes $bytes
     $sizeText = if ($sizeUnknown) { 'size unknown before the check' } elseif ($sel.Items -gt 0) { Format-MbtGuiSelectionSize $sel } else { Format-MbtGuiBytes $bytes }
-    $srcText = "$([IO.Path]::GetFileName($s.ImPath)) ($(if ($sel.Items -gt 0) { "$itemsText items chosen, " })$sizeText$(if ($info -and $info.PSObject.Properties['Parts'] -and $info.Parts) { ", $($info.Parts) parts" }))"
+    $srcText = "$([IO.Path]::GetFileName($s.ImPath)) ($(if ($sel.Items -gt 0) { "$itemsQuantity chosen, " })$sizeText$(if ($info -and $info.PSObject.Properties['Parts'] -and $info.Parts) { ", $(Format-MbtGuiQuantity $info.Parts 'part')" }))"
     $etaText = if ($sizeUnknown) { 'depends on the size of the folders chosen; the check below counts it' } else { "**$($eta.Text)**" }
     $facts = New-GuiFacts @(@('From', $srcText), @('Into', "$(if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }) $([char]0x00B7) $($s.TgtLoc) mailbox"), @('Time', (New-GuiText $etaText 'Body')))
     $warn = New-GuiMessage -Kind warn -Icon clock -Text '**This is a long job.** Microsoft accepts only about 4 GiB per hour into one mailbox, whatever the speed of your PC or network. You can stop and continue as often as you like; items already done are skipped.'
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
-    $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $warn, $g.PlanHolder)), (New-MbtGuiSettingsCard -Include @('conc', 'reconcile', 'tries')))
-    $box = New-GuiTextBox -Text $s.Confirm -Automation 'Type IMPORT' -OnChange { param($x, $e)
-        $s.Confirm = $x.Text
-        $ok = ($x.Text.Replace(' ', '').ToLowerInvariant() -eq 'import') -and $s.PlanState -eq 'ok'
-        Update-MbtGuiPrimary -Enabled $ok -Footer $(if ($x.Text.Replace(' ', '').ToLowerInvariant() -eq 'import') { 'Ready.' } else { 'Type IMPORT to unlock Start.' })
+    $sourceRow = if ($info -and $info.Ok) { New-MbtGuiCheckRow -State ok -Text $(if ($s.ImSrc -eq 'pst') { 'The PST file is clean' } else { 'The source is clean' }) -Detail $(if ($info.PSObject.Properties['Parts'] -and $info.Parts) { "$(Format-MbtGuiQuantity $info.Parts 'part'), $(Format-MbtGuiBytes $info.Bytes)" } else { Format-MbtGuiBytes $info.Bytes }) } else { New-MbtGuiCheckRow -State bad -Text 'The source is not checked' -Detail 'go back to From' }
+    $roomRow = $null
+    $loc = @($s.Locations | Where-Object { $_.Kind -eq $s.TgtLoc -and $_.PSObject.Properties['Quota'] -and $_.Quota })
+    if ($loc.Count -and -not $s.ImShared) {
+        $fits = ($bytes -le ([double]$loc[0].Quota - [double]$loc[0].Used))
+        $roomRow = New-MbtGuiCheckRow -State $(if ($fits) { 'ok' } else { 'bad' }) -Text $(if ($fits) { 'The mailbox has room' } else { 'The mailbox is probably too small' }) -Detail "$($s.TgtLoc): $(Format-MbtGuiBytes $loc[0].Used) of $(Format-MbtGuiBytes $loc[0].Quota) used"
     }
-    $confirm = New-GuiCard -Title 'Confirm' -Content @((New-GuiText "This adds **$itemsText items** to a real mailbox. Type **IMPORT** to confirm." 'Body'), $box, (New-GuiText 'Capital letters and spaces do not matter.' 'Hint'))
-    $box.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
+    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $sourceRow, $roomRow)
+    $left = New-GuiStack @($checks, (New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $warn)))
     $before = New-GuiCard -Title 'Before you start' -Content @((New-GuiText ([char]0x2022 + '  Keep the PC plugged in and awake (the console does this for you).') 'Body'), (New-GuiText ([char]0x2022 + '  The source files must stay where they are until the end.') 'Body'), (New-MbtGuiSleepInfo))
-    $right = New-GuiStack @($confirm, $before)
+    $right = New-GuiStack @((New-MbtGuiImportConfirmCard -Items $items -Bytes $bytes -ItemsQuantity $itemsQuantity -SizeUnknown $sizeUnknown), $before)
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
-    $typed = $s.Confirm.Replace(' ', '').ToLowerInvariant() -eq 'import'
-    Set-MbtGuiActions -Footer $(if ($typed) { 'Ready.' } else { 'Type IMPORT to unlock Start.' }) -Label 'Start the import' -Icon play -Enabled ($typed -and $s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+    if ($s.ConfirmKey -ne $key) { $s.Confirmed = $false; $s.ConfirmKey = '' }
+    $mailbox = if ($s.ImShared) { $s.ImShared } else { $s.Mailbox }
+    Set-MbtGuiActions -Footer (Get-MbtGuiPlanFooter) -Label "Start the import into $mailbox" -Icon play -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
+    return (New-GuiStack @((New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task import -Include @('conc', 'retry', 'reconcile', 'tries', 'awake'))))
 }
 
 #endregion
@@ -254,14 +292,14 @@ function Build-MbtGuiRepairFromPage {
     } elseif ($chk) {
         $bad = ($chk.Errors -gt 0 -or $chk.Warnings -gt 0)
         if ($bad) {
-            $pills = New-GuiStack @($(if ($chk.Errors) { $p = New-GuiPill "$($chk.Errors) errors" 'bad'; $p.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $p }), $(if ($chk.Warnings) { New-GuiPill "$($chk.Warnings) warnings" 'warn' })) -Orientation Horizontal
+            $pills = New-GuiStack @($(if ($chk.Errors) { $p = New-GuiPill (Format-MbtGuiQuantity $chk.Errors 'error') 'bad'; $p.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $p }), $(if ($chk.Warnings) { New-GuiPill (Format-MbtGuiQuantity $chk.Warnings 'warning') 'warn' })) -Orientation Horizontal
             $resBody.Add($pills)
             $resBody.Add((New-GuiMessage -Kind warn -Icon warn -Text $(if ($chk.Errors) { '**The file has damage, but it can probably be repaired.** Outlook may refuse to open it, or show folders that are empty or missing items.' } else { '**The file has small problems.** Outlook can probably open it. A repaired copy puts the counters right.' })))
-            $rows = foreach ($f in @($chk.Findings)) {
+            $rows = @(foreach ($f in @($chk.Findings)) {
                 $label = New-GuiStack @((New-GuiStack @((New-GuiPill $(if ($f.Severity -eq 'Error') { 'Error' } else { 'Warning' }) $(if ($f.Severity -eq 'Error') { 'bad' } else { 'warn' }) -Light), (New-GuiText $f.Text 'Body')) -Orientation Horizontal), (New-GuiText $f.Code 'Small'))
                 $label.Children[0].Children[1].Margin = [Windows.Thickness]::new(8, 0, 0, 0)
                 , @($label, [string]$f.Count, $f.Level)
-            }
+            })
             $resBody.Add((New-GuiTable -Headers @('What was found', 'Count', 'Repaired by level') -Rows @($rows) -Widths @('*', '70', '130') -Right @(1)))
             $resBody.Add((New-GuiText "Recommended: **$($chk.Recommended)**. It also does everything Recompute does." 'Hint'))
         } else {
@@ -273,10 +311,12 @@ function Build-MbtGuiRepairFromPage {
         $resBody.Add((New-GuiText 'Pick a PST file to check it.' 'Muted')); $info = ''
     }
     $right = New-GuiCard -Title 'Result of the check' -Info $info -Content $resBody.ToArray()
+    $rightStack = @($right)
+    if ($bad) { $rightStack += New-GuiCard -Title 'What to do next' -Content @((New-GuiText 'The file is damaged but can probably be repaired. A repaired copy is a new file; the original is never changed.' 'Body'), (New-GuiButton -Text 'Repair into a new file' -Icon wrench -Accent -OnClick { Move-MbtGuiStep 1 }.GetNewClosure() | ForEach-Object { $_.Margin = [Windows.Thickness]::new(0, 10, 0, 0); $_.HorizontalAlignment = 'Left'; $_ })) }
     if ($bad) { Set-MbtGuiActions -Footer 'The file has problems. You can write a repaired copy.' -Label 'Repair into a new file' -Icon wrench -OnClick { Move-MbtGuiStep 1 } }
-    elseif ($chk -and -not $chk.PSObject.Properties['Failed']) { Set-MbtGuiActions -Footer 'The file is clean. Nothing to repair.' -Label 'Start a new task' -OnClick { $s.Task = $null; $s.Sel = $null; $s.Step = 0; Show-MbtGuiPage } }
+    elseif ($chk -and -not $chk.PSObject.Properties['Failed']) { Set-MbtGuiActions -Footer 'The file is clean. Nothing to repair.' -Label 'Start a new task' -OnClick { $s.Task = $null; $s.Sel = $null; $s.Step = 1; Show-MbtGuiPage } }
     else { Set-MbtGuiActions -Footer 'Pick the PST file.' -Label 'Repair into a new file' -Icon wrench -Enabled $false -OnClick { } }
-    return (New-GuiStack @((New-GuiText 'Which PST file?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right (New-GuiStack @($right)))))
+    return (New-GuiStack @((New-GuiText 'Which PST file?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right (New-GuiStack $rightStack))))
 }
 
 function Test-MbtGuiRepairDestination {
@@ -298,24 +338,24 @@ function Build-MbtGuiRepairToPage {
         $p = Test-MbtGuiRepairDestination $s
         $g.RepairHolder.Content = if ($p) { New-GuiMessage -Kind bad -Icon x -Text $p } else { $null }
         $g.C.Primary.IsEnabled = -not $p
-    }
+    }.GetNewClosure()
     $row = New-MbtGuiBrowseFolderRow -Value $s.RpDest -Kind SaveFile -Title 'New PST file' -Filter 'PST files (*.pst)|*.pst' -Automation 'New file' -OnChange { param($v) $s.RpDest = $v; & $update }.GetNewClosure()
     $hint = "A new file. The tool never overwrites a file and never touches the original. You need about as much free disk space as the PST ($(Format-MbtGuiBytes $size)$(if ($null -ne $free) { "; $(Format-MbtGuiBytes $free) free" }))."
     $newFile = New-GuiCard -Title 'New file' -Content @((New-GuiText 'Write the repaired copy as' 'Label'), $row, $holder, (New-GuiText $hint 'Hint'))
     $rec = [string]$(if ($s.RpCheck -and $s.RpCheck.PSObject.Properties['Recommended']) { $s.RpCheck.Recommended } else { 'Rebuild' })
-    $lv = { param($key, $title, $desc, [bool]$recommended)
-        $o = New-GuiOption -Type Radio -Group lvl -Title $(if ($recommended) { "$title (recommended)" } else { $title }) -Hint $desc -Checked ($s.RpLevel -eq $key) -OnChange { $s.RpLevel = $key }.GetNewClosure()
-        $o
+    $levelRows = @(
+        @('Automatic', 'Automatic', "The tool picks the lightest level that fixes what it found (here: $rec) and goes up by itself if needed.", $true),
+        @('Recompute', 'Recompute only', 'The structure is trusted. Fixes counters, sizes and indexes.', $false),
+        @('Rebuild', 'Rebuild', 'Finds folders and messages again from the file''s nodes. Needed when messages are not listed.', $false),
+        @('Salvage', 'Salvage', 'Scans the whole file for readable blocks. For files that do not open at all, or are cut short. Slowest.', $false))
+    $levels = foreach ($row in $levelRows) {
+        $key = $row[0]
+        New-GuiOption -Type Radio -Group lvl -Title $(if ($row[3]) { "$($row[1]) (recommended)" } else { $row[1] }) -Hint $row[2] -Checked ($s.RpLevel -eq $key) -OnChange { $s.RpLevel = $key }.GetNewClosure()
     }
-    $levels = @(
-        (& $lv 'Automatic' 'Automatic' "The tool picks the lightest level that fixes what it found (here: $rec) and goes up by itself if needed." $true)
-        (& $lv 'Recompute' 'Recompute only' 'The structure is trusted. Fixes counters, sizes and indexes.' $false)
-        (& $lv 'Rebuild' 'Rebuild' 'Finds folders and messages again from the file''s nodes. Needed when messages are not listed.' $false)
-        (& $lv 'Salvage' 'Salvage' 'Scans the whole file for readable blocks. For files that do not open at all, or are cut short. Slowest.' $false))
     $keep = New-GuiMore -Summary 'More options' -Content @((New-GuiOption -Type Check -Title 'Keep damaged attachments' -Hint 'An attachment with unreadable blocks is kept at its full size, with zeros in place of what could not be read, and renamed **name (damaged).ext**. Off by default: such a file is damaged, so it says so.' -Checked $s.RpKeep -OnChange { param($x, $e) $s.RpKeep = [bool]$x.IsChecked }))
     $levelCard = New-GuiCard -Title 'Repair level' -Content (@($levels) + @($keep))
     $what = New-GuiCard -Title 'What a repair does' -Content @((@('Reads the damaged file as far as it can be read.', 'Writes a **new, clean PST** with everything it found.', 'Checks both files and shows a before and after.', 'Messages it could not read are listed with the reason. Nothing is guessed.') | ForEach-Object { $t = New-GuiText ([char]0x2022 + '  ' + $_) 'Body'; $t.Margin = [Windows.Thickness]::new(0, 0, 0, 6); $t }))
-    Set-MbtGuiActions -Footer 'The original file is never changed.' -Label 'Continue to the plan' -Enabled (-not (Test-MbtGuiRepairDestination $s)) -OnClick { Move-MbtGuiStep 1 }
+    Set-MbtGuiActions -Footer 'The original file is never changed.' -Label 'Continue to Verify' -Enabled (-not (Test-MbtGuiRepairDestination $s)) -OnClick { Move-MbtGuiStep 1 }
     & $update
     return (New-GuiStack @((New-GuiText 'How to repair it?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($newFile, $levelCard)) -Right (New-GuiStack @($what)))))
 }
@@ -331,10 +371,9 @@ function Build-MbtGuiRepairPlanPage {
     $mins = [math]::Max(1, [math]::Round($size / 1GB * 1.2))
     $facts = New-GuiFacts @(@('Original', (New-GuiText "$([IO.Path]::GetFileName($s.RpPath)) ($(Format-MbtGuiBytes $size)) $([char]0x00B7) **not changed**" 'Body')), @('New file', $s.RpDest), @('Time', (New-GuiText "measured once it runs (it depends on your disk)" 'Body')), @('Keep damaged attachments', $(if ($s.RpKeep) { 'yes' } else { 'no' })))
     $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts)))
-    $settings = New-GuiCard -Title 'Settings used' -Content @((New-GuiText 'Defaults from the configuration file.' 'Hint'), (New-MbtGuiSettingsSection -Include @()))
     $safe = New-GuiCard -Title 'Safe by design' -Content @((New-GuiText 'A cancelled or failed repair leaves no half-written file: the new file appears only when it is complete.' 'Body'))
     Set-MbtGuiActions -Footer 'Nothing starts before you press Start.' -Label 'Start the repair' -Icon play -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-GuiTwoColumns -Left $left -Right (New-GuiStack @($settings, $safe)))))
+    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right (New-GuiStack @($safe)) -LeftWidth 520) -Task repair -Include @('awake'))))
 }
 
 #endregion
@@ -347,7 +386,7 @@ function Build-MbtGuiOpenPage {
     $info = $s.OpInfo
     $left = New-GuiStack @((New-MbtGuiSourceCard -Use open))
     if ($info -and $info.Ok) {
-        $facts = New-GuiFacts @(@('Size', (Format-MbtGuiBytes $info.Bytes)), @('Items', "$(Format-MbtGuiCount $info.Items) in $($info.Folders) folders"))
+        $facts = New-GuiFacts @(@('Size', (Format-MbtGuiBytes $info.Bytes)), @('Items', "$(Format-MbtGuiCount $info.Items) in $(Format-MbtGuiQuantity $info.Folders 'folder')"))
         $left.Children[0].Child.Children.Add($facts) | Out-Null
     }
     $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
@@ -365,7 +404,7 @@ function Build-MbtGuiOpenPage {
     $copyOn = Get-MbtGuiCapability 'PstCopy'
     $copyReady = { $x = Get-MbtGuiSelection -Roots @((Get-MbtGuiBrowser 'open').Roots); [bool]($script:Gui.S.OpInfo -and $script:Gui.S.OpInfo.Ok -and $script:Gui.S.OpSrc -eq 'pst' -and $x.Items -gt 0) }
     $export = New-GuiButton -Text $(if ($copyOn) { 'Export my ticks to a PST...' } else { 'Export my ticks to a PST... (coming in this version)' }) -Icon down -Disabled:(-not ($copyOn -and (& $copyReady))) -OnClick {
-        $s.Task = 'copy'; $s.Sel = 'copy'; $s.Step = 2
+        $s.Task = 'copy'; $s.Sel = 'copy'; $s.Step = $script:Flows.copy.IndexOf('cpTo')
         Initialize-MbtGuiCopy
         Show-MbtGuiPage
     }
@@ -374,7 +413,7 @@ function Build-MbtGuiOpenPage {
     $footerText = if ($copyOn -and $s.OpSrc -eq 'pst') { 'Read only. Tick folders or messages to write them into a new PST.' } else { 'Read only. Nothing is written.' }
     Set-MbtGuiActions -Footer $footerText -Extra $export -Label 'Import into a mailbox...' -Enabled $canImport -OnClick {
         $s.ImSrc = $s.OpSrc; $s.ImPath = $s.OpPath; $s.ImInfo = $s.OpInfo
-        $s.Task = 'import'; $s.Sel = 'import'; $s.Step = 1
+        $s.Task = 'import'; $s.Sel = 'import'; $s.Step = $script:Flows.import.IndexOf('imFrom')
         Show-MbtGuiPage
     }
     return (New-GuiTwoColumns -Left $left -Right $right)
@@ -423,7 +462,7 @@ function Build-MbtGuiCopyToPage {
     $split = [Windows.Controls.ComboBox]::new(); $split.HorizontalAlignment = 'Stretch'
     foreach ($t in '50 GB (Outlook''s default limit)', '20 GB', '10 GB', '5 GB') { [void]$split.Items.Add($t) }
     $split.SelectedIndex = switch ([int]$s.SplitGB) { 50 { 0 } 20 { 1 } 10 { 2 } 5 { 3 } default { 0 } }
-    $split.Add_SelectionChanged({ param($x, $e) $s.SplitGB = @(50, 20, 10, 5)[$x.SelectedIndex] }.GetNewClosure())
+    Add-MbtGuiHandler $split 'SelectionChanged' { param($sender, $e) $s.SplitGB = @(50, 20, 10, 5)[$sender.SelectedIndex] }
     $more = New-GuiMore -Summary 'More options' -Content @(
         (New-GuiText 'Largest PST file' 'Label'), $split,
         (New-GuiText 'A message is never cut in two. The files are named after the first one, then -002, -003 and so on.' 'Hint'),
@@ -433,7 +472,7 @@ function Build-MbtGuiCopyToPage {
     $left = New-GuiCard -Title 'Save as' -Content $content
     $sel = Get-MbtGuiSelection -Roots @((Get-MbtGuiBrowser 'open').Roots)
     $right = New-GuiStack @((New-MbtGuiSelectionCard $sel), (New-GuiCard -Title 'Good to know' -Content @((New-GuiText 'The original PST is only read. The new files hold the folders and messages you ticked, with the same folder names. A copy that is stopped leaves no file: start it again.' 'Body'))))
-    Set-MbtGuiActions -Footer 'Choose where to save the new PST. You can still change everything on the next page.' -Label 'Continue to the plan' -Enabled (-not (Test-MbtGuiCopyDestination $s)) -OnClick { Move-MbtGuiStep 1 }
+    Set-MbtGuiActions -Footer 'Choose where to save the new PST. You can still change everything on the next page.' -Label 'Continue to Verify' -Enabled (-not (Test-MbtGuiCopyDestination $s)) -OnClick { Move-MbtGuiStep 1 }
     & $update
     return (New-GuiStack @((New-GuiText 'Where to save the new PST?' 'H2'), (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right $right)))
 }
@@ -445,23 +484,23 @@ function Build-MbtGuiCopyPlanPage {
     $ol = [Windows.Controls.StackPanel]::new(); $i = 1
     foreach ($t in $steps) { $r = New-GuiText ("$i.  $t") 'Body'; $r.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($r) | Out-Null; $i++ }
     $facts = New-GuiFacts @(@('From', "$([IO.Path]::GetFileName($s.OpPath)) $([char]0x00B7) **not changed**"), @('Saved to', [IO.Path]::Combine($s.OutFolder, $s.OutName)),
-        @('Ticked', "$(Format-MbtGuiSelectionItems $sel) items $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText 'measured once it runs (it depends on your disk)' 'Body')))
+        @('Ticked', "$(Format-MbtGuiSelectionItems $sel -WithNoun) $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText 'measured once it runs (it depends on your disk)' 'Body')))
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
-    $left = New-GuiStack @((New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $g.PlanHolder)), (New-MbtGuiSettingsCard -Include @()))
+    $left = New-GuiStack @((New-GuiCard -Title 'Checks' -Content @($g.PlanHolder)), (New-GuiCard -Title 'What will be done' -Content @($ol, $facts)))
     $right = New-GuiStack @((New-GuiCard -Title 'What is in it' -Content @((New-MbtGuiPlanTable $sel))), (New-GuiCard -Title 'Safe by design' -Content @((New-GuiText 'The original is only read. The new file appears only when it is complete: a copy that is stopped or fails leaves no file behind.' 'Body'))))
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
-    Set-MbtGuiActions -Footer 'Read the plan. Nothing starts before you press Start.' -Label 'Start the copy' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+    Set-MbtGuiActions -Footer (Get-MbtGuiPlanFooter) -Label 'Start the copy' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
+    return (New-GuiStack @((New-GuiText 'Check the plan' 'H2'), (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task copy -Include @('awake'))))
 }
 
 #endregion
 
 # SIG # Begin signature block
-# MIImKAYJKoZIhvcNAQcCoIImGTCCJhUCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD3+lDST5yiDFRd
-# d2oCVgJU+54nw8etk2QOJsxO2VIeq6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDKQUhEsjntg6gc
+# 1PYNUOHFlpcdEn++BX+w+fahxQMt+KCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -533,28 +572,28 @@ function Build-MbtGuiCopyPlanPage {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYDzCCGAsCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAete3Y+6fZ
-# Y+prOVxqQVZ4TdIuFOdDOCeEV9GkOURw/DANBgkqhkiG9w0BAQEFAASCAgAOzTH7
-# 2MVI/3uS1xPKK65tzviyh+r+nsWtOt9qnB8DIL30vun5vaU2KK0NMbRdl0oi1aaW
-# 6CPvQ5cVrhrSoFalHt98qz1KzAqOIkGahwoB6JVEfXtg2Ad2YUHGAQzsqLHfx1aK
-# QWZ66nDYLwlrR+N/1XiVa/4QGKIEL9DFybXkXljzQqHKcHqSBn1QWMIGAJK8PPYh
-# aTlaeoGwe5IEcYppRLynbeaW3A3W6JUg+Ig/AqGwIe0Geor4t9g9X2Nb3jH8jDWj
-# iAHjuaWSt6PR8hLPAVuFu7/0YfDQqsyRBxDEXVOOLQTI3dfu2RUB6mxiIRUUAwqz
-# NSuXTEgNjHdqYGUzM2xCxB6mFnP5z0Ahx2GH0uHgp4m4EBqLduAThvJ+NLFm1+oC
-# caQQyAEDhZoP4jfmDvy31sOZJTJMuwAnN1dI5Blr9yMFCALFTmqWcjiYSzSFuwRK
-# Ss9tv1Rbwn4tgkm/eCGcwxvIHg/pnZYNwxSSf8W0hRRcLGjySRXpiw7/yoY7v+qM
-# dJZNz2F0/6+JVb5+/R3DB+jXd7gPlfsIYNNHbOOTPhpnp/WAfHlZS0x4HLwPsYti
-# KlN7a5+D3o6v46XxzxJMT9c34cGPdN3xN5bDdwIszRHNyWGlrfSHYtRMonTq7kF8
-# Dh9Tnby+ZCxbutMime//U+curZS9ksVnHYMnu6GCFMwwghTIBgorBgEEAYI3AwMB
-# MYIUuDCCFLQGCSqGSIb3DQEHAqCCFKUwghShAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCv07bWmMT/
+# 4bMRtyVLanFnseNJojcd+9359Ru8BwwpyDANBgkqhkiG9w0BAQEFAASCAgBvg4vW
+# Zq1bsB/IFHzjuBdBhlBWk1y5pA9b2UdJKoSyZdLSAXJAaibi3LVTcMa9iAeKcvxO
+# 9/9zBJJ6JbXNTGfuga93pZe3Ljni3Eo9IHG1Dhr8BXM54QWMZaY+5hs3h9aAQkbm
+# 3Buy9ExXF0pFv0RuvNhaCSxO8Jxph13BnklrD2IStlMSLgLXfDBdUt9qKMiSRdt/
+# RWerr7uIRYZtRnpJ6Gf7BFYZNdayDOzK+eQM+8aYk6eOu2NaRpGc+8KlP7PE6CuU
+# TJ3Q6vFF+WXQF3cAlBv6hEhiEzKXQmwd+iPJGmmAsGMrsJNfl8SlcnKAVC1+Lqxh
+# 4EqT/fYw34RRXGgUSZ6O4e7n6zSt+X8RFy6KlSLWrRNbmWYP3iYUvUsG6Q9nSvYu
+# +G7unLYjbOqyEaIM1bKcedYzt2pAcsw/Wgc4v2H289VOIdg0lT/cWxDN+K/Zmjpb
+# aPmjPBEw5Tkq/8LBbXsANEbDM0UxLaLYfr+pP9JELxJriVj5OOVnJNfZf9B0do7T
+# oAybnl+Px9uEdqvO0ISxrHCYOQcO0qpMIEiXKD4vD3u6WstyJ5I5HFv5iV9M9cF7
+# E9BwTK0Lm1UjGg9GmEgyfW4/7Oy0VUxgWYhNQ6SPjoVG95kA6fW1Hu4kpVyWkIX7
+# hYkarKH6qZFcAhBi7fdXQRk1ea2W2i0qADSlVqGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEII+2jEXdfOPdMjiNECCSuHsHzfsAl49JUplh7RyYZVEyAggULsbfE5+3
-# UBgPMjAyNjExMTAwODIyMzlaMAMCAQECEAfFtV2JI7fxjJu1Zf3pe1ugghGnMIIE
+# BAIBBQAEIGAb5wefhHtOp1C/uDGYZ53LsaaTWbCFGWtaXM2tvRrgAggcftqzpUMb
+# cBgPMjAyNjExMTUxNDM1MzBaMAMCAQECEB1ibmU8LxNmX+XUpKce5I6gghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -649,17 +688,17 @@ function Build-MbtGuiCopyPlanPage {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlQwggJQAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIzOVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBkb
-# bjiMOgLOWKxVv2LB6WVP0fX5DvolZcYD/4NCJiYvMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUzMFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIN2Q
+# Xlv1rs03t1YVnEnu8ddg/sCSn7fRozhhvUQqM4/IMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERTBDAh9aD/veYRcI7Std50zrhGYi0Jytfw+YhR3m65cKQtQeAiA1iC9f
-# dLUGfxIUytudWHZAIH6hl8w5bqo2z585c4DCOw==
+# zj0EAwIERzBFAiEAk6W1jilEIaSnFLZGsTMlr8uc5Zq+KeNmL1uKleBCkcsCIGRD
+# Lhw83Jrej30lBKtx2+ec3TivBRMElzLCWV5Ukljp
 # SIG # End signature block

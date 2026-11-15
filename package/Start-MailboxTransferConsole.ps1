@@ -5,9 +5,10 @@
     Mailbox Transfer console - the window that guides an operator through browse and export, import, check and repair of a PST, and open.
 
 .DESCRIPTION
-    WPF window (Fluent theme of .NET 9 and later; light or dark like Windows). Task, From, To, Plan, Run, Done: one question per page, safe
-    defaults, the plan read before anything starts, the long jobs run by Invoke-MailboxTransfer.ps1 in a child process and followed through
-    their events file. Sign-in, browse and preview run in this process. See README, section "Console".
+    WPF window (Fluent theme of .NET 9 and later; light or dark like Windows). Setup, Task (What, From, To), Verify, Run, Next steps: one question per
+    page, safe defaults, the checks and the plan read before anything starts, the long jobs run by Invoke-MailboxTransfer.ps1 in a child process and
+    followed through their events file. Sign-in, browse and preview run in this process. The Verify page shows the command line that does the same.
+    See README, section "Console".
 
     -Demo runs the whole window on synthetic data with a fake engine and a job that only writes events: no network, no mailbox, no file outside
     the work folder. -DocScenario <name> opens one page in one state of that demo (for the documentation images). -Theme Light or Dark is for the
@@ -27,7 +28,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.1.0 (console)
+    Version : 1.2.0 (console)
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -53,6 +54,12 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
     exit $LASTEXITCODE
 }
 
+# Every number and date of the tool is written the same way, whatever the language of Windows: en-US for the threads of this process and the ones that start later.
+$mbtCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
+[Globalization.CultureInfo]::DefaultThreadCurrentCulture = $mbtCulture
+[Globalization.CultureInfo]::DefaultThreadCurrentUICulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentCulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentUICulture = $mbtCulture
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # The package is verified before any of its code runs: the verifier must carry the owner signature, then it checks the signed manifest.
@@ -68,7 +75,7 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     }
     $integritySignature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $integrityVerifier -ErrorAction Stop
     if ([string]$integritySignature.Status -cne 'Valid' -or $null -eq $integritySignature.SignerCertificate -or
-        $integritySignature.SignerCertificate.Thumbprint -cne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
+        $integritySignature.SignerCertificate.Thumbprint -ne '0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6' -or
         $null -eq $integritySignature.TimeStamperCertificate) {
         throw 'Package integrity: verifier must have the trusted, timestamped owner signature. Use the complete release ZIP (https://github.com/Nico77600/MailboxTransfer/releases/latest): extract it again and unblock it. A source checkout is started with -DevelopmentMode.'
     }
@@ -80,7 +87,7 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     # The module does not repeat this warning in the same process.
     [AppDomain]::CurrentDomain.SetData('MailboxTransfer.UnverifiedTreeWarned', $true)
 }
-$script:ConsoleVersion = '1.1.0'
+$script:ConsoleVersion = '1.2.0'
 $packageRoot = $PSScriptRoot
 foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') {
     . (Join-Path $packageRoot "module\MailboxTransfer.Gui.$f.ps1")
@@ -100,15 +107,17 @@ if ($Demo) {
     if ($DocScenario) { Set-MbtGuiScenario -Name $DocScenario }
 } else {
     $engine = New-MbtGuiRealEngine -PackageRoot $packageRoot -EntryScript $entry -WorkFolder $WorkFolder
+    # the folders of the jobs that are finished and older than Jobs.RetentionDays go (in the background)
+    try { & $engine.Retention $WorkFolder } catch { Write-Verbose "job retention: $($_.Exception.Message)" }
     $window = New-MbtGuiWindow -Engine $engine -Theme $Theme -WorkFolder $WorkFolder -EntryScript $entry -Version $script:ConsoleVersion
 }
 [void]$window.ShowDialog()
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBHHwz7OKVhtEGi
-# HukmWHHHVu1YaqNfh9a4hzJswEDhUaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBzPBwgghzzR1s6
+# 8h/XTIu2izDL76rIU2OjvilMPxxll6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -180,28 +189,28 @@ if ($Demo) {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDR+Zy15ABT
-# MM65SInVDAqUbTLSCuPaI5+zjGF525aE4TANBgkqhkiG9w0BAQEFAASCAgAQNs9A
-# u5H8oPTBfG0Sum5NphQIOrUGS9vcrhvWSQmGh2KzVsZe86iA3n/bCTTjsELVatw2
-# zE1eq87MYCFR5htvpLwTogveLFBteVvbLLH3DxfvtiuCTRnuoXffayrV64OfrnpE
-# F/zxW5dRK77xszDM38xXLjglIFaHDNNqkAe9mqVGwFlME4MpjcdEdqmXUHk9w1Ip
-# on7KxvZcI9de27kCssrspmKNgV2mL9aOLyhkiwUu/FnxJzPbGNnrZkez0JiLpZAg
-# W3mqOD9V94yqFRl47VZGZL+GsyqrJf/ThJdd7WVpAmGKK0KcXzMC6PPiHjSzPgQY
-# CuDRcN2+RZXLH/EuBSM4jY4t3+40ogsWSiiSx22VkNaPWoH/I4JXj3l8wyfutYOL
-# kdRWCPR94mD8ar276WDVtqgUGQ7ExT3+bS7hO83Sk7EyznNE07EXcg3M49SRwQ1a
-# H1YG8HERW/SdSyjktO7hB31CaQpLR2SKSd3V4whGVwU6akYyRcCoig0B6y7MBGJX
-# /9TMtcndyF/ErWKgpuIvYBf9RafMzgGjbsP79M6TB9KtGjvXhcbanFMJw3TxH4NB
-# IkvjxDMPmrC7tljVQrOWRDQJQNHozW6x9e6CM6m6JsOlN0+VPkboRLjcraVxH/Lx
-# EcnFmhryomMN35G27GbNs0nlxV9e6towmwY9cKGCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCD216OLBgZk
+# tOMKUmBZmxUoyoFy40XzXwTa/8CRx8DH7TANBgkqhkiG9w0BAQEFAASCAgBrTusQ
+# XM4cxoVJQSzH9HbGkyImvGkvRcz9mORb8gejhY2WkKSHgF2sbsIlY27prG3sVkjA
+# pGbymZRvcgN5Gkjvu1M6CRcRZnI7YTvoPO7a4S2crZZBGt6p0ZxW62b+RttnJAvE
+# 0Gd8VUlh58CWYrqjbmAnd/JVF+Oxh+W5QyN8dc6IOggwBYzZu2HL22UQG4vBvvqp
+# PN2/qe/Rk1gAAnBFmt9/YaqxWFm8VUn2LLHp2WupsQ7K0G4ZARZOpur9tYTuGb+5
+# PivXZvnDQIgEaygB29vZHY6cJGTPSZaQTofiDSz9B32Ies5y3a+k+4QLfVpjwWid
+# vSR4/bQrEtpKcADqe5K6E3Sa3RA7iPpgeyXHSeMfCw+cIWjQqIRTU7U6EMD85zXd
+# KItksgnmb1vwBay9rdDnCgHISTU63UjXnzDL4F3HrL3IRtv7BPiyToiswIBsnDGL
+# N1v5aEB7nTTKyBB81slnJB7N8ZeQhxfFKxLcegI878UnpvRGT5wdjFk0KUs9e+vN
+# R0GwbL8LKAxJvz/UWH08/9BEFal4gwLZoyAAaC6ZzjAFFNbRPzJX/b37XFTNDd1Y
+# +nuTsC6429KbF5CZuA54AL3v/UwqjHI199ee1HZ78/QU4j476Kw1UyqpOX9Yktxg
+# DpAXuU1qLlZ/D4YmaFHvShv9H6CpFc5VVx2kEaGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIJClUwkoKj0638WDchXa/6BYeKGTUJ3hRAT8M3KzqKvAAggDg24aglbU
-# IxgPMjAyNjExMTAxNDA5MThaMAMCAQECEAs1dY0bdtM0RJaL9OV2Y/6gghGnMIIE
+# BAIBBQAEIFXUcjSESjfNvCAMZlOUc7cduSjbXuFFa6MJzz1RQ1oQAghnTLsmlYEe
+# YhgPMjAyNjExMTUxNDM0MDhaMAMCAQECEHMxImRcM8SOKMNwbDw8X9ugghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -296,17 +305,17 @@ if ($Demo) {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkxOFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIPp1
-# /D55mAXAh8t+94qTQyYhZIOQAljVFSPKtloWtNrGMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQwOFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINrw
+# iR8K641ivyk2Z9Ff6xhJOslNipZyK+GvruyCXBxtMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEAmUeW+8Z/Ici5AjwN6xgTvHr14Ic9nyLRIxqJ1Vmf97cCIQD5
-# GRPNmTMJ491Et2JfGl+lWakJoIkPUdbluFtkzjVUPg==
+# zj0EAwIERzBFAiEAsMH+gOcCncPQwXADbdE6+s111s0NKFvO/6oco89TVP0CIElU
+# a+x2Oe7cm3wkmcqLsCfbR5ROB+btMCYS//SZ1XYo
 # SIG # End signature block

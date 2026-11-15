@@ -268,8 +268,15 @@ Describe 'The end of the run' {
     }
 }
 Describe 'New-LabFxCorpus.ps1 -WhatIf' {
+    BeforeAll {
+        # no private configuration of a developer may supply the lab user or the tenant
+        $script:SavedLocalConfig = $env:MAILBOXTRANSFER_LOCAL_CONFIG
+        $env:MAILBOXTRANSFER_LOCAL_CONFIG = Join-Path ([IO.Path]::GetTempPath()) ('mbt-no-local-config-' + [guid]::NewGuid().ToString('N') + '.psd1')
+        $script:Identity = @{ UserPrincipalName = 'lab.user@contoso.example'; TenantId = 'contoso.example' }
+    }
+    AfterAll { $env:MAILBOXTRANSFER_LOCAL_CONFIG = $script:SavedLocalConfig }
     It 'prints the plan, signs in nowhere and sends nothing' {
-        $out = & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf *>&1 | Out-String -Width 250
+        $out = & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf @script:Identity *>&1 | Out-String -Width 250
         $out | Should -Match 'fxc-01'
         $out | Should -Match 'fxc-32'
         $out | Should -Match 'MBT-FXICS-Corpus\\Mail'
@@ -277,15 +284,28 @@ Describe 'New-LabFxCorpus.ps1 -WhatIf' {
         $out | Should -Not -Match 'DEVICE CODE'
     }
 
+    It 'takes the lab user and the tenant from the Tenant section of the configuration, else from Lab, and says what is missing' {
+        $tool = Join-Path $script:Tools 'New-LabFxCorpus.ps1'
+        $tenant = Join-Path $TestDrive 'tenant.psd1'
+        Set-Content -LiteralPath $tenant -Value "@{ Tenant = @{ TenantId = 'tenant-section.example'; UserPrincipalName = 'Tenant.User@contoso.example' }; Lab = @{ TenantId = 'lab-section.example'; UserPrincipalName = 'lab.user@contoso.example' } }"
+        (& $tool -WhatIf -ConfigPath $tenant -Only 1 *>&1 | Out-String -Width 250) | Should -Match 'Tenant\.User@contoso\.example \(tenant tenant-section\.example\)'
+        $older = Join-Path $TestDrive 'older.psd1'
+        Set-Content -LiteralPath $older -Value "@{ Lab = @{ TenantId = 'lab-section.example'; UserPrincipalName = 'lab.user@contoso.example' } }"
+        (& $tool -WhatIf -ConfigPath $older -Only 1 *>&1 | Out-String -Width 250) | Should -Match 'lab\.user@contoso\.example \(tenant lab-section\.example\)'
+        $empty = Join-Path $TestDrive 'empty.psd1'
+        Set-Content -LiteralPath $empty -Value "@{ Other = 1 }"
+        { & $tool -WhatIf -ConfigPath $empty *>&1 } | Should -Throw '*Tenant.UserPrincipalName*'
+        { & $tool -WhatIf -ConfigPath $empty -UserPrincipalName 'lab.user@contoso.example' *>&1 } | Should -Throw '*Tenant.TenantId*'
+    }
     It 'limits the plan with -Only (keys, numbers, kinds)' {
-        $out = & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf -Only 7, 'fxc-22', 'Contact' *>&1 | Out-String -Width 250
+        $out = & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf @script:Identity -Only 7, 'fxc-22', 'Contact' *>&1 | Out-String -Width 250
         foreach ($k in 'fxc-07', 'fxc-22', 'fxc-30', 'fxc-31', 'fxc-32') { $out | Should -Match $k }
         $out | Should -Not -Match 'fxc-01'
-        { & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf -Only 'nothing' *>&1 } | Should -Throw '*matches no item*'
+        { & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf @script:Identity -Only 'nothing' *>&1 } | Should -Throw '*matches no item*'
     }
 
     It 'refuses a Graph address that is neither Microsoft nor local' {
-        { & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf -GraphBaseUrl 'https://evil.example/v1.0' *>&1 } | Should -Throw '*GraphBaseUrl*'
+        { & (Join-Path $script:Tools 'New-LabFxCorpus.ps1') -WhatIf @script:Identity -GraphBaseUrl 'https://evil.example/v1.0' *>&1 } | Should -Throw '*GraphBaseUrl*'
     }
 }
 
@@ -294,13 +314,16 @@ Describe 'New-LabFxCorpus.ps1 against a local stand-in of Graph' {
         $script:Script = Join-Path $script:Tools 'New-LabFxCorpus.ps1'
         $script:Work = Join-Path ([IO.Path]::GetTempPath()) ('fxcorpus-' + [guid]::NewGuid().ToString('N'))
         $null = New-Item -ItemType Directory -Path $script:Work
+        # the child processes inherit this: no private configuration of a developer may supply the lab user or the tenant
+        $script:SavedLocalConfig = $env:MAILBOXTRANSFER_LOCAL_CONFIG
+        $env:MAILBOXTRANSFER_LOCAL_CONFIG = Join-Path $script:Work 'no-local-config.psd1'
         function Invoke-Corpus($Server, [string]$Name, [string[]]$More = @()) {
             $manifest = Join-Path $script:Work "$Name.json"
-            $out = & pwsh -NoProfile -File $script:Script -AccessToken 'fake-token' -GraphBaseUrl $Server.Url -OutputPath $manifest -UserPrincipalName 'lab.user@contoso.example' @More 2>&1 | Out-String
+            $out = & pwsh -NoProfile -File $script:Script -AccessToken 'fake-token' -GraphBaseUrl $Server.Url -OutputPath $manifest -UserPrincipalName 'lab.user@contoso.example' -TenantId 'contoso.example' @More 2>&1 | Out-String
             [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $out; Manifest = $(if (Test-Path $manifest) { Get-Content $manifest -Raw | ConvertFrom-Json -Depth 20 }) }
         }
     }
-    AfterAll { Remove-Item -LiteralPath $script:Work -Recurse -Force -ErrorAction SilentlyContinue }
+    AfterAll { $env:MAILBOXTRANSFER_LOCAL_CONFIG = $script:SavedLocalConfig; Remove-Item -LiteralPath $script:Work -Recurse -Force -ErrorAction SilentlyContinue }
 
     It 'creates the folders and the 23 items, then does nothing on a second run' {
         $server = [MailboxTransfer.Tests.FakeGraphServer]::new()

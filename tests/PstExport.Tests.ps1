@@ -330,6 +330,27 @@ Describe 'export to PST: the real folder tree' {
             @((Get-PstTree (Join-Path $script:Tmp 'sel\o2.pst')).Keys) | Should -Be @('Primary', 'Primary/Sent Items')
         } finally { $store.Dispose() }
     }
+
+    It 'finds the folders of a selection by their path whatever the case, and the mailbox and the kind of the selection in any case' {
+        $store = New-World -Name 'selcase'
+        try {
+            $sel = [MailboxTransfer.BrowseSelection]@{ Kind = 'primary'; MailboxId = $script:P.ToUpperInvariant() }
+            $sel.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = 'gone'; FolderPath = 'inbox/REPORTS' })
+            $sel.Entries.Add([MailboxTransfer.SelectionEntry]@{ FolderId = 'gone'; FolderPath = 'PROJECTS'; IncludeSubfolders = $true })
+            $r = [MailboxTransfer.PstExportSelection]::Resolve($store, $sel)
+            $r.EntriesMatched | Should -Be 2
+            $r.Problems.Count | Should -Be 0
+            $o = New-Options (Join-Path $script:Tmp 'selcase\o.pst') -NoCheck
+            $o.FolderKeys = $r.FolderKeys
+            $res = [MailboxTransfer.PstExporter]::Run($store, $o, $null, $script:Ct)
+            $res.ItemsWritten | Should -Be 4 -Because 'Inbox/Reports (2) and Projects/Alpha (2)'
+            @((Get-PstTree (Join-Path $script:Tmp 'selcase\o.pst')).Keys) | Should -Be @('Primary', 'Primary/Inbox', 'Primary/Inbox/Reports', 'Primary/Projects', 'Primary/Projects/Alpha')
+            # the mailbox ids to convert are compared without case
+            $o2 = New-Options (Join-Path $script:Tmp 'selcase\o2.pst') -NoCheck
+            $o2.MailboxIds = [string[]]@($script:P.ToUpperInvariant())
+            ([MailboxTransfer.PstExporter]::Run($store, $o2, $null, $script:Ct)).ItemsWritten | Should -Be 11
+        } finally { $store.Dispose() }
+    }
 }
 
 Describe 'export to PST: a store that is not fully exported' {
@@ -804,6 +825,11 @@ Describe 'export to PST: file names (Windows device names, Outlook crashes on au
         }
     }
 
+    It 'names the file of a store whose mailboxes have no user principal name: <Name>' -ForEach @(@{ Name = 'none'; Upn = $null }, @{ Name = 'empty'; Upn = '' }) {
+        $store = New-NamedStore "noupn-$Name" $Upn @('Primary')
+        try { Get-Default $store | Should -BeLike '*.pst' } finally { $store.Dispose() }
+    }
+
     It 'recognises the Windows device names, with any extension and case, and only them' {
         foreach ($n in 'aux', 'AUX.pst', 'Aux.v2.pst', 'con', 'PRN.txt', 'nul.tar.gz', 'COM1', 'com9.pst', 'LPT0', 'lpt9.pst', "COM$([char]0xB9).pst", "LPT$([char]0xB2)", "COM$([char]0xB3)", 'CONIN$', 'CONOUT$.pst', 'aux ', 'aux.', 'aux .pst') {
             [MailboxTransfer.FileNaming]::IsReservedDeviceName($n) | Should -BeTrue -Because $n
@@ -848,6 +874,17 @@ Describe 'export to PST: file names (Windows device names, Outlook crashes on au
         Test-Path -LiteralPath $out | Should -BeFalse
         # the entry script says it before connecting or reading anything
         { & $script:Entry -Mode ExportPst -StorePath $store -OutputPst (Join-Path $out 'aux.pst') *>&1 | Out-Null } | Should -Throw "*'aux.pst' cannot be used*"
+        Test-Path -LiteralPath $out | Should -BeFalse
+    }
+
+    It 'refuses Aux.pst, NUL.txt and aUx.pst whatever the case and the extension, in the function and in the entry script' {
+        $null = (New-NamedStore 'rn1c' 'adele@contoso.test' @('Primary')).Dispose()
+        $store = Join-Path $script:Tmp 'rn1c'
+        $out = Join-Path $script:Tmp 'rn1c-out'
+        { Export-MbtPst -Store $store -Destination (Join-Path $out 'Aux.pst') *>&1 | Out-Null } | Should -Throw "*'Aux.pst' cannot be used*AUX*"
+        { Export-MbtPst -Store $store -Destination (Join-Path $out 'NUL.txt') *>&1 | Out-Null } | Should -Throw "*'NUL.txt' cannot be used*NUL*"
+        { & $script:Entry -Mode ExportPst -StorePath $store -OutputPst (Join-Path $out 'aUx.pst') *>&1 | Out-Null } | Should -Throw "*'aUx.pst' cannot be used*"
+        { & $script:Entry -Mode ExportPst -StorePath $store -OutputPst (Join-Path $out 'Nul.PST') *>&1 | Out-Null } | Should -Throw "*cannot be used*"
         Test-Path -LiteralPath $out | Should -BeFalse
     }
 

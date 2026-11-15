@@ -8,26 +8,37 @@
 #>
 Set-StrictMode -Version Latest
 
-#region Plain-words errors (CONSOLE-SPEC 11) ---------------------------------------------------------
+#region Plain-words errors ---------------------------------------------------------
 
 function ConvertTo-MbtGuiMessage {
     <# What happened, in one sentence, from a raw engine message. Returns Text and Tech (the raw message, for the collapsed technical line). #>
     param([string]$Raw)
     $r = [string]$Raw
     $text = switch -Regex ($r) {
+        'AADSTS50011|AADSTS500113|does not accept the Windows sign-in window' {
+            $u = [regex]::Match($r, 'ms-appx-web://microsoft\.aad\.brokerplugin/[0-9A-Za-z-]+').Value
+            if (-not $u) { $u = 'ms-appx-web://microsoft.aad.brokerplugin/<application id>' }
+            "Microsoft does not accept the sign-in window for this application yet. Ask your administrator to add this redirect URI to the app registration (Authentication, Mobile and desktop applications): $u. Until then, use a code instead."; break
+        }
+        'sign-in window was closed before' { 'The sign-in window was closed before the sign-in was finished. Press Sign in to try again, or use a code instead.'; break }
+        'sign-in window did not finish within' { 'The sign-in window did not finish in time. Press Sign in to try again, or use a code instead.'; break }
         'AADSTS50173|AADSTS700082|grant has expired|signin-required' { 'Your sign-in has expired. Sign in again to continue. Nothing is lost.'; break }
         'device.?code.*expired|AADSTS70019|code has expired' { 'The code has expired. Get a new code.'; break }
         'No certificate with the thumbprint|has no private key|certificate .* expired|is not valid before|Cannot open the certificate' { 'The certificate cannot be used. Check the thumbprint, that the certificate is installed on this PC with its private key, and that it has not expired.'; break }
         'AADSTS700027|certificate was refused|AADSTS700016|AADSTS90002|not found in the tenant' { 'Microsoft does not accept this application or this certificate. Check the tenant and the application id, and that the certificate was added to the application.'; break }
         'Cannot find the mailbox id|FullAccess|Full Access' { 'We cannot open this mailbox. Check the address, and that you have the Full Access right on it (a new right can take up to an hour to apply).'; break }
         'MailboxNotFound|mailbox.*not found|ResourceNotFound|ErrorNonExistentMailbox' { 'We cannot find this mailbox. Check the address. Mailboxes that are not in Exchange Online cannot be used.'; break }
+        '->\s*(500|502|503|504)\b|\b(BadGateway|ServiceUnavailable|GatewayTimeout)\b|HttpClient\.Timeout|timed out' { 'Microsoft did not answer correctly (a temporary problem). Try again in a moment.'; break }
         '403|ErrorAccessDenied|Access is denied|Forbidden' { 'This sign-in is not allowed to do this. Ask your administrator for the permission (MailboxItem.ImportExport for an import, MailboxItem.Read and MailboxFolder.Read to browse and export).'; break }
         'not enough space|disk.*full|IOException.*space' { 'The disk is full. Free some space and press Try again. What was downloaded is kept.'; break }
         'already exists' { 'This file already exists. The tool never overwrites a file. Choose another name.'; break }
         'cannot reach|NameResolution|No such host|network|SocketException' { 'We cannot reach Microsoft. Trying again every 30 seconds. Check your internet connection.'; break }
         default { 'Something went wrong. The technical message below says what.' }
     }
-    [pscustomobject]@{ Text = $text; Tech = $r }
+    $temporary = if ($r -match '->\s*(500|502|503|504)\b|\b(BadGateway|ServiceUnavailable|GatewayTimeout)\b|HttpClient\.Timeout|timed out') { 'service' }
+    elseif ($r -match 'cannot reach|NameResolution|No such host|network|SocketException') { 'network' }
+    else { '' }
+    [pscustomobject]@{ Text = $text; Tech = $r; Known = ($text -notlike 'Something went wrong*'); Temporary = $temporary }
 }
 
 #endregion
@@ -41,75 +52,98 @@ function Get-MbtGuiDeviceCodeFile {
 }
 
 function Get-MbtGuiSignInSettings {
-    <# The tenant and the application of the configuration: what the engine has, completed by what was typed in the Sign-in card. Missing = the card asks. #>
-    $g = $script:Gui; $s = $g.S
-    $has = if ($g.Engine -is [Collections.IDictionary]) { $g.Engine.Contains('SignInSettings') } else { [bool]$g.Engine.PSObject.Properties['SignInSettings'] }
-    $configured = if ($has) { & $g.Engine.SignInSettings } else { $null }
-    $tenant = if ($s.TenantId) { $s.TenantId.Trim() } elseif ($configured) { [string]$configured.TenantId } else { '' }
-    $client = if ($s.ClientId) { $s.ClientId.Trim() } elseif ($configured) { [string]$configured.ClientId } else { '' }
-    [pscustomobject]@{ TenantId = $tenant; ClientId = $client; Asks = [bool]($configured -and -not ($configured.TenantId -and $configured.ClientId)) }
+    <# The tenant and the application for a sign-in as the user: the configuration, or what was typed on the Setup page. Asks = something is missing. #>
+    $e = Get-MbtGuiEffectiveSignIn -S $script:Gui.S
+    [pscustomobject]@{ TenantId = $e.Tenant; ClientId = $e.Client; Asks = [bool]($e.Missing.Count -or $e.TenantChanged -or $e.ClientChanged) }
 }
 
 function Test-MbtGuiAppSignIn {
-    <# The three run-only values of "the application" (tenant, application id, certificate thumbprint): the message in plain words, or $null when they can be used. #>
+    <# The three values of "the application" (tenant, application id, certificate thumbprint): the message in plain words, or $null when they can be used. #>
     param([hashtable]$S)
-    if (-not $S.AppTenant.Trim()) { return 'Type the tenant: its id (a guid) or its domain, like contoso.onmicrosoft.com.' }
-    if ($S.AppTenant.Trim() -in 'common', 'organizations', 'consumers') { return 'Type the id or the domain of your tenant, not a general name.' }
-    if ($S.AppClient.Trim() -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { return 'Type the application (client) id: a guid, like 00000000-0000-0000-0000-000000000000.' }
-    if (($S.AppThumb -replace '[^0-9A-Fa-f]', '').Length -ne 40) { return 'Type the thumbprint of the certificate: 40 characters (letters a-f and digits), shown in the certificate details.' }
+    $e = Get-MbtGuiEffectiveSignIn -S $S
+    if (-not $e.Tenant) { return 'The tenant is missing. Open Setup and type it: its id (a guid) or its domain, like contoso.onmicrosoft.com.' }
+    if ($e.Tenant -in 'common', 'organizations', 'consumers') { return 'Type the id or the domain of your tenant, not a general name (Setup).' }
+    if ($e.Client -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { return 'The application (client) id is missing or is not a guid. Open Setup and type it, like 00000000-0000-0000-0000-000000000000.' }
+    if (($e.Thumb -replace '[^0-9A-Fa-f]', '').Length -ne 40) { return 'The thumbprint of the certificate is missing or is not 40 characters (letters a-f and digits). Open Setup and type it; it is shown in the certificate details.' }
     return $null
+}
+
+function Get-MbtGuiWindowHandle {
+    <# The handle of the console window: the Windows sign-in window opens over it. 0 when the window has none yet (the engine then uses the console window of the process). #>
+    $w = Get-MbtGuiProp $script:Gui 'Window'
+    if (-not $w) { return [long]0 }
+    try { return [long]([Windows.Interop.WindowInteropHelper]::new($w).Handle) } catch { return [long]0 }
 }
 
 function Start-MbtGuiSignIn {
     param([bool]$UseCode = $false)
     $g = $script:Gui; $s = $g.S
+    if ($UseCode -and $s.SigningIn -and $s.SignInCts) {
+        # the sign-in window is still waited for: it is ended, and the code is asked for as soon as the worker is free
+        $s.SwitchToCode = $true
+        try { $s.SignInCts.Cancel() } catch { Write-Verbose "cancel: $_" }
+        $s.CodeShown = $true; $s.Code = $null
+        Show-MbtGuiPage
+        return
+    }
     $addr = $s.Mailbox.Trim()
     if ($addr -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
         $s.SignInError = 'Type the address of the mailbox, like adele.vance@contoso.com.'
         Show-MbtGuiPage; return
     }
-    # "the application": tenant, application (client) id and the thumbprint of its certificate, asked for this run only (nothing is saved)
+    # "the application": tenant, application (client) id and the thumbprint of its certificate, from the configuration or typed on the Setup page for this run only (nothing is saved)
     $appArg = $null
     $settings = $null
     if ($s.AuthMode -eq 'app' -and (Get-MbtGuiCapability 'AppOnly')) {
         $UseCode = $false
         $bad = Test-MbtGuiAppSignIn -S $s
         if ($bad) { $s.SignInError = $bad; Show-MbtGuiPage; return }
-        $appArg = @{ Tenant = $s.AppTenant.Trim(); ClientId = $s.AppClient.Trim(); Thumbprint = ($s.AppThumb -replace '[^0-9A-Fa-f]', '') }
+        $eff = Get-MbtGuiEffectiveSignIn -S $s
+        $appArg = @{ Tenant = $eff.Tenant; ClientId = $eff.Client; Thumbprint = ($eff.Thumb -replace '[^0-9A-Fa-f]', '') }
     } else {
         $settings = Get-MbtGuiSignInSettings
         if ($settings.Asks) {
             $guid = '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
-            if ($settings.TenantId -notmatch $guid -and $settings.TenantId -notmatch '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$') { $s.SignInError = 'Type the tenant: its directory id (a GUID) or its domain name, like contoso.onmicrosoft.com.'; $s.SignInTech = ''; Show-MbtGuiPage; return }
-            if ($settings.ClientId -notmatch $guid) { $s.SignInError = 'Type the application (client) id of the app registration: a GUID.'; $s.SignInTech = ''; Show-MbtGuiPage; return }
+            if ($settings.TenantId -notmatch $guid -and $settings.TenantId -notmatch '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$') { $s.SignInError = 'The tenant is missing. Open Setup and type it: its directory id (a GUID) or its domain name, like contoso.onmicrosoft.com.'; $s.SignInTech = ''; Show-MbtGuiPage; return }
+            if ($settings.ClientId -notmatch $guid) { $s.SignInError = 'The application (client) id is missing. Open Setup and type the id of the app registration: a GUID.'; $s.SignInTech = ''; Show-MbtGuiPage; return }
         }
     }
-    $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null
+    # the Windows sign-in window needs a component of Microsoft.Graph.Authentication: without it the sign-in uses a code, and says so
+    $s.SignInNote = ''
+    if (-not $appArg -and -not $UseCode) {
+        $probe = Get-MbtGuiProp $g.Engine 'WindowSignIn'
+        $win = $null; if ($probe) { try { $win = & $probe } catch { $win = $null } }
+        if ($win -and -not $win.Available) { $UseCode = $true; $s.SignInNote = "The Windows sign-in window cannot be used on this PC ($($win.Reason)). A code is used instead." }
+    }
+    $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null; $s.SwitchToCode = $false
+    $s.SignInCts = [Threading.CancellationTokenSource]::new()
     $codeFile = Get-MbtGuiDeviceCodeFile
-    if ($UseCode -and (Test-Path -LiteralPath $codeFile)) { Remove-Item -LiteralPath $codeFile -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $codeFile) { Remove-Item -LiteralPath $codeFile -Force -ErrorAction SilentlyContinue }
     Show-MbtGuiPage
     & $g.Engine.SignIn $addr $UseCode $codeFile {
         param($info)
-        $s.SigningIn = $false; $s.Signed = $true; $s.Token = $info; $s.Account = $info.Account; $s.CodeShown = $false
+        $s.SigningIn = $false; $s.Signed = $true; $s.Token = $info; $s.Account = $info.Account; $s.CodeShown = $false; $s.SignInCts = $null
         Read-MbtGuiLocations
         Show-MbtGuiPage
     }.GetNewClosure() {
         param($msg)
-        $s.SigningIn = $false; $s.Signed = $false; $s.CodeShown = $false; $s.Code = $null
+        $s.SigningIn = $false; $s.Signed = $false; $s.CodeShown = $false; $s.Code = $null; $s.SignInCts = $null
+        if ($s.SwitchToCode) { $s.SwitchToCode = $false; Start-MbtGuiSignIn -UseCode $true; return }
         $m = ConvertTo-MbtGuiMessage $msg
         $s.SignInError = $m.Text; $s.SignInTech = $m.Tech
         Show-MbtGuiPage
-    }.GetNewClosure() $false $(if ($settings) { $settings.TenantId } else { '' }) $(if ($settings) { $settings.ClientId } else { '' }) $appArg
+    }.GetNewClosure() $false $(if ($settings) { $settings.TenantId } else { '' }) $(if ($settings) { $settings.ClientId } else { '' }) $appArg (Get-MbtGuiWindowHandle) $(if ($s.WorkFolder) { Join-Path $s.WorkFolder 'logs' } else { '' }) $s.SignInCts
 }
 
 function Step-MbtGuiSignInCode {
     <# While a device-code sign-in waits, the engine writes "DEVICE CODE: <code> URL: <url>" to a file: show it in the card. #>
     $g = $script:Gui
-    if (-not $g -or -not $g.S.SigningIn -or -not $g.S.CodeShown -or $g.S.Code) { return }
+    if (-not $g -or -not $g.S.SigningIn -or $g.S.Code) { return }
     $f = Get-MbtGuiDeviceCodeFile
     if (-not (Test-Path -LiteralPath $f)) { return }
     $line = (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($line -match 'DEVICE CODE:\s*(\S+)\s+URL:\s*(\S+)') {
+        $g.S.CodeShown = $true
         $g.S.Code = @{ Code = $Matches[1]; Url = $Matches[2]; Until = (Get-Date).AddMinutes(15) }
         Show-MbtGuiPage
     }
@@ -123,6 +157,7 @@ function Read-MbtGuiLocations {
         $s.Locations = @($locs); $s.Reading = $false
         foreach ($l in $s.Locations) { if (-not $s.LocationChecked.ContainsKey($l.Kind)) { $s.LocationChecked[$l.Kind] = $true } }
         Sync-MbtGuiLocationRoots
+        Show-MbtGuiPage
     }.GetNewClosure() {
         param($msg) $s.Reading = $false; $s.Locations = @(); $m = ConvertTo-MbtGuiMessage $msg; $s.SignInError = $m.Text; $s.SignInTech = $m.Tech; $s.Shared = ''; Show-MbtGuiPage
     }.GetNewClosure() $s.Shared
@@ -141,7 +176,7 @@ function Sync-MbtGuiLocationRoots {
 }
 
 function New-MbtGuiSignInCard {
-    <# Sign in (not yet), or Mailbox (signed in). Wording is generic on purpose: who may sign in for another mailbox is confirmed in the lab. #>
+    <# Sign in (not yet), or Mailbox (signed in). Wording is generic on purpose: who may sign in for another mailbox depends on the rights the account has. #>
     param([string]$Use = 'export')
     $g = $script:Gui; $s = $g.S
     if ($s.Signed) {
@@ -150,44 +185,36 @@ function New-MbtGuiSignInCard {
         $out.Margin = [Windows.Thickness]::new(0)
         $row = New-GuiRow -Box $box -Button $out
         $tok = $s.Token
-        $missing = if ($tok -and @($tok.Missing).Count) { (@($tok.Missing) -join ', ') } else { 'Nothing' }
-        $facts = New-GuiFacts @(@('Access', $(if ($tok) { [string]$tok.Access } else { 'Delegated (you, with your rights)' })), @('Can read', $(if ($tok -and $tok.CanReadMail) { 'Mail, folders, items (live view)' } else { 'Folders and items (listing without subjects)' })), @('Missing', $(if ($missing -eq 'Nothing') { New-GuiText 'Nothing' 'Muted' } else { $missing })))
+        $gaps = @(Get-MbtGuiProp $tok 'Missing' @())
+        $missing = if ($gaps.Count) { ($gaps -join ', ') } else { 'Nothing' }
+        $facts = New-GuiFacts @(@('Access', $(if ($tok) { [string](Get-MbtGuiProp $tok 'Access' 'Delegated (you, with your rights)') } else { 'Delegated (you, with your rights)' })), @('Can read', $(if ($tok -and (Get-MbtGuiProp $tok 'CanReadMail' $false)) { 'Mail, folders, items (live view)' } else { 'Folders and items (listing without subjects)' })), @('Missing', $(if ($missing -eq 'Nothing') { New-GuiText 'Nothing' 'Muted' } else { $missing })))
         $more = New-GuiMore -Summary 'Sign-in details' -Content @($facts)
-        $msgs = @((New-GuiMessage -Kind ok -Icon check -Text $(if ($s.AuthMode -eq 'app') { "Connected as the application, working on **$($s.Account)**. Nothing is kept on this PC." } else { "Signed in as **$($s.Account)**. The sign-in is kept on this PC, encrypted for your Windows account." })))
+        $msgs = @((New-GuiMessage -Kind ok -Icon check -Text $(if ($s.AuthMode -eq 'app') { "Connected as the application (chosen in Setup), working on **$($s.Account)**. Nothing is kept on this PC." } else { "Signed in as **$($s.Account)** (delegated, chosen in Setup). The sign-in is kept on this PC, encrypted for your Windows account." })))
         if ($tok -and -not $tok.CanReadMail) { $msgs += New-GuiMessage -Kind warn -Icon warn -Text 'Subjects need the Mail.Read permission. You can still export.' }
         return (New-GuiCard -Title 'Mailbox' -Right (New-GuiPill $(if ($s.AuthMode -eq 'app') { 'Connected' } else { 'Signed in' }) 'ok') -Content (@((New-GuiText 'Mailbox address' 'Label'), $row) + $msgs + @($more)))
     }
     $app = ($s.AuthMode -eq 'app') -and (Get-MbtGuiCapability 'AppOnly')
     $box = New-GuiTextBox -Text $s.Mailbox -Automation 'Mailbox address' -OnChange { param($x, $e) $s.Mailbox = $x.Text }
+    $eff = Get-MbtGuiEffectiveSignIn -S $s
     $content = @()
-    if (Get-MbtGuiCapability 'AppOnly') {
-        $content += New-GuiText 'Sign in as' 'Label'
-        $content += New-GuiOption -Type Radio -Group authmode -Title 'Me' -Hint 'A window from Microsoft opens. You see the mailboxes you are allowed to open.' -Checked (-not $app) -Margin '0,4,0,0' -OnChange { $s.AuthMode = 'user'; Show-MbtGuiPage }
-        $content += New-GuiOption -Type Radio -Group authmode -Title 'The application (certificate)' -Hint 'No window and no user: for scheduled or bulk jobs, and to write into a shared mailbox. Your administrator sets the application up first (see the app-only guide).' -Checked $app -Margin '0,4,0,8' -OnChange { $s.AuthMode = 'app'; Show-MbtGuiPage }
-    }
-    if ($app) {
-        $content += @((New-GuiText 'Mailbox the application works on' 'Label'), $box,
-            (New-GuiText 'Required: the application has no mailbox of its own to fall back on.' 'Hint'),
-            (New-GuiText 'Tenant (id or domain)' 'Label'), (New-GuiTextBox -Text $s.AppTenant -Automation 'Tenant' -OnChange { param($x, $e) $s.AppTenant = $x.Text }),
-            (New-GuiText 'Application (client) id' 'Label'), (New-GuiTextBox -Text $s.AppClient -Automation 'Application id' -OnChange { param($x, $e) $s.AppClient = $x.Text }),
-            (New-GuiText 'Certificate thumbprint' 'Label'), (New-GuiTextBox -Text $s.AppThumb -Automation 'Certificate thumbprint' -OnChange { param($x, $e) $s.AppThumb = $x.Text }),
-            (New-GuiText 'The certificate is looked up on this PC (your certificates, then the computer ones). These three values are used for this run only; nothing is saved.' 'Hint'))
-    } else {
-        $content += @((New-GuiText 'Mailbox to look at' 'Label'), $box,
-            (New-GuiText 'Use an account that is allowed to read this mailbox. A window from Microsoft opens.' 'Hint'))
-        $settings = Get-MbtGuiSignInSettings
-        if ($settings.Asks) {
-            # the configuration names no tenant or no application: they are typed here (kept for this session)
-            $tenantBox = New-GuiTextBox -Text $s.TenantId -Automation 'Tenant' -OnChange { param($x, $e) $s.TenantId = $x.Text }
-            $clientBox = New-GuiTextBox -Text $s.ClientId -Automation 'Application id' -OnChange { param($x, $e) $s.ClientId = $x.Text }
-            $content += @((New-GuiText 'Tenant' 'Label'), $tenantBox, (New-GuiText 'Application (client) id' 'Label'), $clientBox,
-                (New-GuiText 'The configuration file has no tenant or application. Type the directory id (or domain) of your Microsoft 365 tenant and the application id of the app registered for this tool.' 'Hint'))
-        }
-    }
-    $btnText = if ($s.SigningIn -and -not $s.CodeShown) { if ($app) { 'Connecting...' } else { 'Waiting for the Microsoft window...' } } else { if ($app) { 'Connect' } else { 'Sign in...' } }
+    $content += New-GuiText $(if ($app) { 'Mailbox the application works on' } else { 'Mailbox to look at' }) 'Label'
+    $content += $box
+    $content += New-GuiText $(if ($app) { 'Required: the application has no mailbox of its own to fall back on.' } else { 'Use an account that is allowed to read this mailbox. A Microsoft sign-in window opens over the console. Type the account that may open the mailbox.' }) 'Hint'
+    $change = New-GuiLink 'Change in Setup' { Open-MbtGuiSetup }; $change.FontSize = 12; $change.HorizontalAlignment = 'Left'; $change.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    $facts = New-GuiFacts @(@('Sign in as', $(if ($app) { 'The application (certificate)' } else { 'Me (delegated)' })), @('Tenant', $(if ($eff.Tenant) { $eff.Tenant } else { 'not set (open Setup)' })))
+    $content += $facts
+    $content += $change
+    if ($eff.Missing.Count) { $content += New-GuiMessage -Kind warn -Icon warn -Text ("**Not set: " + ($eff.Missing -join ', ') + '.** Open Setup and type the missing value for this run, or put it in the configuration file.') }
+    $btnText = if ($s.SigningIn -and -not $s.CodeShown) { if ($app) { 'Connecting...' } else { 'Waiting for the sign-in window...' } } else { if ($app) { 'Connect' } else { 'Sign in...' } }
     $signin = New-GuiButton -Text $btnText -Accent -Icon key -Disabled:($s.SigningIn) -OnClick { Start-MbtGuiSignIn -UseCode $false }
     $signin.Margin = [Windows.Thickness]::new(0, 12, 8, 0); $signin.HorizontalAlignment = 'Left'
     $content += $signin
+    if (-not $app) {
+        $first = New-GuiText 'First sign-in of an account Windows does not know? If Windows asks to stay signed in to all apps, choose "No, sign in to this app only".' 'Hint'
+        $first.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+        $content += $first
+    }
+    if ($s.ContainsKey('SignInNote') -and $s.SignInNote -and -not $app) { $content += New-GuiMessage -Kind info -Icon info -Text $s.SignInNote }
     if ($s.SignInError) {
         $tech = if ($s.ContainsKey('SignInTech') -and $s.SignInTech) { New-GuiMore -Summary 'Technical message' -Content @((New-GuiText $s.SignInTech 'Small')) } else { $null }
         $content += New-GuiMessage -Kind bad -Icon x -Text $s.SignInError -After @($tech)
@@ -203,7 +230,7 @@ function New-MbtGuiSignInCard {
             $inner += $code
             $inner += New-GuiText ("This code is valid until " + $s.Code.Until.ToString('HH:mm') + '.') 'Small'
             $btns = [Windows.Controls.StackPanel]::new(); $btns.Orientation = 'Horizontal'; $btns.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
-            $btns.Children.Add((New-GuiButton -Text 'Copy the code' -Small -OnClick { [Windows.Clipboard]::SetText($s.Code.Code) })) | Out-Null
+            $btns.Children.Add((New-GuiButton -Text 'Copy the code' -Small -OnClick { $null = Set-MbtGuiClipboard $s.Code.Code })) | Out-Null
             $btns.Children.Add((New-GuiButton -Text 'Open the page' -Small -OnClick { Start-Process $s.Code.Url })) | Out-Null
             $inner += $btns
         } else { $inner += New-GuiText 'Getting a code...' 'Hint' }
@@ -212,7 +239,7 @@ function New-MbtGuiSignInCard {
         $content += $rec
     } elseif (-not $app) {
         $line = [Windows.Controls.WrapPanel]::new(); $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
-        $line.Children.Add((New-GuiText 'The window does not open? ' 'Small')) | Out-Null
+        $line.Children.Add((New-GuiText 'The window does not appear (look behind the console)? ' 'Small')) | Out-Null
         $line.Children[0].Margin = [Windows.Thickness]::new(0, 0, 4, 0)
         $lk = New-GuiLink 'Use a code instead' { Start-MbtGuiSignIn -UseCode $true }; $lk.FontSize = 12
         $line.Children.Add($lk) | Out-Null
@@ -303,7 +330,7 @@ function New-MbtGuiLocationsCard {
     $pick.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
     $items += New-GuiMore -Summary 'The archive is missing from this list' -Content @((New-GuiText 'Microsoft does not tell us every archive. Ask your administrator to run **Get-MailboxLocation** for this user and save the result, then load it here.' 'Hint'), $pick)
     $items += New-MbtGuiSharedMailboxSection -Use export
-    return (New-GuiCard -Title 'Where to look' -Info "$(@($s.Locations).Count) locations found" -Content $items)
+    return (New-GuiCard -Title 'Where to look' -Info "$(Format-MbtGuiQuantity @($s.Locations).Count 'location') found" -Content $items)
 }
 
 #endregion
@@ -388,14 +415,14 @@ function Build-MbtGuiExportToPage {
         $content.Add($name)
         $stem = [IO.Path]::GetFileNameWithoutExtension($s.OutName)
         $content.Add((New-GuiText "Parts are named $stem.pst, $stem-002.pst, ... Names such as AUX, CON or NUL are refused (Windows reserves them)." 'Hint'))
-        $content.Add((New-GuiOption -Type Check -Title 'Keep the working store' -Hint 'Recommended. You can write the PST again, or import into a mailbox, without downloading again. Uses more disk space.' -Checked $s.KeepStore -Margin '0,12,0,0' -OnChange { param($x, $e) $s.KeepStore = [bool]$x.IsChecked; Refresh-MbtGuiExportTo }))
         $split = [Windows.Controls.ComboBox]::new(); $split.HorizontalAlignment = 'Stretch'
         foreach ($t in '50 GB (Outlook''s default limit)', '20 GB', '10 GB', '5 GB') { [void]$split.Items.Add($t) }
         $split.SelectedIndex = switch ([int]$s.SplitGB) { 50 { 0 } 20 { 1 } 10 { 2 } 5 { 3 } default { 0 } }
-        $split.Add_SelectionChanged({ param($x, $e) $s.SplitGB = @(50, 20, 10, 5)[$x.SelectedIndex]; $s.Changed['SplitGB'] = $true })
+        Add-MbtGuiHandler $split 'SelectionChanged' { param($sender, $e) $s.SplitGB = @(50, 20, 10, 5)[$sender.SelectedIndex]; $s.Changed['SplitGB'] = $true }
         $more = New-GuiMore -Summary 'More options' -Content @(
             (New-GuiText 'Largest PST file' 'Label'), $split,
             (New-GuiText 'A message is never cut in two. A file may be a little larger than the limit if one message does not fit. This choice applies to this run only.' 'Hint'),
+            (New-GuiOption -Type Check -Title 'Keep the working store' -Hint 'Recommended. You can write the PST again, or import into a mailbox, without downloading again. Uses more disk space.' -Checked $s.KeepStore -OnChange { param($x, $e) $s.KeepStore = [bool]$x.IsChecked; Refresh-MbtGuiExportTo }),
             (New-GuiOption -Type Check -Title 'Check every PST file when it is written' -Hint 'Recommended.' -Checked $s.CheckEach -OnChange { param($x, $e) $s.CheckEach = [bool]$x.IsChecked }),
             (New-GuiOption -Type Check -Title 'One top folder per auxiliary archive' -Hint 'Off: auxiliary archives are merged into the Archive tree.' -Checked $s.SepAux -OnChange { param($x, $e) $s.SepAux = [bool]$x.IsChecked }))
         $content.Add($more)
@@ -408,7 +435,7 @@ function Build-MbtGuiExportToPage {
     $g.ExportDiskHolder = $diskHolder
     $good = New-GuiCard -Title 'Good to know' -Content @((New-GuiText 'Exporting is read only: the mailbox is not changed. If the PC sleeps or the window closes, nothing is lost: **Continue** does only what is left.' 'Body'))
     Refresh-MbtGuiExportTo
-    Set-MbtGuiActions -Footer 'Choose where to save it. You can still change everything on the next page.' -Label 'Continue to the plan' -Enabled (-not $problem -and -not $g.ExportDiskBad) -OnClick { Move-MbtGuiStep 1 }
+    Set-MbtGuiActions -Footer 'Choose where to save it. You can still change everything on the next page.' -Label 'Continue to Verify' -Enabled (-not $problem -and -not $g.ExportDiskBad) -OnClick { Move-MbtGuiStep 1 }
     Refresh-MbtGuiExportTo
     return (New-GuiTwoColumns -Left (New-GuiStack @($left)) -Right (New-GuiStack @($diskHolder, $good)))
 }
@@ -428,7 +455,7 @@ function Refresh-MbtGuiExportTo {
     $needText = if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { "about **$(Format-MbtGuiBytes $need.Need)**" + $(if ($s.Dest -eq 'pst' -and $s.KeepStore) { ' (store + PST)' } else { '' }) }
     $facts = New-GuiFacts @(@('Selection', $(if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { Format-MbtGuiBytes $need.Size })), @('Needed on disk', (New-GuiText $needText 'Body')), @("Free on $drive", $(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' })))
     $facts.Margin = [Windows.Thickness]::new(0)
-    $msg = if ($enough) { New-GuiMessage -Kind ok -Icon check -Text 'There is enough room.' } else { New-GuiMessage -Kind bad -Icon x -Text "**Not enough room on $drive.** Free about $(Format-MbtGuiBytes ($need.Need - $free)) or choose another folder." }
+    $msg = if ($enough) { New-GuiMessage -Kind ok -Icon check -Text 'There is enough disk space.' } else { New-GuiMessage -Kind bad -Icon x -Text "**Not enough disk space on $drive.** Free about $(Format-MbtGuiBytes ($need.Need - $free)) or choose another folder." }
     $g.ExportDiskHolder.Content = New-GuiCard -Title 'Disk space' -Content @($facts, $msg, (New-GuiText 'If the disk fills up, the run stops by itself and can be continued once you free some space.' 'Hint'))
     if ((Get-MbtGuiScreen) -eq 'exTo') { $g.C.Primary.IsEnabled = (-not $problem) -and $enough }
 }
@@ -454,14 +481,45 @@ function Test-MbtGuiSelectionHasDeletedItems {
     return [bool]@($Selection.Entries | Where-Object { (Get-MbtGuiNodePath $_.Node) -match ' / Recoverable Items( / |$)' }).Count
 }
 
+function Get-MbtGuiPlanSelection {
+    <# The selection as the plan page shows it: once the service has counted the plan and every size is known, that size replaces the unknown ones of the browse view. #>
+    $g = $script:Gui; $s = $g.S; $sel = $g.ExportSelection
+    $t = $s.PlanTotals
+    if ($s.PlanState -ne 'ok' -or -not $t -or $sel.UnknownSize -le 0 -or $t.UnknownSize -gt 0) { return $sel }
+    return [pscustomobject]@{ Entries = $sel.Entries; Items = $sel.Items; Bytes = [long]$t.Bytes; Folders = $sel.Folders; UnknownSize = 0; SubtreeUnread = $sel.SubtreeUnread }
+}
+
+function Get-MbtGuiCountedSizes {
+    <# The size the service counted for each folder of the plan (by the path of the folder in its mailbox); a folder counted twice under one path, or counted without a complete size, is left out. #>
+    $g = $script:Gui
+    $sizes = @{}
+    if ($g.S.Task -ne 'export' -or $g.S.PlanState -ne 'ok' -or -not $g.ContainsKey('PlanRun') -or -not $g.PlanRun) { return $sizes }
+    $planned = @($g.PlanRun.Objects | Where-Object { $_.Step -eq 'plan' -and $_.State -ne 'refused' -and $_.Key -ne '(folders)' })
+    foreach ($group in ($planned | Group-Object { $_.Key })) {
+        if (@($group.Group).Count -eq 1 -and $group.Group[0].Bytes -ge 0) { $sizes[$group.Name] = [long]$group.Group[0].Bytes }
+    }
+    return $sizes
+}
+
+function Get-MbtGuiNodeMailboxPath {
+    <# The path of a folder in its mailbox ("Inbox/Projects"), as the engine names it. #>
+    param([MailboxTransferGui.FolderNode]$Node)
+    $names = [Collections.Generic.List[string]]::new()
+    $n = $Node
+    while ($n -and -not $n.IsRoot) { $names.Insert(0, $n.Name); $n = $n.Parent }
+    return ($names -join '/')
+}
+
 function New-MbtGuiPlanTable {
     param($Selection)
-    $rows = foreach ($e in $Selection.Entries) {
+    $counted = Get-MbtGuiCountedSizes
+    $anyUnknown = $false
+    $rows = @(foreach ($e in $Selection.Entries) {
         $n = $e.Node; $root = Get-MbtGuiRootNode $n
         $note = switch ($e.Kind) {
-            'tree' { $below = @($n.Descendants() | Where-Object { $_ -ne $n -and $_.Count -gt 0 }).Count; $(if ($below) { "and $below folder$(if ($below -gt 1) { 's' }) below it" } else { '' }) }
+            'tree' { $below = @($n.Descendants() | Where-Object { $_ -ne $n -and $_.Count -gt 0 }).Count; $(if ($below) { "and $(Format-MbtGuiQuantity $below 'folder') below it" } else { '' }) }
             'own' { 'this folder only' }
-            default { "$($n.Picks.Count) message$(if ($n.Picks.Count -gt 1) { 's' }) ticked" }
+            default { "$(Format-MbtGuiQuantity $n.Picks.Count 'message') ticked" }
         }
         if ($root.HeadersOnly) { $note = ($note + $(if ($note) { "`n" } else { '' }) + 'may be "not ready"; tried again later') }
         $bytes = 0L; $unknown = $false
@@ -470,14 +528,21 @@ function New-MbtGuiPlanTable {
             'own' { if ($n.SizeBytes -lt 0) { $unknown = $true } else { $bytes = $n.SizeBytes } }
             default { foreach ($v in $n.Picks.Values) { $bytes += $v } }
         }
+        if ($unknown -and $e.Kind -in 'tree', 'own') {
+            $key = Get-MbtGuiNodeMailboxPath $n
+            if ($counted.ContainsKey($key)) { $bytes = $counted[$key]; $unknown = $false }
+        }
+        if ($unknown) { $anyUnknown = $true }
         $cell = [Windows.Controls.StackPanel]::new()
         $cell.Children.Add((New-GuiText (Get-MbtGuiNodePath $n) 'Body')) | Out-Null
         if ($note) { $sm = New-GuiText $note 'Small'; $sm.Margin = [Windows.Thickness]::new(0); $cell.Children.Add($sm) | Out-Null }
         , @($cell, (Format-MbtGuiCount $e.Items), $(if ($unknown -and $bytes -le 0) { 'size unknown' } elseif ($unknown) { (Format-MbtGuiBytes $bytes) + ' + unknown' } else { Format-MbtGuiBytes $bytes }))
-    }
+    })
     $tbl = New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', '90', '110') -Right @(1, 2)
     if (-not @($rows).Count) { $tbl = New-GuiText 'Nothing ticked.' 'Muted' }
-    return (New-GuiStack @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint')))
+    $parts = @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint'))
+    if ($anyUnknown) { $parts += New-GuiText 'Microsoft does not give the size of calendar, contact and task folders in advance. The check reads the items of a small one to find it; the size of a larger one is known once the export runs.' 'Hint' }
+    return (New-GuiStack $parts)
 }
 
 function New-MbtGuiSleepInfo {
@@ -487,24 +552,23 @@ function New-MbtGuiSleepInfo {
         '**The PC restarts or loses power:** nothing is lost. Items that were being sent are checked first when you continue.'
         '**The internet drops:** the tool waits and tries again by itself.')
     $stack = [Windows.Controls.StackPanel]::new()
-    foreach ($t in $items) { $row = New-GuiText ([char]0x2022 + '  ' + ($t -replace '\*(?!\*)', '')) 'Body'; $row.FontSize = 13; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $stack.Children.Add($row) | Out-Null }
+    foreach ($t in $items) { $row = New-GuiText ([char]0x2022 + '  ' + ($t -replace '\*', '')) 'Body'; $row.FontSize = 13; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $stack.Children.Add($row) | Out-Null }
     return (New-GuiMore -Summary 'What if this PC sleeps, or I close the window?' -Content @($stack))
 }
 
 function New-MbtGuiSettingsSection {
-    <# Run settings (this run only): never written to the configuration file. Extra: elements specific to the task. #>
-    param([string[]]$Include = @('conc'), [bool]$Modified = $false)
+    <# Expert mode: the run settings, for this run only, never written to the configuration file. #>
+    param([string[]]$Include = @('conc'))
     $g = $script:Gui; $s = $g.S
     $rows = [Collections.Generic.List[object]]::new()
-    $rows.Add((New-GuiText '**What you change here applies to this run only and is never saved.** The defaults come from the configuration file.' 'Hint'))
-    $changed = { param($key) $s.Changed[$key] = $true }
-    $label = { param($text, $key) $st = $s; $p = [Windows.Controls.StackPanel]::new(); $p.Orientation = 'Horizontal'; $p.Children.Add((New-GuiText $text 'Label')) | Out-Null; if ($s.Changed.ContainsKey($key)) { $pill = New-GuiPill 'modified' 'warn' -Light; $pill.Margin = [Windows.Thickness]::new(8, 6, 8, 0); $p.Children.Add($pill) | Out-Null; $p.Children.Add((New-GuiLink 'Reset' { $st.Changed.Remove($key); $defaults = @{ Conc = 4; Retry = 2; Tries = 6; Reconcile = 5 }; if ($defaults.ContainsKey($key)) { $st[$key] = $defaults[$key] }; $st.PlanState = 'idle'; Show-MbtGuiPage }.GetNewClosure())) | Out-Null }; $p }
+    $rows.Add((New-GuiText '**What you change here applies to this run only and is never saved.** The defaults come from the configuration file; they suit almost every job.' 'Hint'))
+    $label = { param($text, $key) $st = $s; $p = [Windows.Controls.StackPanel]::new(); $p.Orientation = 'Horizontal'; $p.Children.Add((New-GuiText $text 'Label')) | Out-Null; if ($s.Changed.ContainsKey($key)) { $pill = New-GuiPill 'modified' 'warn' -Light; $pill.Margin = [Windows.Thickness]::new(8, 6, 8, 0); $p.Children.Add($pill) | Out-Null; $p.Children.Add((New-GuiLink 'Reset' { $st.Changed.Remove($key); $defaults = @{ Conc = 4; Retry = 2; Tries = 6; Reconcile = 5; Awake = $false }; if ($defaults.ContainsKey($key)) { $st[$key] = $defaults[$key] }; $st.PlanState = 'idle'; Show-MbtGuiPage }.GetNewClosure())) | Out-Null }; $p }
     if ('conc' -in $Include) {
         $rows.Add((& $label 'Requests in parallel' 'Conc'))
         $cb = [Windows.Controls.ComboBox]::new(); $cb.HorizontalAlignment = 'Stretch'
         foreach ($t in '4 (default, the Microsoft limit)', '2', '1') { [void]$cb.Items.Add($t) }
         $cb.SelectedIndex = switch ([int]$s.Conc) { 4 { 0 } 2 { 1 } 1 { 2 } default { 0 } }
-        $cb.Add_SelectionChanged({ param($x, $e) $new = @(4, 2, 1)[$x.SelectedIndex]; if ($new -ne $s.Conc) { $s.Conc = $new; $s.Changed['Conc'] = $true; Show-MbtGuiPage } }.GetNewClosure())
+        Add-MbtGuiHandler $cb 'SelectionChanged' { param($sender, $e) $new = @(4, 2, 1)[$sender.SelectedIndex]; if ($new -ne $s.Conc) { $s.Conc = $new; $s.Changed['Conc'] = $true; Show-MbtGuiPage } }
         $rows.Add($cb); $rows.Add((New-GuiText 'The tool lowers this by itself when Microsoft slows it down.' 'Hint'))
     }
     if ('retry' -in $Include) {
@@ -520,29 +584,84 @@ function New-MbtGuiSettingsSection {
     if ('tries' -in $Include) {
         $rows.Add((& $label 'Tries per item' 'Tries'))
         $tb = New-GuiTextBox -Text ([string]$s.Tries) -Automation 'Tries per item' -OnChange { param($x, $e) $v = 0; if ([int]::TryParse($x.Text, [ref]$v) -and $v -ge 1 -and $v -le 20 -and $v -ne $s.Tries) { $s.Tries = $v; $s.Changed['Tries'] = $true } }.GetNewClosure()
-        $rows.Add($tb)
+        $rows.Add($tb); $rows.Add((New-GuiText 'How many times an item is tried before it is marked failed. Default 3.' 'Hint'))
     }
-    $rows.Add((New-GuiOption -Type Check -Title 'Keep this PC awake while it runs' -Hint 'Stops Windows from going to sleep by itself. Closing the lid or choosing Sleep still sleeps.' -Checked $s.Awake -Margin '0,10,0,0' -OnChange { param($x, $e) $s.Awake = [bool]$x.IsChecked }))
-    $rows.Add((& $label 'Work folder' 'WorkFolder'))
-    $rows.Add((New-MbtGuiBrowseFolderRow -Value $s.WorkFolder -Kind Folder -Title 'Work folder' -Automation 'Work folder' -OnChange { param($v) if ($v -ne $s.WorkFolder) { $s.WorkFolder = $v; $s.Changed['WorkFolder'] = $true } }))
-    return (New-GuiMore -Summary 'Run settings (this run only)' -Content $rows.ToArray())
+    if ('awake' -in $Include) {
+        $rows.Add((& $label 'While the job runs' 'Awake'))
+        $rows.Add((New-GuiOption -Type Check -Title 'Keep this PC awake while it runs' -Hint 'Windows follows your company''s power settings unless you tick this. If the PC sleeps, the job stops and Continue does what is left.' -Checked ([bool]$s.Awake) -Margin '0' -OnChange { param($x, $e) $on = [bool]$x.IsChecked; if ($on -ne [bool]$s.Awake) { $s.Awake = $on; if ($on) { $s.Changed['Awake'] = $true } else { $s.Changed.Remove('Awake') }; Show-MbtGuiPage } }.GetNewClosure()))
+    }
+    $modified = @($s.Changed.Keys | Where-Object { $_ -in 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake' })
+    return (New-GuiMore -Summary $(if ($modified.Count) { 'Expert mode (modified for this run)' } else { 'Expert mode' }) -Content $rows.ToArray() -Open:($modified.Count -gt 0))
 }
 
 function New-MbtGuiSettingsCard {
+    <# The Expert mode fold at the bottom of a Verify page; nothing for a task that has no run settings. #>
     param([string[]]$Include)
-    $g = $script:Gui
-    $note = if ($g.S.Changed.Count) { 'Modified for this run: ' + (($g.S.Changed.Keys | Sort-Object) -join ', ') + '. Nothing is saved.' } else { 'Defaults from the configuration file. Nothing modified.' }
-    $n = New-GuiText $note 'Hint'; $n.Margin = [Windows.Thickness]::new(0)
-    return (New-GuiCard -Title 'Settings used' -Content @($n, (New-MbtGuiSettingsSection -Include $Include)))
+    if (-not @($Include).Count) { return $null }
+    return (New-GuiCard -Content @((New-MbtGuiSettingsSection -Include $Include)))
+}
+
+#endregion
+
+#region The same from the command line --------------------------------------------------------------------------
+
+function Get-MbtGuiCommandLine {
+    <#
+        The command line(s) of the task as an operator would type them (ConvertTo-MbtGuiCommandLine): the parameters that are a choice, no plumbing of the
+        console, no value that is the default. With -Job: the job that ran; without: the one the Start button would begin.
+    #>
+    param([Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'copy')][string]$Task, $Job)
+    $s = $script:Gui.S
+    $stub = if ($Job) { $Job } else { New-MbtGuiPreviewJob -Task $Task }
+    try { $commands = @(Get-MbtGuiCommand -Task $Task -S $s -Job $stub) } catch { return '' }
+    return (ConvertTo-MbtGuiCommandLine -Command $commands -S $s)
+}
+
+function New-MbtGuiCommandLineCard {
+    <# "The same from the command line": the exact line, read only, with Copy. #>
+    param([Parameter(Mandatory)][string]$Task, $Job)
+    $text = Get-MbtGuiCommandLine -Task $Task -Job $Job
+    $box = [Windows.Controls.TextBox]::new()
+    $box.Text = $text; $box.IsReadOnly = $true; $box.TextWrapping = 'Wrap'; $box.FontFamily = [Windows.Media.FontFamily]::new('Cascadia Mono, Consolas'); $box.FontSize = 12
+    $box.Padding = [Windows.Thickness]::new(8, 6, 8, 6); $box.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    [Windows.Automation.AutomationProperties]::SetName($box, 'The same from the command line')
+    $state = @{ Text = $text }
+    $copy = New-GuiButton -Text 'Copy' -Small -Icon clip -OnClick { param($b, $e) if ($state.Text -and (Set-MbtGuiClipboard $state.Text)) { $b.Content = 'Copied' } }.GetNewClosure()
+    $copy.Margin = [Windows.Thickness]::new(0)
+    $hint = $(if ($Task -in 'export', 'copy' -or ($Task -eq 'import' -and $script:Gui.S.ImSrc -ne 'store')) { 'Run it in PowerShell 7 from the tool folder. The files it names are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
+    return (New-GuiCard -Title 'The same from the command line' -Info $hint -Right $copy -Content @($box))
+}
+
+function New-MbtGuiVerifyBottom {
+    <# Under the two columns of a Verify page: the command line and the Expert mode fold. #>
+    param([Parameter(Mandatory)]$Columns, [Parameter(Mandatory)][string]$Task, [string[]]$Include)
+    return (New-GuiStack @($Columns, (New-MbtGuiCommandLineCard -Task $Task), (New-MbtGuiSettingsCard -Include $Include)))
+}
+
+function New-MbtGuiDiskCheckRow {
+    $g = $script:Gui; $s = $g.S
+    $need = Get-MbtGuiDiskNeed (Get-MbtGuiPlanSelection) $s
+    $free = $null; try { $free = [double](& $g.Engine.FreeSpace $s.OutFolder) } catch { $free = $null }
+    $drive = if ($s.OutFolder -match '^([A-Za-z]:)') { $Matches[1].ToUpperInvariant() } else { 'the disk' }
+    $enough = ($null -eq $free) -or ($need.Need -le $free)
+    $detail = if ($need.Size -le 0 -and $need.Unknown) { "$(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' }) free on $drive" } else { "about $(Format-MbtGuiBytes $need.Need) needed, $(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' }) free on $drive" }
+    return (New-MbtGuiCheckRow -State $(if ($enough) { 'ok' } else { 'bad' }) -Text $(if ($enough) { 'Enough disk space' } else { 'Not enough disk space' }) -Detail $detail)
+}
+
+function New-MbtGuiSignInCheckRow {
+    $s = $script:Gui.S
+    if ($s.Signed) { return (New-MbtGuiCheckRow -State ok -Text 'Sign-in is valid' -Detail $(if ($s.AuthMode -eq 'app') { "the application, working on $($s.Account)" } else { "$($s.Account), delegated" })) }
+    return (New-MbtGuiCheckRow -State bad -Text 'Not signed in' -Detail 'go back to From and sign in')
 }
 
 #endregion
 
 #region Export: Plan -----------------------------------------------------------------------------------------
 
-function Build-MbtGuiExportPlanPage {
+function New-MbtGuiExportPlanWhat {
+    <# The card "What will be done": the steps, where it is saved, the size and the time, from the selection as the plan page shows it. #>
     $g = $script:Gui; $s = $g.S
-    $sel = $g.ExportSelection
+    $sel = Get-MbtGuiPlanSelection
     $pst = $s.Dest -eq 'pst'
     $steps = @('Read the folder tree and list the items you chose.', 'Download them into the export store, checking each one.')
     if ($pst) { $steps += "Write the PST files ($($s.SplitGB) GB at most each) with the real folder tree."; $steps += 'Check every PST file.' }
@@ -551,16 +670,35 @@ function Build-MbtGuiExportPlanPage {
     $ol = [Windows.Controls.StackPanel]::new(); $i = 1
     foreach ($t in $steps) { $r = New-GuiText ("$i.  $t") 'Body'; $r.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($r) | Out-Null; $i++ }
     $eta = Get-MbtGuiPlanEta -Task export -Bytes $sel.Bytes
-    $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated: Microsoft does not give the size of these folders. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
-    $facts = New-GuiFacts @(@('Mailbox', $(if ($s.Shared) { "$($s.Shared) (shared, opened as $($s.Mailbox))" } else { $s.Mailbox })), @('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
-        @('Size', "$(Format-MbtGuiSelectionItems $sel) items $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $etaText 'Body')))
-    $planState = New-MbtGuiPlanStateMessage
-    $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = $planState
-    $what = New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $g.PlanHolder)
-    $left = New-GuiStack @($what, (New-MbtGuiSettingsCard -Include @('conc', 'retry')))
+    $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated yet: Microsoft does not give the size of calendar, contact and task folders in advance. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
+    $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
+    $facts = New-GuiFacts ($shared + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
+        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun) $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $etaText 'Body'))))
+    return (New-GuiCard -Title 'What will be done' -Content @($ol, $facts))
+}
+
+function Update-MbtGuiExportPlanSizes {
+    <# The service has counted the plan: the parts of the plan page that show a size are drawn again with it (the rest of the page, and what was typed in it, stays). #>
+    $g = $script:Gui
+    if ((Get-MbtGuiScreen) -ne 'exPlan') { return }
+    if ($g.ContainsKey('PlanWhatHolder') -and $g.PlanWhatHolder) { $g.PlanWhatHolder.Content = New-MbtGuiExportPlanWhat }
+    if ($g.ContainsKey('PlanDiskHolder') -and $g.PlanDiskHolder) { $g.PlanDiskHolder.Content = New-MbtGuiDiskCheckRow }
+    if ($g.ContainsKey('PlanTableHolder') -and $g.PlanTableHolder) { $g.PlanTableHolder.Content = New-MbtGuiPlanTable (Get-MbtGuiPlanSelection) }
+}
+
+function Build-MbtGuiExportPlanPage {
+    $g = $script:Gui; $s = $g.S
+    $pst = $s.Dest -eq 'pst'
+    $g.PlanWhatHolder = [Windows.Controls.ContentControl]::new(); $g.PlanWhatHolder.Content = New-MbtGuiExportPlanWhat
+    $g.PlanDiskHolder = [Windows.Controls.ContentControl]::new(); $g.PlanDiskHolder.Content = New-MbtGuiDiskCheckRow
+    $g.PlanTableHolder = [Windows.Controls.ContentControl]::new(); $g.PlanTableHolder.Content = New-MbtGuiPlanTable (Get-MbtGuiPlanSelection)
+    $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
+    $destRow = New-MbtGuiCheckRow -State $(if (Test-MbtGuiExportDestination $s) { 'bad' } else { 'ok' }) -Text 'Nothing is overwritten' -Detail $(if ($pst) { "$($s.OutName) does not exist yet" } else { 'the destination is free' })
+    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $g.PlanDiskHolder, $destRow)
+    $left = New-GuiStack @($checks, $g.PlanWhatHolder)
     $inItContent = [Collections.Generic.List[object]]::new()
-    $inItContent.Add((New-MbtGuiPlanTable $sel))
-    if (Test-MbtGuiSelectionHasDeletedItems $sel) {
+    $inItContent.Add($g.PlanTableHolder)
+    if (Test-MbtGuiSelectionHasDeletedItems $g.ExportSelection) {
         $inItContent.Add((New-GuiMessage -Kind info -Icon shield -Text '**Deleted items (Recoverable Items) are in this plan.** They are saved apart, under a folder named Recoverable Items, in the export and in the PST. If you import them later, they go into a normal folder named Restored deleted items, never back into Recoverable Items.'))
     }
     $inIt = New-GuiCard -Title 'What is in it' -Content $inItContent.ToArray()
@@ -568,8 +706,8 @@ function Build-MbtGuiExportPlanPage {
     $right = New-GuiStack @($inIt, $before)
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
-    Set-MbtGuiActions -Footer 'Read the plan. Nothing starts before you press Start.' -Label 'Start the export' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
-    return (New-GuiTwoColumns -Left $left -Right $right)
+    Set-MbtGuiActions -Footer (Get-MbtGuiPlanFooter) -Label 'Start the export' -Icon play -Enabled ($s.PlanState -eq 'ok') -OnClick { Start-MbtGuiRun }
+    return (New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task export -Include @('conc', 'retry', 'tries', 'awake'))
 }
 
 #endregion
@@ -577,8 +715,8 @@ function Build-MbtGuiExportPlanPage {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD95cPKTHkNDTlY
-# jW2yhQDld55lgvEtvx7WXMxYGBync6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCh45x8zA8biGxb
+# QAcJa8n+yJwMnQJQVT4dZMgvMUEF/6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -655,23 +793,23 @@ function Build-MbtGuiExportPlanPage {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCCGdCw1lLk
-# J8FpOrflhwwzh0+UytcnZFupv1us/DMRqzANBgkqhkiG9w0BAQEFAASCAgAsSAcQ
-# zT9qEaYFVUtDuHBqcFWCbZG8LvVMNVcet97lJ/PjAmNi+h+3+P2ocgjy/AkD/Y0j
-# G4k52U5lh8jnAoyVLhmWmKgivuNtLRE5LTCDUKk6IVHyq91XF1dpjiyX1A8aWygv
-# gk5MtCIP1bDnMgghVPJhzZiQ2roX1+HQktFva1hdWIkmoVppfnHrZxfHVKxDy4CJ
-# uEB9gZKFvYtvXIVhLQmhceq8hF1Yw5qiSEhHRaOXXVKniW52MB8lO4SueokKIKE6
-# iK4yJz9gTdTk3lWtDFu4xk4/DG8y/9WjYQFImBXpLc6MueIVrDI4jE6P+/RNkeVS
-# wVaTKfH37CyecSl7CAMWWMeYd5Xh2GScEzSmtk0BCLDufpDk+1i37n2mQ/oeORnY
-# 5RRL2Ihm7j8EmJFt1NuujoLK+B07Shx605L+y7kRC+nIBbInjNPYSVATHQPC7qMW
-# wVdWL91qK2Hw4bzLQyZalKIUUXsjtgiclhvTN6JCRsnR+o15xxHJNKus/znFz5Dt
-# fadNxrLior0C6dFjU2zXMFHqIc4yTyefBQhnJOOomMWN9hbrl6r9G/bxjoC4MGiJ
-# XD3V8/FuOmzolGQ17IAPWzX85pSXPWj0yg3nzfG9DpaIqGDYlWv5Wcc2P5WqLw/3
-# tOdCzmXurne00zmzc0qHYURBiEQsxl7cbTxSh6GCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDSsWMUOob3
+# E3lLXTnWFfoQTktCANjuicINUL0pIaC/HTANBgkqhkiG9w0BAQEFAASCAgBH2Dnh
+# 8soO9WxCmmUjQX8RsBjUcYdWnXdY8NbzIGRUseDlidzA8cCMESMYJKq0ghlhOzVc
+# 3hDsQ6ea2cxfrzB1MAcNDN+TWkM8/CzjD/LEAKlYXT/rCWvUTShai+c5R/Ph+bGt
+# T5PnYuPJDWuFgLyr5QIRcZ6tmyifueJUSTAjm2vY66ZC0oRKUOpohQXlyKYXYR8/
+# X8EcB8Fh/FnxF1brQW7JZ/xJ2oDQncslBUeRL0An4p2yR0rn21V75YnLesKQc1fR
+# 94EBpixuJuJBSuwU7MO9Y81fo2eaeUCb6p+xvQKMxVV37qSULW7KBXrtwZTKuCW3
+# 6MPqanPb35LPSFNPJCasD9U3YFaT3DGDRdbPxXls1FXQ94zcQCJoN8Ii1XsGgajE
+# cOki5ShroLG9vXUFblZ+7iwAE5yVvrMU3i+DcvMWhKKMA8J9R9sP8rZR0PSeRcMX
+# XzFvCj7N22kURUBbHQyBkiKJCn2kk5a/44pbiHzN9mJafh1CkESttVaaql9vtpFj
+# Ug+x+vodkL/I9Nu/9DV20NziJokUxhAJziQPyVYn67anIGtkQeY1Iz4OwyT5pIh7
+# k5buxqJ3zCiKsPtgPM45ChUTZ4ZmHLN3Jji195ldsa5g17ox2spwyLv/k9Mo3tCB
+# rFL0ZrkwpUP7PGd8Hcy6Hazs122Gf4cMToPFcqGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIOH2jczzYnqlz5+qNX1wOCNvdQPF2FrB63SMzR0weIT3AghBmPwp/cBq
-# DhgPMjAyNjExMTAwODIyMjlaMAMCAQECEBWPCaUdFiegUlSH4L/irTugghGnMIIE
+# BAIBBQAEIGfFOLjTvaEp/Oqlvte9yxF4lDoGW3wjL+Bj8UlKJal2Agg3RNXMfSCx
+# GxgPMjAyNjExMTUxNDM1MjFaMAMCAQECEAu4wjr1XTU0E1SM3VP+ekqgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -770,13 +908,13 @@ function Build-MbtGuiExportPlanPage {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIyOVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBfi
-# QthcJFi/Siw/i1QT6GI3jfzYBEX5b3pxuLuD1yqDMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUyMVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICm1
+# 3gGAOjftuAgLwm2dLdQ3GyPs0fo6/6Xr5N6O4rG4MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiA+/78njYfRpZLfN3+HW+JhpktUSBdu/hzX0XwRQsjKzgIhAPVj
-# CRMVwM/c/aEH0zN4KhAgnHTKvmUgoVf6IhyBwL+W
+# zj0EAwIERzBFAiEAx2k6Mn98KlKgSjN3qSHSSN/q6AkRH4BTyBYC5K+jmYwCIFfR
+# 4Xe0n6TrjR4e1Zxd6MPPS60mIOQcvQNH6uvlqKvO
 # SIG # End signature block

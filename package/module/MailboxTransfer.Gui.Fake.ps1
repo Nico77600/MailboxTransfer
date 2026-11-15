@@ -14,9 +14,11 @@
 Set-StrictMode -Version Latest
 
 $script:FakePstState = 'damaged'
+# How many of the jobs of the Continue list the fake engine gives (all of them when it is $null): the scenarios with one job, or none.
+$script:FakeJobCount = $null
 
 function New-MbtGuiFakeRandom {
-    <# A small deterministic generator (the mockup's), so the screenshots are the same every time. #>
+    <# A small deterministic generator, so the screenshots are the same every time. #>
     param([string]$Seed)
     $a = 0
     foreach ($c in $Seed.ToCharArray()) { $a = [int](([long]$a * 31 + [int]$c) -band 0x7FFFFFFF) }
@@ -38,7 +40,7 @@ function New-MbtGuiFakeNode {
 }
 
 function Get-MbtGuiFakeTree {
-    <# The mailbox of the mockup: Primary, Archive, Auxiliary archive 1 (being filled by Microsoft). -Recoverable: with Recoverable Items (the box "Include deleted items"). #>
+    <# A mailbox with its three locations: Primary, Archive, Auxiliary archive 1 (being filled by Microsoft). -Recoverable: with Recoverable Items (the box "Include deleted items"). #>
     param([switch]$Recoverable)
     $f = { param($id, $name, $glyph, $count, $gib, $kids = @()) New-MbtGuiFakeNode -Id $id -Name $name -Glyph $glyph -Count $count -SizeGiB $gib -Kids $kids }
     $deleted = @()
@@ -79,7 +81,7 @@ $script:FakeBodies = @("Hello Adele,`n`nPlease find the latest version attached.
     "Adele,`n`nA short reminder about the review. The numbers are in the table below; the open points are marked in yellow.`n`nRegards,")
 
 function Get-MbtGuiFakeItems {
-    <# Up to 12 synthetic messages of a folder (the mockup's), as rows of the list. #>
+    <# Up to 12 synthetic messages of a folder, as rows of the list. #>
     param([Parameter(Mandatory)]$Node)
     $rand = New-MbtGuiFakeRandom $Node.Id
     $n = [math]::Min([int]$Node.Count, 12)
@@ -123,7 +125,7 @@ function New-MbtGuiFakeEngine {
         switched on by the scenarios that show them.
     #>
     param([hashtable]$Capability = @{})
-    $cap = @{ Events = $true; PstExport = $true; PstCheck = $true; PstRepair = $true; PstImport = $false; EmlExport = $false; SharedMailbox = $false; FolderChoice = $false; PstCopy = $false; PstPreview = $false }
+    $cap = @{ Events = $true; AppOnly = $true; PstExport = $true; PstCheck = $true; PstRepair = $true; PstImport = $false; EmlExport = $false; SharedMailbox = $false; FolderChoice = $false; PstCopy = $false; PstPreview = $false }
     foreach ($k in $Capability.Keys) { $cap[$k] = $Capability[$k] }
     $engine = [ordered]@{
         Name = 'Fake'
@@ -131,13 +133,17 @@ function New-MbtGuiFakeEngine {
         Capability = $cap
         State = @{ Signed = $false }
     }
-    $engine.Readiness = { [pscustomobject]@{ Lights = @(
-                @{ Name = 'PowerShell 7.5 or later'; Detail = '7.5.4'; Ok = $true }, @{ Name = 'Engine ready'; Detail = 'compiled in 3.1 s'; Ok = $true },
-                @{ Name = 'Sign-in component (MSAL)'; Detail = 'found in Microsoft.Graph.Authentication 2.25'; Ok = $true },
-                @{ Name = 'Work folder'; Detail = 'D:\MailboxTransfer - 412 GiB free'; Ok = $true }, @{ Name = 'Microsoft 365 reachable'; Detail = 'login.microsoftonline.com answers'; Ok = $true }
+    $engine.Readiness = { $work = $script:Gui.S.WorkFolder; [pscustomobject]@{ Lights = @(
+                @{ Name = 'PowerShell 7.5 or later'; Detail = '7.5.4'; Ok = $true },
+                @{ Name = 'Sign-in component (MSAL)'; Detail = 'found in Microsoft.Graph.Authentication 2.41.1; the Windows sign-in window is available'; Ok = $true },
+                @{ Name = 'Work folder'; Detail = "$work - 412 GiB free"; Ok = $true },
+                @{ Name = 'Network connection'; Detail = 'login.microsoftonline.com answers'; Ok = $true },
+                @{ Name = 'Files unblocked'; Detail = 'no file of this tool is marked as downloaded'; Ok = $true }
             ) | ForEach-Object { $_ } } }
-    $engine.SignInSettings = { [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; ClientId = '00000000-0000-0000-0000-000000000000' } }
-    $engine.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App)
+    $engine.WindowSignIn = { [pscustomobject]@{ Available = $true; Reason = ''; Directory = '' } }
+    $engine.ConfigPath = { 'D:\MailboxTransfer\config\MailboxTransfer.config.psd1' }
+    $engine.SignInSettings = { [pscustomobject]@{ TenantId = 'contoso.onmicrosoft.com'; ClientId = '7c0d1e2f-4a5b-4c6d-8e9f-0a1b2c3d4e5f'; AppTenantId = 'contoso.onmicrosoft.com'; AppClientId = '3f9a6b21-8d44-4c07-b5e2-91a7d0c4e6f8'; CertificateThumbprint = 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678' } }
+    $engine.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow)
         $engine.State.Signed = $true
         & $OnDone ([pscustomobject]@{ Account = $Mailbox; TenantId = 'contoso.onmicrosoft.com'; Scopes = @('MailboxFolder.Read', 'MailboxItem.Read', 'MailboxItem.ImportExport', 'Mail.Read', 'MailboxFolder.ReadWrite'); Missing = @(); CanReadMail = $true; Access = $(if ($App) { 'Application (certificate, no user)' } else { 'Delegated (you, with your rights)' }) }) }.GetNewClosure()
     $engine.SignOut = { $engine.State.Signed = $false }.GetNewClosure()
@@ -156,20 +162,32 @@ function New-MbtGuiFakeEngine {
     $engine.OpenSource = { param($Kind, $Path, $OnDone, $OnError)
         if ($Kind -eq 'pst') { & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = '**4 parts found** (archive-2019.pst ... -004) - 47.3 GiB - checked: **clean**. The check only reads.'; Items = 9860; Bytes = [long](47.3GB); Folders = 7; Parts = 4; Roots = (Get-MbtGuiFakePstTree) }) }
         else { & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = '**Store verified:** 1,208 of 1,208 items match their fingerprint.'; Items = 1208; Bytes = [long](6.2GB); Folders = 12; Parts = 0; Roots = (Get-MbtGuiFakePstTree) }) } }
+    # FakePstState: damaged (five findings), one (a single finding), clean (none)
     $engine.CheckPst = { param($Path, $OnDone, $OnError)
-        $bad = $script:FakePstState -ne 'clean'
-        & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](4.2GB); Elapsed = '1 min 5 s'; Errors = $(if ($bad) { 6 } else { 0 }); Warnings = $(if ($bad) { 5 } else { 0 }); ExitCode = $(if ($bad) { 1 } else { 0 }); Recommended = 'Rebuild'
-                Findings = $(if ($bad) { @(
-                        @{ Severity = 'Error'; Text = '3 messages exist, but the folder does not list them'; Code = 'MSG-NOT-LISTED'; Count = 3; Level = 'Rebuild' }
-                        @{ Severity = 'Error'; Text = 'A folder points to a parent that is gone'; Code = 'FOLDER-PARENT-MISMATCH'; Count = 1; Level = 'Rebuild' }
-                        @{ Severity = 'Error'; Text = 'A folder line points to a message that no longer exists'; Code = 'DANGLING-ROW'; Count = 2; Level = 'Recompute' }
-                        @{ Severity = 'Warning'; Text = 'Folder counters are out of date'; Code = 'CONTENTS-CELL'; Count = 4; Level = 'Recompute' }
-                        @{ Severity = 'Warning'; Text = 'A message size differs from the sum of its parts'; Code = 'MSG-SIZE-COMPUTED'; Count = 1; Level = 'Recompute' }) } else { @() }) }) }
+        $state = $script:FakePstState
+        $bad = $state -ne 'clean'
+        $findings = @(
+            @{ Severity = 'Error'; Text = '3 messages exist, but the folder does not list them'; Code = 'MSG-NOT-LISTED'; Count = 3; Level = 'Rebuild' }
+            @{ Severity = 'Error'; Text = 'A folder points to a parent that is gone'; Code = 'FOLDER-PARENT-MISMATCH'; Count = 1; Level = 'Rebuild' }
+            @{ Severity = 'Error'; Text = 'A folder line points to a message that no longer exists'; Code = 'DANGLING-ROW'; Count = 2; Level = 'Recompute' }
+            @{ Severity = 'Warning'; Text = 'Folder counters are out of date'; Code = 'CONTENTS-CELL'; Count = 4; Level = 'Recompute' }
+            @{ Severity = 'Warning'; Text = 'A message size differs from the sum of its parts'; Code = 'MSG-SIZE-COMPUTED'; Count = 1; Level = 'Recompute' })
+        if ($state -eq 'one') { $findings = @($findings[0]) } elseif (-not $bad) { $findings = @() }
+        & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](4.2GB); Elapsed = '1 min 5 s'; Errors = $(if ($state -eq 'one') { 1 } elseif ($bad) { 6 } else { 0 }); Warnings = $(if ($bad -and $state -ne 'one') { 5 } else { 0 }); ExitCode = $(if ($bad) { 1 } else { 0 }); Recommended = 'Rebuild'; Findings = $findings }) }
     $engine.SaveSelection = { param($Root, $Entries, $Path, $OnDone, $OnError) & $OnDone $Path }
-    $engine.Jobs = { param($Work) @(
+    $engine.SaveSelections = { param($Groups, $Path, $OnDone, $OnError) & $OnDone $Path }
+    $engine.Jobs = { param($Work)
+        $jobs = @(
             [pscustomobject]@{ Task = 'import'; Title = 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' Adele Vance (Archive)'; Sub = '5,120 of 9,860 items done ' + [char]0x00B7 + ' stopped yesterday 22:41 ' + [char]0x00B7 + ' 3 items to check'; State = 'run'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'RunImportStopped' } }
             [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' Primary + Archive ' + [char]0x2192 + ' D:\Exports\adele'; Sub = 'Not finished: 2 folders are not ready at Microsoft yet. Nothing is lost.'; State = 'warn'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'DoneExportPartial' } }
-            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } }) }
+            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } })
+        if ($null -ne $script:FakeJobCount) { $jobs = @($jobs | Select-Object -First $script:FakeJobCount) }
+        $jobs }
+    # the demonstration writes no overview and removes no folder
+    $engine.JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null }
+    $engine.BatchReport = { param($Work, $Id, $OnDone, $OnError) & $OnDone $null }
+    $engine.JobReport = { param($Folder, $OnDone, $OnError) & $OnDone $null }
+    $engine.Retention = { param($Work) }
     $engine.FreeSpace ={ param($Path) 412GB }
     # what the check of the plan would count: the ticks, as the service counts them (an auxiliary archive and a PST give no size)
     $engine.Plan = { param($Request, $OnDone, $OnError)
@@ -182,8 +200,8 @@ function New-MbtGuiFakeEngine {
 # SIG # Begin signature block
 # MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCLRDdBQKaCSAMB
-# L3sKf52HOpySM+5K//xr4tv6xA6pJqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCiQKUYyH24t5Hv
+# ZQWJbu7lyOPoi+Jg4lr4B1g11cNPK6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -260,23 +278,23 @@ function New-MbtGuiFakeEngine {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAPFmAYWfkE
-# vfFZafd80MZL5MgQ+oZDik054l02VyWIAjANBgkqhkiG9w0BAQEFAASCAgBaPSoq
-# Ic6EC/PwL9ARyG1iAUxe5PUo+2ebM2s2YwWd4zyOdyPHx5cdu3C9kEDWdAhgsiYA
-# 0IkAK+gKocHPwzL1h+xaCzcRaRr2RRtsrS/9kX5DU9ZcXoYzpBCYQ9nUDnkFN0Qe
-# vARKeaoT+XuiAalXYv/89/WtFDdE44ViBjH84qh1uh9j+RueSWJZPXuoagG1tWPT
-# +9EduOCUexe2hD+rp47DX6blskSETw+hwF9zpYE9W0p7rZwEl+23BYJLMWjNpuE6
-# af5dDjqcsHB2cagH80mtP+SAz4gP8nY7rmhdcRzZHT5oxU2jMUP158aWIrTWQ16P
-# CWHF33+6amFNZDjH8gzJpT5IxW21Z3NPtFSEPFcv0JXDpwG4YXhR7p9ZBMzeIwUk
-# xhOn5Z1MXgkc0dcejjoXbe9oaj1/0YA0mlqgncocw9PvNvJ47F+lUpwNOJPtc6yY
-# w4oCYfj2Nf0GVTEPs2GfcyRK+2s/2RUxOVmxUhiM4YPS4f6Eh1l/Oe9mM4RuFOo2
-# XVzWZQW0jF9sGSDEUueBPPgXL9yOHKh85NpLYkweguFvpA1+ja40JRgBpaeKNQkm
-# 0wVmkuop+7KAWen7JZTYi+KCfJ7kdNSSH2iu1HkxLhqJUe2iwviMsZkTYBEkV/a0
-# J0150waa3OQtNcG3QpPm0M8fhnTjUP8pr42QuqGCFM0wghTJBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDPvCM5i2xP
+# 6f38Zwqdd067JqFqPGNunlo97rW4rHyAOzANBgkqhkiG9w0BAQEFAASCAgCT24+A
+# 1Tb+DyxAWt0Worw+/6ansFj/QxqYtOJlvBW39lGmdatIVgD8VB2y5sImcI8TaRKD
+# Dm2HWdVux6GmRadw4NKgu65I1VCZjisINeWf9kmi7GWbfn/+YU/iybZ+2tyXd0vM
+# XUlFSPyCNWmjqs7AorSkaEeE1q4ct9w3A6oUj5unc9IYKXP3PZTYvo7FrJRPZO9N
+# gM0b2qgbUdcmzW3/wUv21wmdfiyZsXUZkqNK/aVMjfJL5Iazrrmz5N2mk3MhF+b0
+# lnfEBDZlExZFqbB/2d95L+HJ6DUtq4wKguUsJ5FICDtwZDAudwRztw1gp6mIgTYb
+# 1qJ6mOoBL3r/e6aNvkMLrHt+onJtaOIIzPLX9p97jdsSZHUWxHwn4sxLKmP+oCbG
+# kLgJ2bT+BSHRodpom294MHwxykgusDkFFjx81gFINp9bjrOjtHBkPjZm2GSl9ECp
+# YGUeubcPYE+K2Bm1sgReo7ecd2WJp9mfv/YAHfpI/ZSOZUi5xDYUBcGkuyfbI9Nr
+# NhkCYQvUs24ueMlZEh92DPYTAQxr9tbMhrcH+2Ma+gZGM9MU9geIawd+ca54M/4i
+# S628tWsZFpcgot8NGdRs9PBcuXX+zOyTeOEKnygOEbdzgaTvq4HWgnVZ/6dSqllN
+# lvyiIyX0FOJlDhShhiMp6k0YU0ssmIi5M4TWo6GCFM0wghTJBgorBgEEAYI3AwMB
 # MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEINYS/ZDY9HBCOkdOKrRHMSJ2Hxz/c8XkzAHOQJpNX/utAggYPOKrykzL
-# pBgPMjAyNjExMTAwODIyMjBaMAMCAQECEFPmIfDw47tFeVXGL+noUyagghGnMIIE
+# BAIBBQAEICAQ+Bt4x+jqqZ4AFxfSw0taeWqWDmUWI13lUtLEbiLsAghVSeWtLdsZ
+# shgPMjAyNjExMTUxNDM1MTBaMAMCAQECEDOrD4snJOOhyHa+xVvMQoygghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -375,13 +393,13 @@ function New-MbtGuiFakeEngine {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIyMFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINc9
-# /9zSqcMf+Q/3la6ZUg/7Mk1g6T8i8LuIinP+hGe0MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUxMFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIOE9
+# kys0SXmD3VUB9eGGjuoR95jlJc4ISip0Rc2uEeN5MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBb4GfxrBYwsNMT5LBsGqbgXy48Zrm7GIMv+hbhd7UiPwIgWW8n
-# EkawAgkN5uRXzQUdPg8a15mz+b5nkpGrCn2YYu4=
+# zj0EAwIERjBEAiBmzRjz3zHrMPcqnujwlf/MdJ+urfryXszaU0OlPSdKHgIgBlY7
+# lxRKHCQrfPR0HfziH9PqR7zlevGn12nRvlF1wYM=
 # SIG # End signature block

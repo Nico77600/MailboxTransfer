@@ -74,33 +74,39 @@ function Assert-PublicText([string]$Text) {
 
 # ---- 1. window pictures -----------------------------------------------------------------------------------------------------------------------
 $screens = [ordered]@{
-    Start = 'console-task'; StartImport = 'console-task-import'; ExportFromSignedOut = 'console-signin'; ExportFromCode = 'console-signin-code'
-    ExportFrom = 'console-from-browse'; ExportTo = 'console-to-pst'; ExportPlan = 'console-plan-export'
+    Setup = 'console-setup'; SetupApplication = 'console-setup-application'; TaskWhat = 'console-task'
+    ExportFromSignedOut = 'console-signin'; ExportFromCode = 'console-signin-code'
+    ExportFrom = 'console-from-browse'; ExportTo = 'console-to-pst'; ExportPlan = 'console-verify-export'
     RunExport = 'console-run-export'; RunImport = 'console-run-import'; RunImportSleep = 'console-run-import-sleep'
     RunImportDecision = 'console-run-import-decision'; RunImportStopped = 'console-run-import-stopped'; RunRepair = 'console-run-repair'
     DoneExportComplete = 'console-done-export-complete'; DoneExportPartial = 'console-done-export-partial'; DoneExportError = 'console-done-export-error'
-    ImportFrom = 'console-import-from'; ImportTo = 'console-import-to'; ImportPlan = 'console-import-plan'
+    ImportFrom = 'console-import-from'; ImportTo = 'console-import-to'; ImportPlan = 'console-verify-import'; ImportPlanTicked = 'console-verify-import-ticked'
     DoneImportComplete = 'console-done-import-complete'; DoneImportPartial = 'console-done-import-partial'
     DoneImportDecision = 'console-done-import-decision'; DoneImportError = 'console-done-import-error'
     RepairFromDamaged = 'console-repair-from-damaged'; RepairFromClean = 'console-repair-from-clean'; RepairTo = 'console-repair-to'
-    RepairPlan = 'console-repair-plan'; DoneRepair = 'console-repair-done'; Open = 'console-open'
+    RepairPlan = 'console-verify-repair'; DoneRepair = 'console-repair-done'; Open = 'console-open'
+    ExportPlanChecking = 'console-verify-export-checking'; RunExportPreparing = 'console-run-export-preparing'
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.
 $callouts = @{
-    Start = @(@(1, 50, 116), @(2, 16, 195), @(3, 16, 352), @(4, 868, 352))
-    ExportFromSignedOut = @(@(1, 16, 176), @(2, 16, 244))
-    ExportFromCode = @(@(1, 16, 176), @(2, 16, 330))
-    ExportFrom = @(@(1, 16, 176), @(2, 16, 400), @(3, 452, 204), @(4, 1104, 204), @(5, 16, 586))
-    ExportTo = @(@(1, 16, 176), @(2, 440, 176), @(3, 1252, 913))
-    ExportPlan = @(@(1, 16, 176), @(2, 440, 176), @(3, 1252, 913))
+    Setup = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 1252, 913))
+    SetupApplication = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 1252, 913))
+    TaskWhat = @(@(1, 50, 116), @(2, 16, 214), @(3, 16, 372), @(4, 866, 372))
+    ExportFromSignedOut = @(@(1, 16, 190), @(2, 30, 263), @(3, 30, 415))
+    ExportFromCode = @(@(1, 16, 190), @(2, 16, 330))
+    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 224), @(4, 1116, 224), @(5, 16, 617))
+    ExportTo = @(@(1, 16, 190), @(2, 460, 190), @(3, 1252, 913))
+    ExportPlan = @(@(1, 16, 190), @(2, 16, 386), @(3, 562, 182), @(4, 16, 643), @(5, 1252, 913))
     RunExport = @(@(1, 16, 178), @(2, 16, 334), @(3, 290, 334), @(4, 1146, 334), @(5, 16, 913))
     RunImportDecision = @(@(1, 16, 330), @(2, 30, 381), @(3, 16, 913))
-    RepairFromDamaged = @(@(1, 16, 215), @(2, 440, 215), @(3, 1252, 913))
+    RepairFromDamaged = @(@(1, 16, 239), @(2, 460, 239), @(3, 1252, 913))
     ImportFrom = @(@(1, 16, 215), @(2, 440, 215))
-    ImportPlan = @(@(1, 16, 215), @(2, 440, 215), @(3, 1252, 913))
+    ImportTo = @(@(1, 16, 226), @(2, 452, 340), @(3, 452, 450))
+    RepairTo = @(,@(1, 16, 226))
+    ImportPlan = @(@(1, 16, 190), @(2, 566, 262), @(3, 566, 446), @(4, 1090, 913))
+    DoneExportComplete = @(@(1, 16, 190), @(2, 16, 424), @(3, 16, 556))
     DoneRepair = @(,@(1, 16, 178))
 }
-
 function Add-Callouts([string]$File, $Points) {
     $img = [Windows.Media.Imaging.BitmapImage]::new(); $img.BeginInit(); $img.UriSource = [Uri]::new($File); $img.CacheOption = 'OnLoad'; $img.EndInit()
     $dv = [Windows.Media.DrawingVisual]::new()
@@ -290,8 +296,8 @@ $drawings['readme-start'] = @{ W = 1280; H = 540; Draw = {
             if ($i -lt 3) { Add-Arrow ($x + 289) 106 ($x + 300) 106 'text3' 2 }
         }
         $branches = @(
-            @('A', 0xE896, 'Browse and export', @(@('Sign in, pick the mailbox', 'or open a shared mailbox'), @('Tick, choose where to save', 'read the plan, then Start'), @('Read the result', 'the Done page, then the log'))),
-            @('B', 0xE898, 'Import', @(@('Pick the file and the mailbox', 'a test mailbox first'), @('Read the plan, type IMPORT', 'then Start'), @('Read the result', 'what was added, what was refused'))),
+            @('A', 0xE896, 'Browse and export', @(@('Sign in, pick the mailbox', 'or open a shared mailbox'), @('Tick, choose where to save', 'read the checks, then Start'), @('Read the result', 'the Next steps page, then the log'))),
+            @('B', 0xE898, 'Import', @(@('Pick the file and the mailbox', 'a test mailbox first'), @('Read the checks, tick the box', 'it names the mailbox, then Start'), @('Read the result', 'what was added, what was refused'))),
             @('C', 0xE90F, 'Check and repair a PST', @(@('Pick the file', 'nothing is written yet'), @('Check, then repair', 'into a new file: the original stays'), @('Read before and after', 'the repair report')))
         )
         for ($b = 0; $b -lt 3; $b++) {
@@ -314,13 +320,13 @@ $drawings['readme-start'] = @{ W = 1280; H = 540; Draw = {
 
 $drawings['readme-path'] = @{ W = 1280; H = 240; Draw = {
         Add-Rect 0 0 1280 240 'bg' '' 0
-        $steps = @(@('Task', 'Pick what to do'), @('From', 'Choose the source'), @('To', 'Choose where it goes'), @('Plan', 'Read before you start'), @('Run', 'Wait, stop, continue'), @('Done', 'Read the result'))
-        for ($i = 0; $i -lt 6; $i++) {
-            $x = 40 + $i * 200
-            Add-Step ($i + 1) ($x + 60) 40 56 $(if ($i -eq 3) { 'accent' } else { 'accent' })
-            [void](Add-Text $steps[$i][0] $x 108 24 'text' 'SemiBold' 176 'Center')
-            [void](Add-Text $steps[$i][1] $x 142 16 'text2' 'Normal' 176 'Center')
-            if ($i -lt 5) { Add-Arrow ($x + 128) 68 ($x + 190) 68 'text3' 2.5 }
+        $steps = @(@('Setup', 'Is this computer ready?'), @('Task', 'What, From, To'), @('Verify', 'Read the checks and the plan'), @('Run', 'Wait, stop, continue'), @('Next steps', 'Read the result'))
+        for ($i = 0; $i -lt 5; $i++) {
+            $x = 40 + $i * 240
+            Add-Step ($i + 1) ($x + 82) 40 56 'accent'
+            [void](Add-Text $steps[$i][0] $x 108 24 'text' 'SemiBold' 220 'Center')
+            [void](Add-Text $steps[$i][1] $x 142 16 'text2' 'Normal' 220 'Center')
+            if ($i -lt 4) { Add-Arrow ($x + 150) 68 ($x + 230) 68 'text3' 2.5 }
         }
         [void](Add-Text 'The circles are at the top of the window: the highlighted one is the page you are on.' 40 196 18 'text3' 'Normal' 1200 'Center')
     } }

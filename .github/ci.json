@@ -23,7 +23,10 @@
     "tests/PstRepair.Tests.ps1",
     "tests/ReviewFixes.Tests.ps1",
     "tests/Gui.Logic.Tests.ps1",
-    "tests/Gui.Smoke.Tests.ps1"
+    "tests/Gui.Smoke.Tests.ps1",
+    "tests/Gui.CommandLine.Tests.ps1",
+    "tests/Gui.ClickThrough.Tests.ps1",
+    "tests/Configuration.Tests.ps1"
   ],
   "packageBuilder": "tools/New-MailboxTransferPackage.ps1",
   "packageEntry": "Invoke-MailboxTransfer.ps1"

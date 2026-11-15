@@ -9,7 +9,7 @@
 //  - StorePreviews: what the browser of the store shows of an item (from the FastTransfer reader).
 //
 //  Context: this is the owner's own tooling to migrate or back up Exchange Online mailboxes that the operator is authorised to
-//  access (delegated consent of the mailbox user); the lab scripts only target the owner's private lab tenant.
+//  access (delegated consent of the mailbox user); the scripts of the repository only target a private test tenant.
 //  Throttling policy: compliance, not evasion. Retry-After is honoured exactly (GraphClient), one 429 / 503 stops every worker
 //  until its delay is over, the concurrency is halved on 429 / 503 and grows back slowly, and it never exceeds the documented
 //  4 concurrent requests per mailbox. One application and one identity only: nothing here multiplies the quota.
@@ -42,6 +42,8 @@ namespace MailboxTransfer
     public sealed class TransferSnapshot
     {
         public string Phase;
+        /// <summary>What the phase is doing right now ("1,240 folders read"), null when it has nothing to say.</summary>
+        public string Detail;
         public double Seconds;
         public long Bytes, Items, Failed, TotalItems, TotalBytes;
         /// <summary>Since the start of the transfer phase, and over the last 30 seconds or so.</summary>
@@ -60,6 +62,7 @@ namespace MailboxTransfer
         {
             var sb = new StringBuilder();
             sb.Append(Phase).Append("  ").Append(TimeSpan.FromSeconds(Math.Round(Seconds)).ToString("hh\\:mm\\:ss"));
+            if (!string.IsNullOrEmpty(Detail)) sb.Append("  ").Append(Detail);
             sb.Append("  items ").Append(Items).Append(TotalItems > 0 ? "/" + TotalItems : "");
             if (Failed > 0) sb.Append(" (").Append(Failed).Append(" failed)");
             sb.Append("  ").Append(Size(Bytes)).Append(TotalBytes > 0 ? "/" + Size(TotalBytes) : "");
@@ -80,6 +83,8 @@ namespace MailboxTransfer
         long _bytes, _items, _failed;
         long _transferStartedMs = -1;
         public volatile string Phase = "starting";
+        /// <summary>What the phase is doing right now, for the poll of the caller (for instance how many folders of the tree were read); null: nothing.</summary>
+        public volatile string Detail;
         public long TotalItems, TotalBytes;
         /// <summary>Progress per folder (the console lists the folders of a running job from it).</summary>
         public readonly FolderTracker Folders = new FolderTracker();
@@ -113,7 +118,7 @@ namespace MailboxTransfer
 
         public TransferSnapshot Snapshot(GraphClient graph)
         {
-            var s = new TransferSnapshot { Phase = Phase, Seconds = _watch.Elapsed.TotalSeconds, TotalItems = TotalItems, TotalBytes = TotalBytes };
+            var s = new TransferSnapshot { Phase = Phase, Detail = Detail, Seconds = _watch.Elapsed.TotalSeconds, TotalItems = TotalItems, TotalBytes = TotalBytes };
             s.Bytes = Interlocked.Read(ref _bytes); s.Items = Interlocked.Read(ref _items); s.Failed = Interlocked.Read(ref _failed);
             s.Active = Volatile.Read(ref _active);
             if (graph != null) { s.Requests = graph.RequestCount; s.Retries = graph.RetryCount; s.Throttled429 = graph.Throttled429; }
@@ -426,7 +431,7 @@ namespace MailboxTransfer
     public sealed class ImportSessionPool
     {
         readonly MailboxApi _api;
-        readonly Dictionary<string, ImportSession> _sessions = new Dictionary<string, ImportSession>(StringComparer.Ordinal);
+        readonly Dictionary<string, ImportSession> _sessions = new Dictionary<string, ImportSession>(StringComparer.OrdinalIgnoreCase);
         readonly object _lock = new object();
         public TimeSpan RenewBefore = TimeSpan.FromMinutes(2);
         /// <summary>Sessions created, and the lifetime announced by the service for each (expirationDateTime minus the creation time).</summary>

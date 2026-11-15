@@ -4,33 +4,35 @@
 #  Author  : Nicolas Fabert
 #  Version : see ModuleVersion
 #
-#  Loaded by Invoke-MailboxTransfer.ps1 and the lab scripts (Import-Module by path).
+#  Loaded by Invoke-MailboxTransfer.ps1 and the scripts of the repository (Import-Module by path).
 #
 @{
     RootModule        = 'MailboxTransfer.psm1'
-    ModuleVersion     = '1.1.0'
+    ModuleVersion     = '1.2.0'
     GUID              = 'e3b6a1f4-5d0c-4a8e-9b2f-7c41d8a05e63'
     Author            = 'Nicolas Fabert'
     Description       = 'Mailbox Transfer: exports Exchange Online mailboxes (primary and archive) to local storage and imports them into another mailbox with the Microsoft Graph mailbox import and export API. Phase 0: feasibility (folder tree, exportItems, FastTransfer reader, importItem).'
     PowerShellVersion = '7.4'
 
-    # Functions called by the entry script, the lab scripts and the tests.
+    # Functions called by the entry script, the scripts of the repository and the tests.
     FunctionsToExport = @(
         'Write-MbtStep', 'Write-MbtItem', 'Write-MbtDetail', 'Write-MbtBanner', 'Write-MbtSummary', 'Write-MbtLog', 'Start-MbtLog', 'Stop-MbtLog', 'Get-MbtLogPath', 'Format-MbtBytes', 'Format-MbtNumber', 'Format-MbtDuration', 'Format-MbtRate'
-        'Import-MbtConfiguration', 'Initialize-MbtEngine', 'Initialize-MbtAuthEngine', 'Find-MbtMsal'
+        'Import-MbtConfiguration', 'Initialize-MbtEngine', 'Initialize-MbtAuthEngine', 'Find-MbtMsal', 'Get-MbtWindowsSignIn', 'Get-MbtWorkFolderStatus'
         'Connect-MbtGraph', 'Get-MbtAccessToken', 'Disconnect-MbtGraph', 'Get-MbtSession', 'Set-MbtSession', 'Get-MbtTokenInfo', 'Get-MbtCertificate', 'Get-MbtAppPermission', 'Get-MbtMissingAppPermission', 'Test-MbtAppOnly', 'Get-MbtSessionUser', 'Get-MbtExchangeSettingsPath'
         'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath'
         'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem'
         'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
         'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
         'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
-        'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
+        'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
         'Show-MbtBrowseTree', 'Show-MbtBrowseItems', 'Show-MbtBrowsePreview', 'Show-MbtExportPlan'
         'Test-MbtPst', 'Repair-MbtPst', 'Export-MbtPst', 'Copy-MbtPst', 'Get-MbtPstPreview', 'Show-MbtPstExportPlan', 'Resolve-MbtPstDestination', 'Show-MbtLiveExportPlan',
         'Export-MbtEml', 'Import-MbtEml', 'Resolve-MbtEmlUnknown', 'Compare-MbtEml',
         'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
-        'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
+        'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
         'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
+        'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
+        'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
@@ -40,8 +42,8 @@
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCArp2UnFQ6YrpE8
-# fXHJZZqKZ2ifpvUdqh8Fy8u/yiFaeqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDJudO9T3soI/lb
+# NHifEKmRukAAk9pSZ82ws7kA6bqaZaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -118,23 +120,23 @@
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBr7R54g8Ue
-# yjWopm6lC0RxA5J0evyz0BMfu/Gq6C5w4TANBgkqhkiG9w0BAQEFAASCAgCx06t7
-# TXaUP/R41DMWH3tOOkI6azFxYMXaWjHuXQgmhNjVWOOj5nfXCQs45rXLriDocMdW
-# iKNCdsK4Q9N83pgLIsgj7tM7xJRvpjy3fsgkqN2T38Ygj+ma4DqJ0fSfhyjHO3x5
-# KSza94WYyxrW99ASVo/o6RGnMT/lcJ1kryyUVrdp0BZgpTW1OucemS13L63b6JRQ
-# SrLQDzIpNoHJhz0QWa4Ii79LDDCOdG6of2q9Vo+HiJkPoHtawsC7+HzSZPydsghF
-# iY9eLh/SVwPYLFJizLpcInKvkNbR/x2gV8YktJc6Dcyrt8nhpCLlhYK11+VHou2F
-# NDpMy7CKJeNU+/tUGtWiFVsFd3KPR80JQEfRInGYIJ3wzO7apP6ABzvhx0y68lsj
-# 7fO0SLJxFkVvfEe51/XfOMes5jRe08hvRY76IQWlGTOCoF0SinQGLy1fsFfJBqxI
-# jxhUcVCJIqjmdyaX/EU5Q7ZzhFIHv88pJrFLRapGkCzcDI7TRDYV4Gp3FVJVIR0y
-# CxQ3wWllIolSxfoU/p0H78R1uyarFDWaSeaetLunDt3WYB8lWrsuJoXSXOKQq2xH
-# r9hhp7fc3lFZ8YJHPGHq5W29VMBsdxXnj9Z+CUd6KOPZOWioceeUGYSG+TyZV/Ir
-# gU2sg+uMuZLIpuRLWFcWm1jtDiOebTlf8SQbLKGCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCKgZ5s7XNR
+# wLhEhErRdUEPjk5yFH4TVeTTDKCDYYfVATANBgkqhkiG9w0BAQEFAASCAgAZURad
+# U+sP0n7CRljdKaxA3pmGypul+A9NpdNtHuZYZO6L8XkfEVCPmCmwLAhXMkswpJY9
+# o8clioFkvcCQUyGJca2F5KLHcytysU4GBerHDd9GnSFT5Mrn+yFvR1mla3XuusnP
+# VRYO8NLCgnslb+eJxC1TFO8U3PwYJXqmmHuXnHyyLfGnzFM+E04lLgWmMS8k/qJE
+# QyduMNPO2W78NwxKNdSeIO8gNA10RaIKTgoTz/MR744X/bwnJ9pmO2beRiBrUO6V
+# RNn422Ill3GVmwSB1PwQtUIAyqXQT01YoUISqPIJq5fnLwpo2jcw8TByI7O5lj6U
+# ew8MKlQ0KKBTUQGy9BJEDhMqJ1p38FxKvgQvBfrWmt85RKmKMDzTAIaWOqcn8ga5
+# jxUX6ZbZIvjCBExrJroflwAMOOs6bxWySjsVt7oxD0GPkE5141OPkK0uhjrWVFvH
+# tNVq7xuM5R+M5xP6V9IdwkeQa/I+8/fk1AoGjz+bc9tE5kGzupPn2nh1SjMUzIWc
+# XhVgfth14t7I050tuk+pFMCpwFgb4oYswqm5Qnrer8AaW1qI6zUwmDdjJ7lEUp+/
+# dNlaQu9TQn+r2zApXcaGLU3LqW6f4piH4H+Q3JgsGx51v5ZzEkcQufaf+L0YHWo7
+# tjtsgmLG5zEp2ABaSgbu61+JCexnSiGka2Q+wKGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIEbhpfkj8J5Z7J6y62sh7iojd9n0kcv8d6TpKJ3TNSpZAgg9h9o8HXi7
-# 4BgPMjAyNjExMTAxNDA5MDRaMAMCAQECEDtiVh2IBjlvfxypCxBDX4igghGnMIIE
+# BAIBBQAEIEzH2IkmSZYMP1Npq58eYE7fiVlqIDB08f3ZFHT8mhIqAgh7fKnQkNOL
+# /BgPMjAyNjExMTUxNDM0MTRaMAMCAQECECnSdVdEbUWjUY4B9ypmspugghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -233,13 +235,13 @@
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDE0MDkwNFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIIYF
-# E8Yy33YsdmHnrvIqoI1vgswhA3S8ErAKiEeTXvVuMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQxNFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIJx1
+# AeSLUORkerde65dQkEV3E5HX0cPrLhI7mRAv1TeJMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEArClrNgdQUjEuNwBqBegOCrZDBukAXi3n46W1Y3IG0/QCIAId
-# wsQcoYm3t20viVYhyiYARXyViqQ3z37L2RetElx+
+# zj0EAwIERzBFAiB0UlkbMXCh2148WwQwg3PYSSsl8cS5z3C7iE6n+pB9egIhAK9h
+# 9RbMTdiyuXmrAfUAGuavz5kuQKcpXcm/FWUFkHwE
 # SIG # End signature block

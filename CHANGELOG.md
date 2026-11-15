@@ -2,6 +2,29 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
+## 1.2.0 — 2026-11-14
+
+### Added
+- **Export many mailboxes from a list**: `-Mode Export -MailboxCsv list.csv` exports the mailboxes of a CSV file, one ordinary job for each, one after the other or up to 4 at a time (`-ParallelMailboxes`). The file is checked first and every problem is printed together; sign-in is done once; the same command again (or `-ResumeBatch`) continues what is not complete. A mailbox that needs a sign-in counts as not complete, not failed. `batches\<name>\report.html` is the report of the batch. Export only.
+- **An HTML report for every job**, with a chronology: the result, the numbers, each step with its duration, the waits for Microsoft, the warnings and the errors in time order. One file, no network; `report.csv` stays. A job of 50,000 folders is reported in under a minute in a page of about 1 MB.
+- **One page for all your jobs**: `jobs\overview.html` lists every job with its result, items, data and duration, the ones that need a look first, filters and a search. It is rewritten at the end of every job, and the **All jobs** button of the console opens it. A job links to its report, else its CSV, else its status.
+- **Old job folders are tidied away** after 90 days (`Jobs.RetentionDays`, 0 keeps everything); a job that can still be continued, your stores, selections, PST and EML files are never touched.
+- **One command for a multi-location export**: the primary mailbox, the archive and the auxiliary archives ticked in the console are exported by one `-SelectionFile` command. New `-RetryWaitSeconds`.
+
+### Changed
+- **A simpler console, in five steps**: Setup, Task (What, From, To), Verify, Run, Next steps. Setup shows the lights of the computer, the sign-in (**Me** or **The application**) and the work folder.
+- **Import confirmation**: you tick a box that names the target mailbox, the folder and the number of items, instead of typing a word.
+- **The command line is shown** on the Verify and Next steps pages, with a Copy button.
+- **Sign-in in a Windows window** over the console, no browser tab; the code stays as the alternative. Your administrator adds one redirect address to the application (user guide, chapter 2).
+- **An export prepares faster and says what it does**: the folder tree of a large mailbox is read by several requests at once, and the console shows the progress while it waits. An export of a few folders reads only those folders.
+- **The plan check is quicker and more reliable**: a folder is counted from the folder down, a temporary Microsoft error is tried again, and a check that fails says so with a **Check again** button.
+- The configuration section an operator fills in is now **`Tenant`**; a file that still says `Lab` keeps working. **Keep this PC awake** moved to the Expert mode of the Verify pages. Tries per item are 3 in the console, as on the command line.
+
+### Fixed
+- The console no longer freezes at the end of a very large job.
+- Works with **PowerShell 7.6** (the console of 1.1.0 closed at the first click).
+- Names, addresses, paths and job names are **not case sensitive**: resuming or importing again no longer creates duplicates because of a capital letter. Every number is written the same way (en-US), whatever the language of Windows.
+
 ## 1.1.0 — 2026-11-10
 
 ### Changed

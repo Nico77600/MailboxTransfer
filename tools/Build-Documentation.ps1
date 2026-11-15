@@ -181,6 +181,7 @@ $html = [regex]::Replace($html, '<p><img src="([^"]+)" alt="([^"]*)"\s*/?></p>',
         "<figure><img loading=""lazy"" src=""$src"" alt=""$(& $enc $caption)"" title=""Click to enlarge""><figcaption>$(& $enc $caption)</figcaption></figure>"
     })
 $html = $html -replace '<a href="(https?://[^"]+)"', '<a href="$1" target="_blank" rel="noopener"'
+$html = [regex]::Replace($html, '<a href="(MailboxTransfer-(?:User)?Guide)\.md(?:#([^"]*))?"', { param($m) $f = $m.Groups[2].Value -replace '^\d+-', ''; '<a href="' + $m.Groups[1].Value + '.html' + $(if ($f) { '#' + $f }) + '"' })   # the HTML guides are linked to each other; their section ids have no chapter number
 $html = $html -replace '<p class="markdown-alert-title"><svg viewBox="0 0 16 16"', '<p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor"'
 
 # ---- Parts and chapters ------------------------------------------------------------------------------------

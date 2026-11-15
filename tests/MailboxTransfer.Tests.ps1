@@ -31,7 +31,7 @@ BeforeAll {
         $o.DelayScale = 0
         $o.UseJitter = $false
         $o.MaxAttempts = $MaxAttempts
-        return [MailboxTransfer.GraphClient]::new([Func[string]] { 'test-token' }, $o, $Handler)
+        return [MailboxTransfer.GraphClient]::new([MailboxTransfer.Tests.FixedToken]::Provider, $o, $Handler)
     }
 
     function Get-Sha256Hex([byte[]]$Bytes) {
@@ -217,6 +217,29 @@ Describe 'Graph client: retry' {
         ($client.GetJson("$($script:Base)/x")).Dispose()
         ($client.Delays | ForEach-Object TotalSeconds) | Should -Be @(2, 4, 8)
     }
+    It 'retries a 502 of an idempotent request and counts it, as a 504' {
+        $h = [MailboxTransfer.Tests.FakeHandler]::new()
+        $h.Enqueue(502, '{"error":{"code":"UnknownError","message":"bad gateway"}}'); $h.Enqueue(504); $h.Enqueue(200, '{"ok":true}')
+        $client = New-TestClient $h
+        ($client.GetJson("$($script:Base)/x")).Dispose()
+        $h.Requests.Count | Should -Be 3
+        $client.BadGateway502 | Should -Be 1
+        $client.Timeout504 | Should -Be 1
+        ($client.Delays | ForEach-Object TotalSeconds) | Should -Be @(2, 4)
+    }
+    It 'gives up on a 502 that lasts and reports it; a 500 is not retried' {
+        $h = [MailboxTransfer.Tests.FakeHandler]::new()
+        1..3 | ForEach-Object { $h.Enqueue(502, '{"error":{"code":"UnknownError","message":"bad gateway"}}') }
+        $client = New-TestClient $h -MaxAttempts 3
+        try { $client.GetJson("$($script:Base)/x"); throw 'not reached' } catch { $ge = Get-MbtGraphException $_ }
+        $ge.StatusCode | Should -Be 502
+        $h.Requests.Count | Should -Be 3
+        $h2 = [MailboxTransfer.Tests.FakeHandler]::new()
+        $h2.Enqueue(500, '{}')
+        try { (New-TestClient $h2).GetJson("$($script:Base)/x"); throw 'not reached' } catch { $ge = Get-MbtGraphException $_ }
+        $ge.StatusCode | Should -Be 500
+        $h2.Requests.Count | Should -Be 1
+    }
     It 'gives up after MaxAttempts and reports the Graph error' {
         $h = [MailboxTransfer.Tests.FakeHandler]::new()
         1..3 | ForEach-Object { $h.Enqueue(503, '{"error":{"code":"ServiceUnavailable","message":"busy"}}') }
@@ -374,8 +397,8 @@ Describe 'Mailbox API: folders' {
         $tree = @($api.GetFolderTree($script:Mbx))
         ($tree | ForEach-Object Path) | Should -Be @('Top', 'Top/Alpha', 'Top/Alpha/Gamma', 'Top/Beta')
         $h.Requests.Count | Should -Be 2
-        $h.Requests[0].Url | Should -Be "$mb/folders"
-        $h.Requests[1].Url | Should -Be "$mb/folders/A/childFolders"
+        $h.Requests[0].Url | Should -Be "$mb/folders?`$top=1000"
+        $h.Requests[1].Url | Should -Be "$mb/folders/A/childFolders?`$top=1000"
         ($tree | Where-Object Id -EQ 'C').Depth | Should -Be 2
     }
     It 'does not ask again when the listing already holds every folder' {
@@ -386,6 +409,118 @@ Describe 'Mailbox API: folders' {
         $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $h))
         @($api.GetFolderTree($script:Mbx)).Count | Should -Be 2
         $h.Requests.Count | Should -Be 1
+    }
+    It 'asks for 1,000 folders a page, and again without a page size when the service refuses it' {
+        $h = [MailboxTransfer.Tests.RouteHandler]::new()
+        $h.Add('GET', '$top=1000', 400, '{"error":{"code":"ErrorInvalidPageSize","message":"The page size is not allowed."}}')
+        $h.Add('GET', '/folders', 200, '{"value":[{"id":"R","displayName":"Top","childFolderCount":0,"totalItemCount":0}]}')
+        $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $h))
+        @($api.GetFolderTree($script:Mbx)).Count | Should -Be 1
+        $h.Requests.Count | Should -Be 2
+        $h.Requests[0].Url | Should -BeLike '*/folders?$top=1000'
+        $h.Requests[1].Url | Should -Not -BeLike '*$top*'
+        $api.FolderPageSize = 0
+        $h2 = [MailboxTransfer.Tests.RouteHandler]::new()
+        $h2.Add('GET', '/folders', 200, '{"value":[{"id":"R","displayName":"Top","childFolderCount":0,"totalItemCount":0}]}')
+        $api2 = [MailboxTransfer.MailboxApi]::new((New-TestClient $h2)); $api2.FolderPageSize = 0
+        $null = $api2.GetFolderTree($script:Mbx)
+        $h2.Requests[0].Url | Should -Not -BeLike '*$top*' -Because 'a page size of 0 leaves the page size to the service'
+    }
+    It 'reads a large tree with several requests at once, to the same list as one request at a time' {
+        $read = {
+            param([int]$Concurrency)
+            $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+            $svc.RootOnlyFolders = $true; $svc.LatencyMs = 15
+            $null = $svc.AddMailbox($script:Mbx)
+            foreach ($a in 1..6) {
+                $null = $svc.AddFolder($script:Mbx, "T$a", "Top $a")
+                foreach ($b in 1..8) {
+                    $null = $svc.AddFolder($script:Mbx, "T$a-$b", "Mid $b", "T$a")
+                    foreach ($c in 1..3) { $null = $svc.AddFolder($script:Mbx, "T$a-$b-$c", "Leaf $c", "T$a-$b") }
+                }
+            }
+            $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $svc))
+            $tree = @($api.GetFolderTree($script:Mbx, [Threading.CancellationToken]::None, $null, $Concurrency))
+            [pscustomobject]@{ Tree = $tree; Max = $svc.MaxConcurrent; Requests = $svc.Log.Count }
+        }
+        $one = & $read 1
+        $four = & $read 4
+        $one.Tree.Count | Should -Be (6 + 48 + 144)
+        ($four.Tree | ForEach-Object { "$($_.Id)|$($_.Path)|$($_.Depth)|$($_.ParentFolderId)|$($_.ChildFolderCount)" }) | Should -Be ($one.Tree | ForEach-Object { "$($_.Id)|$($_.Path)|$($_.Depth)|$($_.ParentFolderId)|$($_.ChildFolderCount)" })
+        $four.Requests | Should -Be $one.Requests -Because 'the same requests are made, only at once'
+        $one.Max | Should -Be 1
+        $four.Max | Should -BeGreaterThan 1
+        $four.Max | Should -BeLessOrEqual 4 -Because 'the service allows 4 concurrent requests per mailbox'
+    }
+    It 'never asks for more than 4 requests at once, whatever the concurrency asked for' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $svc.RootOnlyFolders = $true; $svc.LatencyMs = 15
+        $null = $svc.AddMailbox($script:Mbx)
+        foreach ($a in 1..20) { $null = $svc.AddFolder($script:Mbx, "T$a", "Top $a"); $null = $svc.AddFolder($script:Mbx, "T$a-1", "Child", "T$a") }
+        $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $svc))
+        $null = $api.GetFolderTree($script:Mbx, [Threading.CancellationToken]::None, $null, 50)
+        $svc.MaxConcurrent | Should -BeLessOrEqual 4
+    }
+    It 'throws the error of the service as it is when one of the requests at once fails' {
+        $h = [MailboxTransfer.Tests.RouteHandler]::new()
+        $h.Add('GET', '/folders/B/childFolders', 500, '{"error":{"code":"ErrorInternalServerError","message":"broken"}}')
+        $h.Add('GET', '/folders/A/childFolders', 200, '{"value":[{"id":"A1","displayName":"A1","parentFolderId":"A","childFolderCount":0}]}')
+        $h.Add('GET', '/folders/C/childFolders', 200, '{"value":[{"id":"C1","displayName":"C1","parentFolderId":"C","childFolderCount":0}]}')
+        $h.Add('GET', '/folders?', 200, '{"value":[{"id":"A","displayName":"A","childFolderCount":1},{"id":"B","displayName":"B","childFolderCount":1},{"id":"C","displayName":"C","childFolderCount":1}]}')
+        $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $h))
+        try { $null = $api.GetFolderTree($script:Mbx); throw 'not reached' } catch { $ge = Get-MbtGraphException $_ }
+        $ge | Should -BeOfType ([MailboxTransfer.GraphException])
+        $ge.StatusCode | Should -Be 500
+    }
+    It 'stops reading the tree when it is cancelled' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $svc.RootOnlyFolders = $true; $svc.LatencyMs = 15
+        $null = $svc.AddMailbox($script:Mbx)
+        foreach ($a in 1..30) { $null = $svc.AddFolder($script:Mbx, "T$a", "Top $a"); $null = $svc.AddFolder($script:Mbx, "T$a-1", "Child", "T$a") }
+        $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $svc))
+        $cts = [Threading.CancellationTokenSource]::new()
+        $cts.CancelAfter(60)
+        $caught = $null
+        try { $null = $api.GetFolderTree($script:Mbx, $cts.Token, $null, 4) } catch { $caught = $_.Exception }
+        $caught | Should -Not -BeNullOrEmpty
+        ($caught -is [OperationCanceledException] -or $caught.InnerException -is [OperationCanceledException]) | Should -BeTrue
+        $svc.Log.Count | Should -BeLessThan 31 -Because 'the requests that were not started are not asked'
+    }
+    It 'reads the tree of a mailbox once for a read-only job, and hands out a copy each time' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $svc.RootOnlyFolders = $true
+        $null = $svc.AddMailbox($script:Mbx)
+        $null = $svc.AddFolder($script:Mbx, 'T', 'Top'); $null = $svc.AddFolder($script:Mbx, 'T1', 'Child', 'T')
+        $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $svc))
+        $api.CacheFolderTrees = $true
+        $first = @($api.GetFolderTree($script:Mbx))
+        $requests = $svc.Log.Count
+        $second = @($api.GetFolderTree($script:Mbx.ToLowerInvariant()))
+        $svc.Log.Count | Should -Be $requests -Because 'the tree is not asked for again'
+        $api.TreesRead | Should -Be 1
+        ($second | ForEach-Object Path) | Should -Be ($first | ForEach-Object Path)
+        $second[0].DisplayName = 'changed by the caller'
+        @($api.GetFolderTree($script:Mbx))[0].DisplayName | Should -Be 'Top' -Because 'each caller gets its own copy'
+        $off = [MailboxTransfer.MailboxApi]::new((New-TestClient $svc))
+        $null = $off.GetFolderTree($script:Mbx); $null = $off.GetFolderTree($script:Mbx)
+        $off.TreesRead | Should -Be 2 -Because 'sharing is a choice of the job: an import that creates folders reads the tree each time'
+    }
+    It 'reports the folders read so far on the calling thread, to the total' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $svc.RootOnlyFolders = $true; $svc.LatencyMs = 450
+        $null = $svc.AddMailbox($script:Mbx)
+        foreach ($a in 1..12) { $null = $svc.AddFolder($script:Mbx, "T$a", "Top $a"); foreach ($b in 1..5) { $null = $svc.AddFolder($script:Mbx, "T$a-$b", "Child $b", "T$a") } }
+        $api = [MailboxTransfer.MailboxApi]::new((New-TestClient $svc))
+        $seen = [System.Collections.Generic.List[int]]::new()
+        $thread = [Threading.Thread]::CurrentThread.ManagedThreadId
+        $threads = [System.Collections.Generic.List[int]]::new()
+        $cb = [Action[int]] { param($n) $seen.Add($n); $threads.Add([Threading.Thread]::CurrentThread.ManagedThreadId) }
+        $tree = @($api.GetFolderTree($script:Mbx, [Threading.CancellationToken]::None, $cb, 4))
+        $seen.Count | Should -BeGreaterThan 2
+        $seen[$seen.Count - 1] | Should -Be $tree.Count
+        $seen[0] | Should -Be 12 -Because 'the first level is read first'
+        for ($i = 1; $i -lt $seen.Count; $i++) { $seen[$i] | Should -BeGreaterOrEqual $seen[$i - 1] }
+        ($threads | Select-Object -Unique) | Should -Be $thread
     }
     It 'resolves a folder by id, path, or end of path, and refuses ambiguity' {
         $mk = { param($id, $name, $path) [pscustomobject]@{ Id = $id; DisplayName = $name; Path = $path } }
@@ -616,6 +751,20 @@ Describe 'Mailbox ids and folder creation' {
         { ConvertTo-MbtMailboxId -Value 'adele' -TenantId $script:Tenant } | Should -Throw '*Get-MailboxLocation*'
         { ConvertTo-MbtMailboxId -Value 'MBX:nope@nope' -TenantId $script:Tenant } | Should -Throw '*not a mailbox id*'
     }
+    It 'gives one canonical lower-case id whatever the case of the prefix, the guids and the tenant, for the full and the bare form' {
+        $mailbox = '11111111-aaaa-bbbb-cccc-dddddddddddd'
+        $tenant = $script:Tenant
+        $canonical = "MBX:$mailbox@$tenant"
+        foreach ($value in "MBX:$($mailbox.ToUpperInvariant())@$($tenant.ToUpperInvariant())", "mbx:$mailbox@$tenant", "Mbx:$($mailbox.ToUpperInvariant())@$tenant", "  $canonical  ") {
+            ConvertTo-MbtMailboxId -Value $value -TenantId $tenant | Should -BeExactly $canonical -Because $value
+        }
+        foreach ($tenantId in $tenant, $tenant.ToUpperInvariant()) {
+            ConvertTo-MbtMailboxId -Value $mailbox.ToUpperInvariant() -TenantId $tenantId | Should -BeExactly $canonical
+            ConvertTo-MbtMailboxId -Value $mailbox -TenantId $tenantId | Should -BeExactly $canonical
+        }
+        ConvertTo-MbtMailboxId -Value $mailbox.ToUpperInvariant() -TenantId 'Contoso.OnMicrosoft.com' | Should -BeExactly "MBX:$mailbox@contoso.onmicrosoft.com"
+        { ConvertTo-MbtMailboxId -Value 'MBX:NOPE@NOPE' -TenantId $tenant } | Should -Throw '*not a mailbox id*'
+    }
     It 'reads the primary mailbox id from GET /users/{upn}/settings/exchange' {
         $h = [MailboxTransfer.Tests.FakeHandler]::new()
         $h.Enqueue(200, ('{"primaryMailboxId":"' + $script:Mbx + '"}'))
@@ -745,6 +894,7 @@ Describe 'Mailbox ids and folder creation' {
     It 'the shipped configuration holds placeholders only; the local file is read after it and the lab defaults come from there' {
         $shipped = Import-PowerShellDataFile -LiteralPath (Join-Path $script:Root 'config\MailboxTransfer.config.psd1')
         foreach ($k in @($shipped.Lab.Keys)) { $shipped.Lab[$k] | Should -BeNullOrEmpty -Because "Lab.$k of the shipped file is a placeholder" }
+        foreach ($k in @($shipped.Tenant.Keys)) { $shipped.Tenant[$k] | Should -BeNullOrEmpty -Because "Tenant.$k of the shipped file is a placeholder" }
         $lab = (Import-MbtConfiguration).Lab                         # the synthetic local file of tests\support\Import-StoreEngine.ps1
         $lab.UserPrincipalName | Should -Be $script:Upn
         $lab.UserObjectId | Should -Be '1a2b3c05-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
@@ -987,6 +1137,9 @@ Describe 'Invoke-Phase0.ps1 (against a fake service, store included)' {
             $a = "$($script:ArchiveId)"
             $item = { param($id, $size) '{"id":"' + $id + '","type":"IPM.Note","size":' + $size + ',"changeKey":"ck' + $id + '","createdDateTime":"2026-10-28T09:00:00Z","lastModifiedDateTime":"2026-10-28T09:00:00Z"}' }
             $r.Add('GET', '/users/', 403, '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges"}}')
+            # the listing asks for 1,000 folders a page: its route comes before the probe of one folder, whose URL it contains
+            $r.Add('GET', "$p/folders?`$top=1000", 200, '{"value":[{"id":"R","displayName":"Top","parentFolderId":"ROOT","childFolderCount":1,"totalItemCount":0,"type":"IPF.Note"},{"id":"F1","displayName":"MBT-Fill-20261028","parentFolderId":"R","childFolderCount":0,"totalItemCount":3,"type":"IPF.Note"}]}')
+            $r.Add('GET', "$a/folders?`$top=1000", 200, '{"value":[{"id":"AR","displayName":"Top","parentFolderId":"AROOT","childFolderCount":0,"totalItemCount":0,"type":"IPF.Note"}]}')
             foreach ($id in $p, $a) { $r.Add('GET', "$id/folders?`$top=1", 200, '{"value":[]}') }
             $r.Add('GET', "$p/folders/F1/items", 200, '{"value":[' + ((& $item 'I1' 500) + ',' + (& $item 'I2' $script:Fx.Length) + ',' + (& $item 'I3' 800)) + ']}')
             $r.Add('GET', "$p/folders", 200, '{"value":[{"id":"R","displayName":"Top","parentFolderId":"ROOT","childFolderCount":1,"totalItemCount":0,"type":"IPF.Note"},{"id":"F1","displayName":"MBT-Fill-20261028","parentFolderId":"R","childFolderCount":0,"totalItemCount":3,"type":"IPF.Note"}]}')

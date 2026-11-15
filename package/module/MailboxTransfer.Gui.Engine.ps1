@@ -61,16 +61,25 @@ function New-MbtGuiRealEngine {
     $worker = New-MbtGuiWorker -ModulePath $modulePath
     $e = [ordered]@{ Name = 'Real'; Worker = $worker; Capability = $cap; PackageRoot = $PackageRoot; EntryScript = $EntryScript; State = @{} }
 
-    $e.Readiness = {
+    $e.Readiness = { param($Work)
         $lights = [Collections.Generic.List[object]]::new()
         $ps = $PSVersionTable.PSVersion
         $lights.Add(@{ Name = 'PowerShell 7.5 or later'; Detail = $ps.ToString(); Ok = ($ps -ge [version]'7.5') })
         $msal = $null; try { $msal = Find-MbtMsal } catch { $msal = $null }
-        $lights.Add(@{ Name = 'Sign-in component (MSAL)'; Detail = $(if ($msal) { 'found' } else { 'not found: see the guide, "Start here"' }); Ok = [bool]$msal })
-        $work = $script:Gui.S.WorkFolder
-        $freeText = 'unknown'; $ok = $true
-        try { $root = [IO.Path]::GetPathRoot($work); $d = [IO.DriveInfo]::new($root); $freeText = "$(Format-MbtGuiBytes $d.AvailableFreeSpace) free"; $ok = $d.AvailableFreeSpace -gt 5GB } catch { $ok = $true }
-        $lights.Add(@{ Name = 'Work folder'; Detail = "$work - $freeText"; Ok = $ok })
+        $window = $null; if ($msal) { try { $window = Get-MbtWindowsSignIn } catch { $window = $null } }
+        $msalDetail = if (-not $msal) { 'not found: see the guide, "Start here"' }
+        elseif ($window -and $window.Available) { 'found; the Windows sign-in window is available' }
+        elseif ($window) { "found; the Windows sign-in window is not available ($($window.Reason)): a code is used instead" }
+        else { 'found' }
+        $lights.Add(@{ Name = 'Sign-in component (MSAL)'; Detail = $msalDetail; Ok = [bool]$msal })
+        $folder = if ($Work) { $Work } else { $WorkFolder }
+        $wf = Get-MbtWorkFolderStatus -Path $folder
+        $bytes = if (Get-Command Format-MbtGuiBytes -ErrorAction SilentlyContinue) { 'Format-MbtGuiBytes' } else { 'Format-MbtBytes' }
+        $wfDetail = if ($wf.Problem) { "$($wf.Path) $($wf.Problem)" } elseif ($null -ne $wf.FreeBytes) { "$($wf.Path) - $(& $bytes $wf.FreeBytes) free" } else { "$($wf.Path) - free space unknown" }
+        $lights.Add(@{ Name = 'Work folder'; Detail = $wfDetail; Ok = $wf.Ok })
+        $configProblem = $null
+        try { $null = Import-MbtConfiguration } catch { $configProblem = $_.Exception.Message }
+        $lights.Add(@{ Name = 'Configuration file'; Detail = $(if ($configProblem) { "cannot be read: $configProblem" } else { 'read' }); Ok = (-not $configProblem) })
         $net = [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()
         $lights.Add(@{ Name = 'Network connection'; Detail = $(if ($net) { 'a connection is present' } else { 'no connection found' }); Ok = $net })
         $blocked = $false; try { $blocked = [bool](Get-Item -LiteralPath $PackageRoot -Stream Zone.Identifier -ErrorAction SilentlyContinue) -or [bool](Get-Item -LiteralPath $EntryScript -Stream Zone.Identifier -ErrorAction SilentlyContinue) } catch { }
@@ -80,32 +89,94 @@ function New-MbtGuiRealEngine {
 
     $e.Jobs = {
         param($Work)
-        $out = foreach ($j in @(Get-MbtJob -WorkFolder $Work -Limit 8)) {
+        # a batch is one line (its numbers and its report; a batch is run from the command line), and the jobs of a batch that is complete are not listed one by one; the jobs of a batch that is not
+        # complete are listed with the name of the batch, three at most
+        $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 3)
+        $lines = [Collections.Generic.List[object]]::new()
+        foreach ($b in $batches) {
+            $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
+            if ($b.Partial + $b.Running) { $sub += ', {0} not complete' -f (Format-MbtNumber ($b.Partial + $b.Running)) }
+            if ($b.Failed) { $sub += ', {0} failed' -f (Format-MbtNumber $b.Failed) }
+            if ($b.Pending) { $sub += ', {0} not started' -f (Format-MbtNumber $b.Pending) }
+            if ($b.State -ne 'complete') { $sub += '. Run it again from the command line to continue.' }
+            $lines.Add([pscustomobject]@{ Task = 'batch'; Title = "Batch $($b.Id)"; Sub = $sub; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id })
+        }
+        $finished = @($(foreach ($b in @(Get-MbtBatchList -WorkFolder $Work -Limit 1000 | Where-Object { $_.State -eq 'complete' })) { $b.Jobs }))
+        $ofBatch = 0
+        foreach ($j in @(Get-MbtJob -WorkFolder $Work -Limit 50 -ExcludeFolder $finished)) {
+            if ($j.Batch -and $ofBatch -ge 3) { continue }
+            if ($j.Batch) { $ofBatch++ }
+            $lines.Add($j)
+        }
+        $out = foreach ($j in @($lines | Select-Object -First 8)) {
+            if ($j.PSObject.Properties['Report']) { $j; continue }
             $state = switch ($j.EffectiveState) { 'complete' { 'ok' } 'error' { 'warn' } 'needs-decision' { 'warn' } default { 'run' } }
             $counts = $j.Counts
             $sub = switch ($j.EffectiveState) {
                 'complete' { 'finished ' + $j.Updated.ToLocalTime().ToString('yyyy-MM-dd') }
                 'needs-decision' { 'Almost done: an item needs your decision.' }
                 'error' { 'Stopped by an error. Nothing is lost.' }
-                default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiCount $counts.done) items done" } else { '' }) }
+                default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiQuantity $counts.done 'item') done" } else { '' }) }
             }
             if ($j.Alive) { $sub = 'running elsewhere' }
+            if ($j.Batch) { $sub = "batch $($j.Batch) - $sub" }
             [pscustomobject]@{ Task = $j.Task; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; State = $state; Button = $(if ($j.EffectiveState -eq 'complete' -or $j.Alive) { 'Open' } else { 'Continue' }); Folder = $j.Folder }
         }
         @($out)
     }.GetNewClosure()
 
+    # "All jobs": the overview page of the work folder, written by the worker; OnDone gets its path
+    $e.JobOverview = { param($Work, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($work) Write-MbtJobOverview -WorkFolder $work }
+    }.GetNewClosure()
+
+    # the report of a job (report.html in its folder), written by the worker: a job of 50,000 folders takes about a minute; OnDone gets its path
+    $e.JobReport = { param($Folder, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Folder) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script { param($folder) Write-MbtJobHtmlReport -Folder $folder }
+    }.GetNewClosure()
+
+    # the report of a batch (<work folder>\batches\<batch>\report.html), written by the worker when it is not there yet; OnDone gets its path
+    $e.BatchReport = { param($Work, $Id, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work, $Id) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($work, $id)
+            $folder = Get-MbtBatchFolder -WorkFolder $work -Name $id
+            $batch = Read-MbtBatch -Folder $folder
+            if ($null -eq $batch) { throw "The batch $id cannot be read." }
+            Write-MbtBatchReport -WorkFolder $work -Batch $batch -Folder $folder
+        }
+    }.GetNewClosure()
+
+    # when the console starts: the folders of the jobs that are finished and older than Jobs.RetentionDays are removed, in the background; a job that can still be continued never is
+    $e.Retention = { param($Work)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work) -OnError { param($message) Write-MbtGuiFault 'job retention' $message } -Script {
+            param($work)
+            try { $null = Start-MbtLog -Directory (Join-Path $work 'logs') } catch { Write-Verbose "no log: $_" }
+            $null = Invoke-MbtJobRetention -WorkFolder $work
+        }
+    }.GetNewClosure()
+
     $e.FreeSpace = { param($Path) try { $r = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path)); return ([IO.DriveInfo]::new($r)).AvailableFreeSpace } catch { return $null } }
 
-    # -Silent: only the cached token (no browser, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)
+    # -Silent: only the cached token (no sign-in window, no device code): fails at once when there is none (the live check of tools\Test-ConsoleLive.ps1)
     # the tenant and the application of the configuration (empty: the Sign-in card asks for them)
-    $e.SignInSettings = { $c = Import-MbtConfiguration; [pscustomobject]@{ TenantId = [string]$c.Lab.TenantId; ClientId = [string]$c.Lab.ClientId } }
+    $e.SignInSettings = { $c = Import-MbtConfiguration; [pscustomobject]@{ TenantId = [string]$c.Tenant.TenantId; ClientId = [string]$c.Tenant.ClientId; AppTenantId = [string]$c.Auth.AppTenantId; AppClientId = [string]$c.Auth.AppClientId; CertificateThumbprint = [string]$c.Auth.CertificateThumbprint } }
+    # the file the values come from: the private local file when there is one (it is read after the shipped file), else the shipped file
+    $e.ConfigPath = {
+        $local = if ($null -ne $env:MAILBOXTRANSFER_LOCAL_CONFIG) { $env:MAILBOXTRANSFER_LOCAL_CONFIG } else { Join-Path $PackageRoot 'config\MailboxTransfer.config.local.psd1' }
+        if ($local -and (Test-Path -LiteralPath $local)) { return $local }
+        return (Join-Path $PackageRoot 'config\MailboxTransfer.config.psd1')
+    }.GetNewClosure()
 
     # -TenantId / -ClientId: typed in the Sign-in card when the configuration has none
     # -App: @{ Tenant; ClientId; Thumbprint } signs in as the application with its certificate (no window, no user: $Mailbox is then the mailbox it works on)
-    $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App)
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App) -OnDone $OnDone -OnError $OnError -Script {
-            param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app)
+    # -ParentWindow: the handle of the console window, which the Windows sign-in window opens over
+    $e.WindowSignIn = { Get-MbtWindowsSignIn }
+    # -LogFolder: where the log of the sign-in is written (each stage of it); -Cancel: a CancellationTokenSource that ends the wait for the window or the code
+    $e.SignIn = { param($Mailbox, $UseCode, $CodeFile, $OnDone, $OnError, $Silent, $TenantId, $ClientId, $App, $ParentWindow, $LogFolder, $Cancel)
+        $token = if ($Cancel) { $Cancel.Token } else { [Threading.CancellationToken]::None }
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, [bool]$UseCode, $CodeFile, [bool]$Silent, [string]$TenantId, [string]$ClientId, $App, [long]$ParentWindow, [string]$LogFolder, $token) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($upn, $useCode, $codeFile, $silent, $tenantId, $clientId, $app, $parent, $logFolder, $cancelToken)
+            if ($logFolder) { try { $null = Start-MbtLog -Directory $logFolder } catch { Write-Verbose "no log: $_" } }
             $cfg = Import-MbtConfiguration
             if ($app) {
                 $session = Connect-MbtGraph -TenantId $app.Tenant -ClientId $app.ClientId -UserPrincipalName $upn -CertificateThumbprint $app.Thumbprint -Configuration $cfg
@@ -116,10 +187,16 @@ function New-MbtGuiRealEngine {
                 $missing = if ($viaRbac) { @() } else { @(Get-MbtMissingAppPermission -Token $t -Mode Import) + @(if (-not ('Mail.Read' -in $roles -or 'Mail.ReadWrite' -in $roles)) { 'Mail.Read' }) }
                 return [pscustomobject]@{ Account = $upn; TenantId = $t.TenantId; Scopes = @($t.Scopes); Missing = @($missing | Select-Object -Unique); CanReadMail = ($viaRbac -or 'Mail.Read' -in $roles -or 'Mail.ReadWrite' -in $roles); Access = $(if ($viaRbac) { 'Application (certificate, permissions from Exchange RBAC)' } else { 'Application (certificate, no user)' }) }
             }
-            if (-not $tenantId) { $tenantId = [string]$cfg.Lab.TenantId }
-            if (-not $clientId) { $clientId = [string]$cfg.Lab.ClientId }
+            if (-not $tenantId) { $tenantId = [string]$cfg.Tenant.TenantId }
+            if (-not $clientId) { $clientId = [string]$cfg.Tenant.ClientId }
             Assert-MbtSignInSettings -TenantId $tenantId -ClientId $clientId
-            $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -NoPrompt:$silent -Configuration $cfg
+            Write-MbtLog -Level INFO -Message ('console: sign-in asked for {0}, over the console window 0x{1:X}' -f $upn, $parent)
+            try {
+                $session = Connect-MbtGraph -TenantId $tenantId -ClientId $clientId -UserPrincipalName $upn -DeviceCode:$useCode -DeviceCodeFile $codeFile -ParentWindow $parent -CancellationToken $cancelToken -NoPrompt:$silent -Configuration $cfg
+            } catch {
+                Write-MbtLog -Level FAIL -Message ('sign-in failed: {0}: {1}' -f $_.Exception.GetType().Name, $_.Exception.Message)
+                throw
+            }
             $t = $session.Token
             $scopes = @($t.Scopes)
             $canMail = ('Mail.Read' -in $scopes) -or ('Mail.ReadWrite' -in $scopes)
@@ -247,6 +324,26 @@ function New-MbtGuiRealEngine {
         }
     }.GetNewClosure()
 
+    # -Groups: one @{ Root; Entries } per location ticked; they are written as one selection file (one selection per mailbox)
+    $e.SaveSelections = { param($Groups, $Path, $OnDone, $OnError)
+        $plain = @($Groups | ForEach-Object { @{ Location = $_.Root.Tag.Location; Entries = @($_.Entries | ForEach-Object { @{ Folder = $_.Node.Tag; Kind = $_.Kind; Items = @($_.Node.PickRows.Values) } }) } })
+        Start-MbtGuiWork -Worker $worker -Arguments @($plain, $Path) -OnDone $OnDone -OnError $OnError -Script {
+            param($groups, $path)
+            $selections = foreach ($group in $groups) {
+                $sel = New-MbtBrowseSelection -Location $group.Location
+                foreach ($en in $group.Entries) {
+                    switch ($en.Kind) {
+                        'tree' { $null = Add-MbtBrowseSelection -Selection $sel -Folder $en.Folder -IncludeSubfolders }
+                        'own' { $null = Add-MbtBrowseSelection -Selection $sel -Folder $en.Folder }
+                        default { $null = Add-MbtBrowseSelection -Selection $sel -Folder $en.Folder -Item @($en.Items | ForEach-Object { $_ }) }
+                    }
+                }
+                $sel
+            }
+            Save-MbtBrowseSelectionSet -Selection @($selections) -Path $path
+        }
+    }.GetNewClosure()
+
     $e.Plan = { param($Request, $OnDone, $OnError) & $OnDone ([pscustomobject]@{ Ok = $true; Message = '' }) }
 
     # ---- PST and store, read only -----------------------------------------------------------------------------------------------------------
@@ -275,8 +372,9 @@ function Open-MbtGuiPstSource {
     param([string]$Path, [scriptblock]$OnDone, [scriptblock]$OnError)
     $g = $script:Gui
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { & $OnError 'The file was not found.'; return }
-    $parts = Find-MbtGuiPstParts $Path
-    $bytes = ($parts | Measure-Object -Property Length -Sum).Sum
+    $parts = @(Find-MbtGuiPstParts $Path)
+    $bytes = 0L
+    foreach ($part in $parts) { $bytes += $part.Length }
     $worker = $g.Engine.Worker
     Start-MbtGuiWork -Worker $worker -Arguments @($Path) -OnError $OnError -Script {
         param($path)
@@ -298,13 +396,13 @@ function Open-MbtGuiPstSource {
         $r = @($res)[0]
         $root = [MailboxTransferGui.FolderNode]::new('pst-root', [IO.Path]::GetFileName($Path), 0, -1)
         $root.IsRoot = $true; $root.Kind = 'pst'; $root.Glyph = Get-MbtGlyph pst
-        $root.Sub = "$($parts.Count) part$(if ($parts.Count -ne 1) { 's' }) - $(Format-MbtGuiBytes $bytes) - read only"
+        $root.Sub = "$(Format-MbtGuiQuantity $parts.Count 'part') - $(Format-MbtGuiBytes $bytes) - read only"
         $root.Tag = @{ Path = $Path; Kind = 'pst' }
         $mk = $null
         $mk = { param($d) $n = [MailboxTransferGui.FolderNode]::new([string]$d.Id, [string]$d.Name, [long]$d.Count, -1); $n.Tag = @{ Nid = [uint32]$d.Id; PstPath = $Path; FolderPath = [string]$d.Path }; $kids = @($d.Kids | ForEach-Object { & $mk $_ }); if ($kids.Count) { $n.SetChildren([MailboxTransferGui.FolderNode[]]$kids) }; $n }
         $kids = @($r.Tree.Kids | ForEach-Object { & $mk $_ })
         if ($kids.Count) { $root.SetChildren([MailboxTransferGui.FolderNode[]]$kids) }
-        $verdict = '**{0} part{1} found** - {2} - the check of the file runs on the next page when you repair it. Reading it here only reads.' -f $parts.Count, $(if ($parts.Count -ne 1) { 's' } else { '' }), (Format-MbtGuiBytes $bytes)
+        $verdict = '**{0} found** - {1} - the check of the file runs on the next page when you repair it. Reading it here only reads.' -f (Format-MbtGuiQuantity $parts.Count 'part'), (Format-MbtGuiBytes $bytes)
         & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = $verdict; Items = $r.Items; Bytes = $bytes; Folders = $r.Folders; Parts = $parts.Count; Roots = @($root) })
     }.GetNewClosure()
 }
@@ -331,18 +429,18 @@ function Open-MbtGuiStoreSource {
             $root = [MailboxTransferGui.FolderNode]::new("store-$($m.Id)", $(if ($m.Kind -eq 'Archive') { 'Archive' } elseif ($m.Kind -eq 'Primary') { 'Primary mailbox' } else { 'Auxiliary archive' }), 0, -1)
             $root.IsRoot = $true; $root.Kind = 'store'; $root.Glyph = Get-MbtGlyph archive; $root.Sub = 'export store - read only'
             $root.Tag = @{ Path = $Path; Kind = 'store' }
-            $byParent = @{}
-            foreach ($f in $m.Folders) { $k = [string]$f.Parent; if (-not $byParent.ContainsKey($k)) { $byParent[$k] = [Collections.Generic.List[object]]::new() }; $byParent[$k].Add($f) }
+            $byParent = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+            $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($f in $m.Folders) { $null = $ids.Add([string]$f.Id); $k = [string]$f.Parent; if (-not $byParent.ContainsKey($k)) { $byParent[$k] = [Collections.Generic.List[object]]::new() }; $byParent[$k].Add($f) }
             $mk = $null
             $mk = { param($f) $n = [MailboxTransferGui.FolderNode]::new([string]$f.Id, [string]$f.Name, [long]$f.Count, [long]$f.Size); $n.Tag = @{ Key = [long]$f.Key; StorePath = $Path }; $kids = @(); if ($byParent.ContainsKey([string]$f.Id)) { $kids = @($byParent[[string]$f.Id] | ForEach-Object { & $mk $_ }) }; if ($kids.Count) { $n.SetChildren([MailboxTransferGui.FolderNode[]]$kids) }; $n }
-            $tops = @($m.Folders | Where-Object { -not $_.Parent -or -not ($m.Folders | Where-Object { $_.Id -eq $f.Parent }) } | ForEach-Object { & $mk $_ })
-            $tops = @($m.Folders | Where-Object { $p = $_.Parent; -not $p -or -not (@($m.Folders | Where-Object { $_.Id -eq $p }).Count) } | ForEach-Object { & $mk $_ })
+            $tops = @($m.Folders | Where-Object { -not $_.Parent -or -not $ids.Contains([string]$_.Parent) } | ForEach-Object { & $mk $_ })
             if ($tops.Count) { $root.SetChildren([MailboxTransferGui.FolderNode[]]$tops) }
             $root
         }
         $items = 0L; $bytes = 0L; $folders = 0
         foreach ($m in $r.Mailboxes) { foreach ($f in $m.Folders) { $items += $f.Count; if ($f.Size -gt 0) { $bytes += $f.Size }; $folders++ } }
-        & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = "**Store opened:** $(Format-MbtGuiCount $items) items in $folders folders. The items are checked against their fingerprints while they are imported."; Items = $items; Bytes = $bytes; Folders = $folders; Parts = 0; Roots = @($roots) })
+        & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = "**Store opened:** $(Format-MbtGuiQuantity $items 'item') in $(Format-MbtGuiQuantity $folders 'folder'). $(if ($items -eq 1) { 'The item is checked against its fingerprint while it is imported.' } else { 'The items are checked against their fingerprints while they are imported.' })"; Items = $items; Bytes = $bytes; Folders = $folders; Parts = 0; Roots = @($roots) })
     }.GetNewClosure()
 }
 
@@ -363,14 +461,16 @@ function Open-MbtGuiEmlSource {
             if (-not $dirs.ContainsKey($rel)) { $dirs[$rel] = @{ Count = 0L; Bytes = 0L } }
             $dirs[$rel].Count++; $dirs[$rel].Bytes += $f.Length
         }
-        [pscustomobject]@{ Files = $files.Count; Bytes = [long](($files | Measure-Object -Property Length -Sum).Sum); Dirs = @($dirs.GetEnumerator() | ForEach-Object { @{ Path = [string]$_.Key; Count = [long]$_.Value.Count; Bytes = [long]$_.Value.Bytes } }); Name = (Split-Path $root -Leaf) }
+        $bytes = 0L
+        foreach ($file in $files) { $bytes += $file.Length }
+        [pscustomobject]@{ Files = $files.Count; Bytes = $bytes; Dirs = @($dirs.GetEnumerator() | ForEach-Object { @{ Path = [string]$_.Key; Count = [long]$_.Value.Count; Bytes = [long]$_.Value.Bytes } }); Name = (Split-Path $root -Leaf) }
     } -OnDone {
         param($res)
         $r = @($res)[0]
         if (-not $r.Files) { & $OnError 'There is no .eml file in this folder.'; return }
         $root = [MailboxTransferGui.FolderNode]::new('eml-root', [string]$r.Name, 0, -1)
         $root.IsRoot = $true; $root.Kind = 'eml'; $root.Glyph = Get-MbtGlyph folder
-        $root.Sub = "$(Format-MbtGuiCount $r.Files) messages - $(Format-MbtGuiBytes $r.Bytes) - read only"
+        $root.Sub = "$(Format-MbtGuiQuantity $r.Files 'message') - $(Format-MbtGuiBytes $r.Bytes) - read only"
         $root.Tag = @{ Path = $Path; Kind = 'eml' }
         # one node per folder that holds .eml files, below its parent folder
         $nodes = @{ '' = $root }
@@ -391,7 +491,7 @@ function Open-MbtGuiEmlSource {
             return $n
         }
         foreach ($d in ($r.Dirs | Sort-Object { $_.Path })) { if ($d.Path) { $null = & $get $d.Path } }
-        $verdict = '**{0} message{1} found** - {2} - read only. The messages are read when they are imported; each folder below becomes a folder of the mailbox.' -f (Format-MbtGuiCount $r.Files), $(if ($r.Files -ne 1) { 's' } else { '' }), (Format-MbtGuiBytes $r.Bytes)
+        $verdict = '**{0} found** - {1} - read only. {2}; each folder below becomes a folder of the mailbox.' -f (Format-MbtGuiQuantity $r.Files 'message'), (Format-MbtGuiBytes $r.Bytes), $(if ($r.Files -eq 1) { 'The message is read when it is imported' } else { 'The messages are read when they are imported' })
         & $OnDone ([pscustomobject]@{ Ok = $true; Level = 'ok'; Message = $verdict; Items = [long]$r.Files; Bytes = [long]$r.Bytes; Folders = $nodes.Count; Parts = 0; Roots = @($root) })
     }.GetNewClosure()
 }
@@ -405,7 +505,7 @@ function Read-MbtGuiSourceItems {
         Start-MbtGuiWork -Worker $g.Engine.Worker -Arguments @($Node.Tag.StorePath, [long]$Node.Tag.Key, $page) -OnError $OnError -Script {
             param($path, $key, $page)
             $store = Open-MbtExportStore -Path $path -ReadOnly
-            try { $p = $store.GetItems($key, $page, 50, [MailboxTransfer.StoreItemSort]::Received, $true); @{ Items = @($p.Items | ForEach-Object { @{ Key = $_.Key; Subject = $_.Subject; Size = $_.Size; Received = $_.ReceivedUtc } }); Total = $p.Total; PageCount = $p.PageCount } } finally { $store.Dispose() }
+            try { $p = $store.GetItems($key, $page, 50, [MailboxTransfer.StoreItemSort]::ReceivedDate, $true); @{ Items = @($p.Items | ForEach-Object { @{ Key = $_.Key; Subject = $_.Subject; Size = $_.Size; Received = $_.ReceivedUtc } }); Total = $p.Total; PageCount = $p.PageCount } } finally { $store.Dispose() }
         } -OnDone {
             param($res)
             $r = @($res)[0]
@@ -511,7 +611,12 @@ function Start-MbtGuiPstCheckJob {
             $findings = foreach ($i in $run.Items) { @{ Severity = $(if ($i.State -eq 'error') { 'Error' } else { 'Warning' }); Text = $i.Msg; Code = $i.Key; Count = [int]$i.Total; Level = (Get-MbtGuiFindingLevel $i.Key) } }
             $levels = @($findings | ForEach-Object { $_.Level })
             $rec = if ('Salvage' -in $levels) { 'Salvage' } elseif ('Rebuild' -in $levels) { 'Rebuild' } else { 'Recompute' }
-            & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](Get-MbtGuiProp $c 'fileBytes' 0); Elapsed = (Format-MbtGuiDuration (([datetime]::UtcNow - $started).TotalSeconds)); Errors = [int](Get-MbtGuiProp $c 'errors' 0); Warnings = [int](Get-MbtGuiProp $c 'warnings' 0); ExitCode = [int]$res.Exit; Recommended = $rec; Findings = @($findings) })
+            try {
+                & $OnDone ([pscustomobject]@{ Path = $Path; SizeBytes = [long](Get-MbtGuiProp $c 'fileBytes' 0); Elapsed = (Format-MbtGuiDuration (([datetime]::UtcNow - $started).TotalSeconds)); Errors = [int](Get-MbtGuiProp $c 'errors' 0); Warnings = [int](Get-MbtGuiProp $c 'warnings' 0); ExitCode = [int]$res.Exit; Recommended = $rec; Findings = @($findings) })
+            } catch {
+                Write-MbtGuiFault 'the result of the check of a PST' $_
+                & $OnError $_.Exception.Message
+            }
             return $true
         }.GetNewClosure())
 }
@@ -533,8 +638,8 @@ function Get-MbtGuiFindingLevel {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCxbJX50VExlo4m
-# O1QSo2FpzrNITYNiUh4Fhl2Qc6DkMqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD1z8+tiTnGIgZJ
+# kSOJr812d8PEkEXN687EIu8sdkt/0qCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -611,23 +716,23 @@ function Get-MbtGuiFindingLevel {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCBRRNt43kt
-# zGTpCXXaz4eJvVaZ1vH165G5Odhf7eY2FDANBgkqhkiG9w0BAQEFAASCAgCsH1GC
-# vuBkYCPUUANNPFJoBTesiVMGrA1zjEA5jU8bHXHl+fQf0/RSplMWfJ1GIDeLDJZv
-# OGHbMBMF+XL5sPGiNSs+3psC+snUw2zrJoLRFyH78zKZuZu5Tg+DBoHOpLEYkGgr
-# P7SolEqZIg4ZVJ6r1oGpEvc+tK2SP2hikyP4KHizO8R0DwbMXByujIjK62FRhwDp
-# l9Z3p48tfgZa3Cb08DpaeOQW47yB0YxbT+wqm6lJCsDkb9QkpuTuBd2Qnd/3BgmT
-# CUkrYYWKBZsojDw73k98bCtLnxIhspaVT7UmzFjnVAIXCCTagNr8Ox63eDqqMvBY
-# wdGYeM1qsym+sqZApN6yYDD6o1hLa46dnS2blCepsVqx0rGl7o8KVNqMW9tl2SEd
-# 75Rr3p/nMlcZ/47PHxRSXTwA/77TUPzo0eRopiRezuP143U9kSpFJZCBCIwzUIW9
-# 2dyIq/VB2xaPdR7Zj+seELFyQRPEcyLMDQDYzhp7MydpKRI7wlq/RFykxhVJKxAU
-# 8aTVn9RpbKD1MPAvFL8yRsYA/Nt15DYi6eO7edFouEupPAwXhN60J6zdiLUEzdkL
-# ueF+Q1E9pfDxDviSBKY9zQbU8NUkakqVuxXwWVjirF/D4IMZxep4UuT74rK5HNi0
-# xrLoUlUPl+jH/q9sndVGDO2P0VoVkxsPHWDtnKGCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBjvBl2YNeL
+# KExcT2fhet32yerowFbnBLqKEgvyF/czhTANBgkqhkiG9w0BAQEFAASCAgBdykLK
+# 3+y+2tlPwcZll+w94UUhYHWs0ZlWUbAlVIV6RYCG1qXkHZSdasGYH6EU40Y6SWXr
+# s4WkV4BxLf8G1oWSgqDeMnkC4d/yvFc9Xw/CmxRxwRI6JMbtwZNMYFeib/bYFlx+
+# ea2F/JrdbNbx/JXrueZ+fM0ggRewnbV/17cNH9ZUw2WIWIbr7fEE2Lw2j1r3n3BA
+# D0phgBxDa3UpPgvbWXArabGCqVk2FzCOT8VcnEUfMYxsU9usbCsjdiNkLKEjKcKi
+# ul7dWcP7F/kHJCwd0RD+3qKNtkszHNnv7nFBhCNQTgFrc14VmXGWPQtCWf1+Q5FE
+# 7UiXPsNb2aQIsINyUKwC43+1kJB6Jqz+G2RZ3i6IMQqCYhB/ohSkoYAyiWxkBmhE
+# JRnJVvpzQ6ZUXrL1BylvzrY8utLXn2+j2p0pibWWiQdsPnZ0Th4a44Pud6OEkQW7
+# xiNRooUolnAYK+UJw2lLAwYZlSDZNvVfKqIYJM/5yydZKyEdM5tsSvcf2EwkcLwc
+# CH+A/pmHRmw2/4ymQhs1081Eji9bQN8r5pkQzK1M+EYiNiMfbjH3YToqwIHSGvRG
+# isx5jWnVYSAbLZ7PCPJGa6cGEZtwExWa6FCJMYLvLi3o/riwFTlG0TQa8shvgJYb
+# UTHp8u0VKA/Pk9aHpiR9Zs5XEdpZbvJ6ekYS96GCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIKIkpPnuREEcIpsKjv/w2eVlKxkS8lDj5At+1MOUbJy1AghMC0bRPmFp
-# +RgPMjAyNjExMTAwODIyMTRaMAMCAQECEF94SOXfAlKhUAzqpiLK2FmgghGnMIIE
+# BAIBBQAEIKvy6DtcZZClOS936CGz0lPHQwe98zBSTs/g7Rd+NDbYAghtz+hd1D8Z
+# 7hgPMjAyNjExMTUxNDM1MDZaMAMCAQECECd6KKNOH102MJfY3GgafJKgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -726,13 +831,13 @@ function Get-MbtGuiFindingLevel {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIxNFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIKWA
-# SfVHcZ/34po45ZUdEfpDl9Q4tzSKjvdKfowpWo6/MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUwNlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIFRl
+# Bm73YG9ctC10rsGcidGJzCsH2ko2DmLEtrVVKFO2MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEA76cRNuvCn9FCLV7bktnPaCzOiYvzxhSdC5SdFUdkEtoCIAJI
-# jHeaer2iE9KxoLz8LrW7RRU9J101KxUmVxZu5Xv7
+# zj0EAwIERzBFAiBZiUYG6F9mUW8sFXVhurSeBhtq0S+1MTcd/PtkpwcCbgIhALkL
+# IAAQz2ik7O/437VGRUhU8xIRIhA7wPOOYarodF8G
 # SIG # End signature block

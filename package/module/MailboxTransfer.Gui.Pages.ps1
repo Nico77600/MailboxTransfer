@@ -1,11 +1,11 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Mailbox Transfer console - the pages Task, From, To, Plan (dot-sourced by Start-MailboxTransferConsole.ps1).
+    Mailbox Transfer console - the pages Setup, Task (What, From, To), Verify (dot-sourced by Start-MailboxTransferConsole.ps1).
 
 .DESCRIPTION
-    One function per page, as the mockup MailboxTransfer-Console.html: each returns the element of the page and sets the action bar. The texts are
-    the ones of CONSOLE-SPEC.md. A page is built again when the state changes (the browse cards live on, see Gui.Browse.ps1).
+    One function per page: each returns the element of the page and sets the action bar. A page is built again when the state changes (the browse
+    cards live on, see Gui.Browse.ps1).
     Features that depend on the engine (PST import, EML, shared mailboxes) read $script:Gui.Engine.Capability: a missing one is shown disabled with
     "Coming in this version", or left out, so the page lights up by itself after the merge of the engine work.
 
@@ -15,6 +15,7 @@
 Set-StrictMode -Version Latest
 
 $script:PageBuilders = @{
+    setup = { Build-MbtGuiSetupPage }
     start = { Build-MbtGuiStartPage }
     exFrom = { Build-MbtGuiExportFromPage }
     exTo = { Build-MbtGuiExportToPage }
@@ -45,7 +46,11 @@ function New-MbtGuiBrowseFolderRow {
     param([string]$Value, [ValidateSet('Folder', 'File', 'SaveFile')][string]$Kind, [string]$Title, [string]$Filter, [scriptblock]$OnChange, [string]$Automation)
     $box = New-GuiTextBox -Text $Value -Automation $Automation
     $state = @{ Box = $box; OnChange = $OnChange }
-    if ($OnChange) { $box.Add_LostFocus({ & $state.OnChange $state.Box.Text }.GetNewClosure()); $box.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { & $state.OnChange $state.Box.Text; $e.Handled = $true } }.GetNewClosure()) }
+    if ($OnChange) {
+        $state.OnChange = ConvertTo-MbtGuiHandler -Block $OnChange -CallerScope 2
+        Add-MbtGuiHandler $box 'LostFocus' { & $state.OnChange $state.Box.Text }.GetNewClosure()
+        Add-MbtGuiHandler $box 'KeyDown' { param($sender, $e) if ($e.Key -eq 'Return') { & $state.OnChange $state.Box.Text; $e.Handled = $true } }.GetNewClosure()
+    }
     $btn = New-GuiButton -Text 'Browse...' -OnClick {
         $picked = switch ($Kind) {
             'Folder' { Select-MbtGuiFolder -Title $Title -InitialPath $state.Box.Text }
@@ -83,7 +88,7 @@ function Place-MbtGuiBrowser {
 
 function Format-MbtGuiSelectionFooter {
     param($Selection, [bool]$Signed)
-    if ($Selection.Items -gt 0) { return ('**{0} items** ticked in {1} folder{2}, {3}' -f (Format-MbtGuiSelectionItems $Selection), $Selection.Folders, $(if ($Selection.Folders -gt 1) { 's' } else { '' }), (Format-MbtGuiSelectionSize $Selection)) }
+    if ($Selection.Items -gt 0) { return ('**{0}** ticked in {1}, {2}' -f (Format-MbtGuiSelectionItems $Selection -WithNoun), (Format-MbtGuiQuantity $Selection.Folders 'folder'), (Format-MbtGuiSelectionSize $Selection)) }
     if ($Signed) { return 'Tick what to keep, then continue.' }
     return 'Sign in first.'
 }
@@ -130,37 +135,6 @@ function New-MbtGuiTaskCard {
     return $btn
 }
 
-function Build-MbtGuiStartPage {
-    $g = $script:Gui; $s = $g.S; $engine = $g.Engine
-    $sel = $s.Sel
-    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = 4
-    foreach ($k in @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })) {
-        $card = New-MbtGuiTaskCard -Key $k -Selected ($sel -eq $k)
-        $card.Margin = [Windows.Thickness]::new(0, 0, $(if ($k -eq 'open') { 0 } else { 12 }), 0)
-        $card.Add_Click({ param($b, $e) $g.S.Sel = [string]$b.Tag; Show-MbtGuiPage })
-        $grid.Children.Add($card) | Out-Null
-    }
-    $left = New-GuiCard -Title 'Continue a job' -Info ('Found in your work folder ' + $s.WorkFolder) -Content @((New-MbtGuiJobList))
-    $right = if ($sel) {
-        $t = $script:Tasks[$sel]
-        $ol = [Windows.Controls.StackPanel]::new()
-        $i = 1
-        foreach ($w in $t.Will) { $row = New-GuiText ("$i.  $w") 'Body'; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($row) | Out-Null; $i++ }
-        New-GuiCard -Title 'What will happen' -Content @($ol, (New-GuiText $t.Safe 'Hint'))
-    } else { New-MbtGuiReadinessCard }
-    $cols = New-GuiGrid -Children @($left, $right) -Widths @('1.4*', '1*')
-    $stack = New-GuiStack @((New-GuiText 'What do you want to do?' 'H2'), $grid, (New-GuiStack @($cols) -Margin '0,12,0,0'))
-    if ($sel) { $stack.Children.Add((New-MbtGuiReadinessCard)) | Out-Null }
-    $footer = if ($sel) { "You chose **$($script:Tasks[$sel].Title)**." } else { 'Pick what you want to do. The console guides you from there.' }
-    Set-MbtGuiActions -Back $false -Footer $footer -Label 'Continue' -Enabled ([bool]$sel) -OnClick {
-        $s = $script:Gui.S
-        $s.Task = $s.Sel; $s.Step = 1
-        Initialize-MbtGuiTask
-        Show-MbtGuiPage
-    }
-    return $stack
-}
-
 function New-MbtGuiJobList {
     $g = $script:Gui
     $jobs = @()
@@ -191,36 +165,174 @@ function New-MbtGuiJobList {
     return $stack
 }
 
+function New-MbtGuiCheckRow {
+    <# One line of a list of lights or checks: a green dot (ok), a red one (bad) or a grey clock (wait), the check in bold and what was found after it. #>
+    param([ValidateSet('ok', 'bad', 'wait')][string]$State, [Parameter(Mandatory)][string]$Text, [string]$Detail = '')
+    $row = [Windows.Controls.Grid]::new(); $row.Margin = [Windows.Thickness]::new(0, 4, 0, 4)
+    $c1 = [Windows.Controls.ColumnDefinition]::new(); $c1.Width = [Windows.GridLength]::Auto
+    $c2 = [Windows.Controls.ColumnDefinition]::new(); $c2.Width = [Windows.GridLength]::new(1, 'Star')
+    $row.ColumnDefinitions.Add($c1); $row.ColumnDefinitions.Add($c2)
+    $dot = [Windows.Controls.Border]::new(); $dot.Width = 18; $dot.Height = 18; $dot.CornerRadius = [Windows.CornerRadius]::new(9); $dot.VerticalAlignment = 'Top'; $dot.Margin = [Windows.Thickness]::new(0, 1, 0, 0)
+    Set-MbtGuiResource $dot ([Windows.Controls.Border]::BackgroundProperty) $(switch ($State) { 'ok' { 'MbtSuccessBackground' } 'bad' { 'MbtCriticalBackground' } default { 'MbtInfoBackground' } })
+    $ic = New-GuiIcon $(switch ($State) { 'ok' { 'check' } 'bad' { 'x' } default { 'clock' } }) 10 $(switch ($State) { 'ok' { 'MbtSuccess' } 'bad' { 'MbtCritical' } default { 'TextFillColorSecondaryBrush' } })
+    $ic.HorizontalAlignment = 'Center'; $dot.Child = $ic
+    $tx = New-GuiText ("**$Text**" + $(if ($Detail) { '  ' + [char]0x00B7 + " $Detail" } else { '' })) 'Body'; $tx.FontSize = 13; $tx.Margin = [Windows.Thickness]::new(8, 0, 0, 0)
+    [Windows.Controls.Grid]::SetColumn($tx, 1)
+    $row.Children.Add($dot) | Out-Null; $row.Children.Add($tx) | Out-Null
+    return $row
+}
+
 function New-MbtGuiReadinessCard {
+    <# The lights of this computer, all shown: PowerShell, sign-in component, work folder and its room, network, unblocked files. #>
     $g = $script:Gui
     $lights = @()
-    try { $lights = @((& $g.Engine.Readiness).Lights) } catch { $lights = @(@{ Name = 'The engine could not be checked'; Detail = $_.Exception.Message; Ok = $false }) }
+    try { $lights = @((& $g.Engine.Readiness $g.S.WorkFolder).Lights) } catch { $lights = @(@{ Name = 'The engine could not be checked'; Detail = $_.Exception.Message; Ok = $false }) }
     $red = @($lights | Where-Object { -not $_.Ok })
     $list = [Windows.Controls.StackPanel]::new()
-    foreach ($l in $lights) {
-        $row = [Windows.Controls.StackPanel]::new(); $row.Orientation = 'Horizontal'; $row.Margin = [Windows.Thickness]::new(0, 3, 0, 3)
-        $dot = [Windows.Controls.Border]::new(); $dot.Width = 18; $dot.Height = 18; $dot.CornerRadius = [Windows.CornerRadius]::new(9)
-        Set-MbtGuiResource $dot ([Windows.Controls.Border]::BackgroundProperty) $(if ($l.Ok) { 'MbtSuccessBackground' } else { 'MbtCriticalBackground' })
-        $ic = New-GuiIcon $(if ($l.Ok) { 'check' } else { 'x' }) 10 $(if ($l.Ok) { 'MbtSuccess' } else { 'MbtCritical' }); $ic.HorizontalAlignment = 'Center'; $dot.Child = $ic
-        $tx = New-GuiText ("**$($l.Name)**  " + [char]0x00B7 + " $($l.Detail)") 'Body' -NoWrap; $tx.FontSize = 13; $tx.Margin = [Windows.Thickness]::new(8, 0, 0, 0)
-        $row.Children.Add($dot) | Out-Null; $row.Children.Add($tx) | Out-Null
-        $list.Children.Add($row) | Out-Null
+    foreach ($l in $lights) { $list.Children.Add((New-MbtGuiCheckRow -State $(if ($l.Ok) { 'ok' } else { 'bad' }) -Text $l.Name -Detail $l.Detail)) | Out-Null }
+    $again = New-GuiButton -Text 'Check again' -Small -Icon refresh -OnClick { Show-MbtGuiPage }
+    $again.Margin = [Windows.Thickness]::new(0, 10, 0, 0); $again.HorizontalAlignment = 'Left'
+    $note = New-GuiText 'A red light says what to do. Check and repair, and Open, need no sign-in and no network.' 'Hint'
+    $g.SetupRed = $red.Count
+    return (New-GuiCard -Title 'This computer' -Right (New-GuiPill $(if ($red.Count) { 'Check' } else { 'Ready' }) $(if ($red.Count) { 'bad' } else { 'ok' })) -Content @($list, $note, $again))
+}
+
+function Open-MbtGuiSetup {
+    <# From a page of the task: to Setup, and back to the same page. #>
+    $s = $script:Gui.S
+    $s.SetupReturn = $s.Step; $s.Step = 0
+    Show-MbtGuiPage
+}
+
+function New-MbtGuiValueLine {
+    <# A value read from the configuration file: its label, the value, and a pill when it was changed for this run. #>
+    param([string]$Label, [string]$Value, [bool]$Changed)
+    $line = [Windows.Controls.StackPanel]::new(); $line.Orientation = 'Horizontal'
+    $t = New-GuiText $(if ($Value) { $Value } else { 'not set in the configuration file' }) 'Body'; $t.FontSize = 13
+    if (-not $Value) { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtCautionInk' }
+    $line.Children.Add($t) | Out-Null
+    if ($Changed) { $p = New-GuiPill ('modified ' + [char]0x00B7 + ' this run only') 'warn' -Light; $p.Margin = [Windows.Thickness]::new(10, 0, 0, 0); $line.Children.Add($p) | Out-Null }
+    return (New-GuiStack @((New-GuiText $Label 'Label'), $line))
+}
+
+function New-MbtGuiSigninSetupCard {
+    <# Sign in as Me or the application; the tenant, the application and the certificate come from the configuration file and can be changed for this run only. #>
+    $g = $script:Gui; $s = $g.S
+    $appOn = Get-MbtGuiCapability 'AppOnly'
+    $app = ($s.AuthMode -eq 'app') -and $appOn
+    $switchTo = { param($mode) if ($s.AuthMode -ne $mode) { $s.AuthMode = $mode; $s.AuthEdit = $false; if ($s.Signed) { & $g.Engine.SignOut; $s.Signed = $false; $s.Locations = @(); $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() } }; $s.SignInError = ''; Show-MbtGuiPage } }.GetNewClosure()
+    $content = [Collections.Generic.List[object]]::new()
+    $content.Add((New-GuiText 'Sign in as' 'Label'))
+    $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'Me (delegated, recommended)' -Hint 'A Microsoft sign-in window opens over the console. You see the mailboxes you are allowed to open.' -Checked (-not $app) -Margin '0,4,0,0' -OnChange { & $switchTo 'user' }.GetNewClosure()))
+    if ($appOn) { $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'The application (certificate)' -Hint 'No window and no user: for scheduled or bulk jobs, and to write into a shared mailbox. Your administrator sets the application up first (see the app-only guide).' -Checked $app -Margin '0,4,0,0' -OnChange { & $switchTo 'app' }.GetNewClosure())) }
+    $eff = Get-MbtGuiEffectiveSignIn -S $s
+    $edit = $s.AuthEdit -or $eff.Missing.Count
+    $box = [Windows.Controls.Border]::new(); $box.BorderThickness = [Windows.Thickness]::new(1); $box.CornerRadius = [Windows.CornerRadius]::new(8); $box.Padding = [Windows.Thickness]::new(12, 4, 12, 12); $box.Margin = [Windows.Thickness]::new(0, 14, 0, 0)
+    Set-MbtGuiResource $box ([Windows.Controls.Border]::BorderBrushProperty) 'DividerStrokeColorDefaultBrush'; Set-MbtGuiResource $box ([Windows.Controls.Border]::BackgroundProperty) 'LayerFillColorDefaultBrush'
+    $inner = [Collections.Generic.List[object]]::new()
+    $head = New-GuiText $(if ($app) { 'Values for the application' } else { 'Values for the sign-in' }) 'Label'; $head.FontWeight = [Windows.FontWeights]::SemiBold
+    $inner.Add($head)
+    $fields = @(@('Tenant', 'Tenant', $(if ($app) { 'AppTenant' } else { 'TenantId' }), $eff.Tenant, $eff.TenantChanged), @('Application (client) id', 'Application id', $(if ($app) { 'AppClient' } else { 'ClientId' }), $eff.Client, $eff.ClientChanged))
+    if ($app) { $fields += , @('Certificate thumbprint', 'Certificate thumbprint', 'AppThumb', $eff.Thumb, $eff.ThumbChanged) }
+    foreach ($f in $fields) {
+        $key = $f[2]
+        if ($edit) {
+            $inner.Add((New-GuiText $f[0] 'Label'))
+            $inner.Add((New-GuiTextBox -Text $(if ($s[$key]) { $s[$key] } else { $f[3] }) -Automation $f[1] -OnChange { param($x, $e) $s[$key] = $x.Text }.GetNewClosure()))
+        } else { $inner.Add((New-MbtGuiValueLine -Label $f[0] -Value $f[3] -Changed ([bool]$f[4]))) }
     }
-    $list.Children.Add((New-GuiText 'A red light shows here by itself, with what to do. Check and repair, and Open, need no sign-in and no network.' 'Hint')) | Out-Null
-    $more = New-GuiMore -Summary 'Show the lights' -Content @($list) -Open:($red.Count -gt 0)
-    $intro = New-GuiText $(if ($red.Count) { 'Something needs your attention before the cloud tasks can run.' } else { 'Everything needed is in place. Only a red light needs your attention.' }) 'Hint'
-    $intro.Margin = [Windows.Thickness]::new(0)
-    return (New-GuiCard -Title 'This computer' -Right (New-GuiPill $(if ($red.Count) { 'Check' } else { 'Ready' }) $(if ($red.Count) { 'bad' } else { 'ok' })) -Content @($intro, $more))
+    if ($edit) {
+        $done = New-GuiButton -Text 'Done' -Small -OnClick { $s.AuthEdit = $false; Show-MbtGuiPage }
+        $reset = New-GuiLink 'Use the values of the configuration file' { foreach ($k in 'TenantId', 'ClientId', 'AppTenant', 'AppClient', 'AppThumb') { $s[$k] = '' }; $s.AuthEdit = $false; Show-MbtGuiPage }; $reset.FontSize = 12; $reset.VerticalAlignment = 'Center'
+        $bar = [Windows.Controls.StackPanel]::new(); $bar.Orientation = 'Horizontal'; $bar.Margin = [Windows.Thickness]::new(0, 10, 0, 0)
+        $bar.Children.Add($done) | Out-Null; $bar.Children.Add($reset) | Out-Null
+        $inner.Add($bar)
+    } else {
+        $chg = New-GuiButton -Text 'Change for this run' -Small -Icon pencil -OnClick { $s.AuthEdit = $true; Show-MbtGuiPage }
+        $chg.Margin = [Windows.Thickness]::new(0, 12, 0, 0); $chg.HorizontalAlignment = 'Left'
+        $inner.Add($chg)
+    }
+    $inner.Add((New-GuiText $(if ($app) { 'Read from the configuration file. The certificate is looked up on this PC (your certificates, then the computer ones). A value you change applies to this run only; nothing is saved.' } else { 'Read from the configuration file. A value you change applies to this run only; nothing is saved.' }) 'Hint'))
+    $box.Child = (New-GuiStack $inner.ToArray())
+    $content.Add($box)
+    return (New-GuiCard -Title 'Sign-in' -Right (New-GuiPill $(if ($app) { 'Application' } else { 'You' }) '') -Content $content.ToArray())
+}
+
+function New-MbtGuiPlacesCard {
+    <# The configuration file (Reload, Open) and the work folder (Choose a folder...). #>
+    $g = $script:Gui; $s = $g.S
+    $hasPath = if ($g.Engine -is [Collections.IDictionary]) { $g.Engine.Contains('ConfigPath') } else { [bool]$g.Engine.PSObject.Properties['ConfigPath'] }
+    $cfgPath = if ($s.ConfigPath) { $s.ConfigPath } elseif ($hasPath) { [string](& $g.Engine.ConfigPath) } else { '' }
+    $cfgBox = New-GuiTextBox -Text $cfgPath -ReadOnly -Automation 'Configuration file'
+    $reload = New-GuiButton -Text 'Reload' -Small -Icon refresh -OnClick { Show-MbtGuiPage }
+    $openCfg = New-GuiButton -Text 'Open' -Small -Icon open -OnClick { if ($cfgPath -and (Test-Path -LiteralPath $cfgPath)) { Start-Process -FilePath $cfgPath } }.GetNewClosure()
+    $bar = [Windows.Controls.StackPanel]::new(); $bar.Orientation = 'Horizontal'; $bar.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
+    $bar.Children.Add($reload) | Out-Null; $bar.Children.Add($openCfg) | Out-Null
+    $free = $null; try { $free = [double](& $g.Engine.FreeSpace $s.WorkFolder) } catch { $free = $null }
+    $wfLabel = [Windows.Controls.StackPanel]::new(); $wfLabel.Orientation = 'Horizontal'
+    $wfLabel.Children.Add((New-GuiText 'Work folder' 'Label')) | Out-Null
+    if ($s.Changed.ContainsKey('WorkFolder')) { $p = New-GuiPill ('modified ' + [char]0x00B7 + ' this run only') 'warn' -Light; $p.Margin = [Windows.Thickness]::new(8, 6, 0, 0); $wfLabel.Children.Add($p) | Out-Null }
+    $wf = New-GuiTextBox -Text $s.WorkFolder -ReadOnly -Automation 'Work folder'
+    $pick = New-GuiButton -Text 'Choose a folder...' -OnClick { $v = Select-MbtGuiFolder -Title 'Work folder' -InitialPath $s.WorkFolder; if ($v -and $v -ne $s.WorkFolder) { $s.WorkFolder = $v; $s.Changed['WorkFolder'] = $true; Show-MbtGuiPage } }.GetNewClosure()
+    $hint = "Jobs, export stores and logs live here. $(if ($null -ne $free) { "$(Format-MbtGuiBytes $free) free. " })A folder you choose here applies to this run only."
+    return (New-GuiCard -Title 'Files and folders' -Content @((New-GuiText 'Configuration file' 'Label'), $cfgBox, $bar, (New-GuiText 'Tenant, application and defaults are read from this file. Reload reads it again; Open shows it in your editor.' 'Hint'), $wfLabel, (New-GuiRow -Box $wf -Button $pick), (New-GuiText $hint 'Hint')))
+}
+
+function Build-MbtGuiSetupPage {
+    $g = $script:Gui; $s = $g.S
+    $left = New-GuiStack @((New-MbtGuiReadinessCard), (New-MbtGuiPlacesCard))
+    $right = New-GuiStack @((New-MbtGuiSigninSetupCard))
+    $red = [int]$g.SetupRed
+    $footer = if ($red) { 'A light is red. Cloud tasks need every light green; Check and repair, and Open, do not.' } else { 'Everything needed is in place. Nothing here is saved: it applies to this run.' }
+    $back = $s.SetupReturn -ge 2
+    Set-MbtGuiActions -Back $false -Footer $footer -Label $(if ($back) { 'Back to the task' } else { 'Choose a task' }) -OnClick {
+        $s = $script:Gui.S
+        $to = if ($s.SetupReturn -ge 1) { $s.SetupReturn } else { 1 }
+        $s.SetupReturn = -1
+        Set-MbtGuiStep $to
+    }
+    return (New-GuiStack @((New-GuiText 'Is this computer ready?' 'H2'), (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 560)))
+}
+
+function Build-MbtGuiStartPage {
+    $g = $script:Gui; $s = $g.S; $engine = $g.Engine
+    $sel = $s.Sel
+    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = 4
+    foreach ($k in @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })) {
+        $card = New-MbtGuiTaskCard -Key $k -Selected ($sel -eq $k)
+        $card.Margin = [Windows.Thickness]::new(0, 0, $(if ($k -eq 'open') { 0 } else { 12 }), 0)
+        Add-MbtGuiHandler $card 'Click' { param($sender, $e) $script:Gui.S.Sel = [string]$sender.Tag; Show-MbtGuiPage }
+        $grid.Children.Add($card) | Out-Null
+    }
+    $left = New-GuiCard -Title 'Continue a job' -Info ('Found in your work folder ' + $s.WorkFolder) -Right (New-GuiButton -Text 'All jobs' -Small -Icon doc -OnClick { Open-MbtGuiJobOverview }) -Content @((New-MbtGuiJobList))
+    $right = if ($sel) {
+        $t = $script:Tasks[$sel]
+        $ol = [Windows.Controls.StackPanel]::new()
+        $i = 1
+        foreach ($w in $t.Will) { $row = New-GuiText ("$i.  $w") 'Body'; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($row) | Out-Null; $i++ }
+        New-GuiCard -Title 'What will happen' -Content @($ol, (New-GuiText $t.Safe 'Hint'))
+    } else { New-GuiCard -Title 'What will happen' -Content @((New-GuiText 'Pick a task above to see the steps.' 'Muted')) }
+    $cols = New-GuiGrid -Children @($left, $right) -Widths @('1.4*', '1*')
+    $stack = New-GuiStack @((New-GuiText 'What do you want to do?' 'H2'), $grid, (New-GuiStack @($cols) -Margin '0,12,0,0'))
+    $footer = if ($sel) { "You chose **$($script:Tasks[$sel].Title)**." } else { 'Pick what you want to do. The console guides you from there.' }
+    Set-MbtGuiActions -Footer $footer -Label 'Continue' -Enabled ([bool]$sel) -OnClick {
+        $s = $script:Gui.S
+        $s.Task = $s.Sel
+        $s.Step = $script:Flows[$s.Task].IndexOf($(switch ($s.Task) { 'export' { 'exFrom' } 'import' { 'imFrom' } 'repair' { 'rpFrom' } default { 'opFrom' } }))
+        Initialize-MbtGuiTask
+        Show-MbtGuiPage
+    }
+    return $stack
 }
 
 function Initialize-MbtGuiTask {
     <# A task was chosen: what its pages start with. #>
     $g = $script:Gui; $s = $g.S
-    $s.Outcome = $null; $s.PlanState = 'idle'; $s.PlanMsg = ''; $s.RStep = $null; $s.RObj = $null; $s.Confirm = ''
+    $s.Outcome = $null; $s.PlanState = 'idle'; $s.PlanMsg = ''; $s.RStep = $null; $s.RObj = $null; $s.Confirmed = $false; $s.ConfirmKey = ''; $s.JobName = ''
     $g.Run = $null; $g.Job = $null
     switch ($s.Task) {
         'export' { if (-not $s.OutFolder) { $s.OutFolder = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'MailboxTransfer' } }
-        'import' { $s.Confirm = '' }
+        'import' { $s.Confirmed = $false; $s.ConfirmKey = '' }
         'repair' { $s.RpCheck = $s.RpCheck }
     }
 }
@@ -228,10 +340,10 @@ function Initialize-MbtGuiTask {
 #endregion
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBOcfZ+nmcO/XLY
-# QJiAn3Mkbti45PTtjomJ7B4tymEafaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBEW31WcESq3dNa
+# YUM63U94ru1Aj8wrpZXwZWvupnzonaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -303,28 +415,28 @@ function Initialize-MbtGuiTask {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDLdYWMCz8F
-# OwZOkr0O8jOTEKXfgn+SDxwF+b8zNPbcZDANBgkqhkiG9w0BAQEFAASCAgCpemcm
-# zfWxHf7AF5zBjAGhBN4f0hf9dPfCkQNykUdolUj21wWtnfk0OX9eZ4tKDjGj/HZx
-# THpeWlWpov62HXBeROALOc6Mhyrgt1b2oUdCZIcwLzDv6I+dX+F9vK78PkvYEL21
-# wQR3eW3rD0rvnhv+NsEp4HZYYtf+oAbbQ+t0rR6NySgml4ZdWQGqaHGs1PM9hahP
-# m5eJWytxGxEOSA/mrcuoTAlgAmZs/RXtA0TE+s1e87NeRrRq7IjtO5Th9nZAMeqp
-# WFyrBqe1mpD6pfiUP6WsZ401fI1UD7ZIJcR3XtobIWZMa1qnc8jqWWBaTniIrk9F
-# xCOuDarj+bmZz8D+aDYvzhJwLv6/+dGFpX+xMyxW2rZxaPcisWzVUe15Ktc9Lgot
-# 1UEzErnPv9o2P5ZoTb1Vfthq+TsJ6PjAIC3O+Rfr0HeT3ndzh3/NFSX+9FZ7aBmR
-# 2UijKV3cxcmxQpG83/O06PPasYavQnpXkcrMtWGKuethCx43jE9sdMlViJ83mGhR
-# RmT8bNGpsjDMDWCSXN7AsHNQG79hMjHdtbvNyfowljVIbZfE4o/PZg5lppGzi77D
-# bREMdJOnRoVug9kzwWXkinWWRKJC8Irjtpg3Uemw/fpbnNSyTZr0qfTrJgxhl7yy
-# otMuK2paJC1vE/dNDMM5ksojKF4ApJqzsXPY6KGCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDBk4Vg7h26
+# 1z21c6n794hMucUIkvJiQEymSp0ZaULDcjANBgkqhkiG9w0BAQEFAASCAgBb4fGH
+# eda73UClB0FLPqoD4t4ZuSKpR5fuoT0pV3XuZHd3ABrehUyrhzwbXI6EtijmRXhR
+# 0/lcUeL3tEBH+dcDSExtkApAhXISKv7+d2LGGg9rWhwwQsFZ/ANeflyZ7tDclncZ
+# 6uJ3k8L7X+SFtDerDfp/yKPa/VuwyC9h5lgXr0EgDaQvU+wdF7Pve72jxm0tIQ4c
+# m6bj5ww7iBDYcJYth3jdOWA5xgaAoOgfJ4pKAuZRyyfQFtjRGvW9DeOGq2Z4Blca
+# qule2cuXzOARxEszd1pcmUu3cZl0PhNWpLUSqktMB2GDR2riGNnr0dUF7AVg7Hs8
+# ex8Byo1yNHLMxPhI+HdCAPgBlkRFCHAZZJeNjjCPQSm1mNy29gevn71RQwmBT7ml
+# ERF1F1PAoJ1QdGLNupM3zInqhLvaAXJ1Bw4V0TX7jvnzsabHMHeBl7W8NEBOTBO3
+# dFgJJpbzn8eBWT/brpgsHgkpTd4m+/OyVM+eDW28TYdfjFagjdYkkyF+5yB/ZRmm
+# imffIZ3vPh7TQhwVSJqlZxM9p2Bkn8ZGNBXVq9HGFI8Mr8DXwK6jilx0JHBVGw2j
+# v3IACLgOGErrTA3mP3DFgwbY6G4Fuo1hiCDlHz5/1fbZRBFERMgdlxr8IhcdbN2V
+# MCN6VZBX6ax6uJL/KO7RV9+6IcRTMIDdXhVde6GCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIPdDxRKMmRDD/A05/XX/P0/gcZzBwW0cIxk5AOIK8i/OAgh3h0sLyyEC
-# VhgPMjAyNjExMTAwODIyMzJaMAMCAQECED2/MPE1bfc2V83rXvVXGwqgghGnMIIE
+# BAIBBQAEIILa6HjJY1xXGJBCawDb+pPhEMFEZi4w+NUTR9iGy5jBAggP4DgZnKMf
+# phgPMjAyNjExMTUxNDM1MzVaMAMCAQECEEE+EjWT1Ysdw/vWVQbv9xCgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -419,17 +531,17 @@ function Initialize-MbtGuiTask {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIzMlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBJ2
-# ulEpNlz9ZkPpU53Jzz2Ji145ZuAbINAVUZxnUUDLMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUzNVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHqG
+# FTi5qNn8RZb1mDnH67KSk2wFBJYac9c6ZX/7+tX1MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBuaUtEvrlSn91+K5U0rBb+mVU33sii+DRV8pZPB8bhhgIgOC/o
-# 0RCs73e9+FEQpJKH+olyH01wNSPUDxIwvstZZm4=
+# zj0EAwIERzBFAiAdAWPa9RtxrfwsFHFqmq/6UdiOOQ8uGvGki+Xi/2FIqwIhAKm7
+# TEeDGCUxu/DM/3ExBGOkLjTpW4DjvT2LahTsgraE
 # SIG # End signature block

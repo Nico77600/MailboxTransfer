@@ -8,7 +8,7 @@
 //
 //  What this file does, and nothing more:
 //    - one HttpClient, a bearer token read from a Func<string> at each request;
-//    - retry of 429 / 503 / 504 (and network errors) honouring Retry-After;
+//    - retry of 429 / 502 / 503 / 504 (and network errors) honouring Retry-After;
 //    - @odata.nextLink pagination, followed as returned when it is https on graph.microsoft.com
 //      (the rule of the Microsoft Graph SDKs);
 //    - 308 redirects (archive mailbox with auto-expanding folders) followed by hand; MailboxRedirected tells which mailbox they lead to.
@@ -111,8 +111,9 @@ namespace MailboxTransfer
         public int RequestCount { get; private set; }
         public int RetryCount { get; private set; }
         public int PagesRead { get; private set; }
-        /// <summary>Answers 429 received (throttling), 503 and 504 received, over the whole life of the client.</summary>
+        /// <summary>Answers 429 received (throttling), 502, 503 and 504 received, over the whole life of the client.</summary>
         public int Throttled429 { get; private set; }
+        public int BadGateway502 { get; private set; }
         public int Unavailable503 { get; private set; }
         public int Timeout504 { get; private set; }
         /// <summary>Requests wait here after a 429 / 503 with a delay, so that every worker obeys the Retry-After of one of them.</summary>
@@ -276,10 +277,11 @@ namespace MailboxTransfer
                 lock (_lock)
                 {
                     if (status == 429) Throttled429++;
+                    else if (status == 502) BadGateway502++;
                     else if (status == 503) Unavailable503++;
                     else if (status == 504) Timeout504++;
                 }
-                bool retryable = status == 429 || status == 503 || (status == 504 && idempotent);
+                bool retryable = status == 429 || status == 503 || ((status == 502 || status == 504) && idempotent);
                 if (retryable && attempt < Options.MaxAttempts)
                 {
                     Wait(resp, attempt, status == 429 || status == 503, method, url, ct);
@@ -455,7 +457,7 @@ namespace MailboxTransfer
                     if (Json.TryGet(root, "@odata.nextLink", out link) && link.ValueKind == JsonValueKind.String)
                         next = link.GetString();
                 }
-                PagesRead++;
+                lock (_lock) { PagesRead++; }
                 if (next != null && !IsGraphUrl(next))
                     throw new GraphException(0, "UnexpectedNextLink", "@odata.nextLink is not https on graph.microsoft.com: " + Redact(next), Redact(url));
                 if (pageUrl != null) pageUrl(answered);
