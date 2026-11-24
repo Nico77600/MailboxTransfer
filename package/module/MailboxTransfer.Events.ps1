@@ -309,12 +309,19 @@ function Get-MbtJob {
     @($found | Sort-Object Updated -Descending | Select-Object -First $Limit)
 }
 
+function Test-MbtFolderLink {
+    <# True when a folder entry is a link that must not be followed: a reparse point that redirects to another path, or whose type is not known. A cloud file or folder (OneDrive), a deduplicated or a compressed item is an ordinary entry. #>
+    param([Parameter(Mandatory)][IO.FileSystemInfo]$Entry)
+    if (-not ($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+    try { return [bool](Get-RefusedReparseTag $Entry) } catch { return $true }
+}
+
 function Remove-MbtFolderTree {
     <# Removes what is in a folder, the folder itself stays; a link (junction or symbolic link) is removed and never followed, so what it points to is never touched. -KeepFirst: a file of the folder that is left for the caller. #>
     param([Parameter(Mandatory)][string]$Path, [string]$KeepFirst)
     foreach ($entry in [IO.DirectoryInfo]::new($Path).EnumerateFileSystemInfos()) {
         if ($KeepFirst -and $entry.Name -ieq $KeepFirst) { continue }
-        $link = [bool]($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        $link = Test-MbtFolderLink $entry
         if ($entry -is [IO.DirectoryInfo]) {
             if (-not $link) { Remove-MbtFolderTree -Path $entry.FullName }
             [IO.Directory]::Delete($entry.FullName)
@@ -372,7 +379,7 @@ function Invoke-MbtJobRetention {
     $old = [Collections.Generic.List[IO.DirectoryInfo]]::new()
     $planFolder = [regex]::new('-plan-[0-9a-fA-F]{4}$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($dir in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) {
-        if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $dir.Name -ieq $keepName) { continue }
+        if ((Test-MbtFolderLink $dir) -or $dir.Name -ieq $keepName) { continue }
         if ($dir.LastWriteTimeUtc -ge $planLimit) { continue }
         $isPlan = $planFolder.IsMatch($dir.Name)
         if (-not $isPlan -and $dir.LastWriteTimeUtc -ge $limit) { continue }
