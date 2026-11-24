@@ -1785,6 +1785,27 @@ Describe 'Recoverable Items: the entry script' {
         { Invoke-Entry $w @{ Mode = 'Status'; IncludeRecoverableItems = $true } } | Should -Throw '*belong to -Mode Export*'
     }
 
+    It '-WhatIf with a period shows the folder totals as at most, says that the period is applied while the items are listed, and writes nothing' {
+        $w = New-World
+        $store = Join-Path $script:Tmp 'cli-per-all'
+        $dry = Invoke-Entry $w @{ Mode = 'Export'; PrimaryMailboxId = $script:Src; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-per-tmp'); WhatIf = $true; ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' }
+        $dry | Should -Match 'Period\s+arrived between 2026-03-01 and 2026-03-31'
+        $dry | Should -Match 'total: at most \d+ item\(s\)'
+        $dry | Should -Match 'period \(arrived between 2026-03-01 and 2026-03-31\): the numbers above are the totals of the folders, the most this export can take'
+        $dry | Should -Match 'the exact numbers \(items kept, items outside the period\)'
+        (Test-Path (Join-Path $store 'catalog.db')) | Should -BeFalse
+        $plain = Invoke-Entry $w @{ Mode = 'Export'; PrimaryMailboxId = $script:Src; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-per-tmp'); WhatIf = $true }
+        $plain | Should -Match 'total: \d+ item\(s\)'
+        $plain | Should -Not -Match 'at most \d+ item|the most this export can take'
+        $sel = Join-Path $script:Tmp 'cli-per-sel.json'
+        $null = Invoke-Entry $w @{ Mode = 'Browse'; PrimaryMailboxId = $script:Src; Folder = 'Inbox'; IncludeSubfolders = $true; SaveSelection = $sel; StorePath = (Join-Path $script:Tmp 'cli-per-none') }
+        $bySel = Invoke-Entry $w @{ Mode = 'Export'; SelectionFile = $sel; StorePath = $store; TempPath = (Join-Path $script:Tmp 'cli-per-tmp'); WhatIf = $true; ArrivedFrom = '2026-03-01' }
+        $bySel | Should -Match 'selection \(Primary mailbox\): \d+ folder\(s\), at most \d+ item\(s\)'
+        $bySel | Should -Match 'Inbox: folder and its subfolders .* - at most \d+ item\(s\) in \d+ folder\(s\)'
+        $bySel | Should -Match 'the most this export can take'
+        (Test-Path (Join-Path $store 'catalog.db')) | Should -BeFalse
+    }
+
     It 'the entry script stops an export of an unreachable mailbox with the explanation' {
         $bare = 'MBX:cccccccc-0000-0000-0000-00000000000c@' + $script:Tenant
         $w = New-World

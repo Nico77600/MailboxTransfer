@@ -1739,10 +1739,11 @@ function Show-MbtBrowseTree {
 function Format-MbtBrowseTotals {
     <# "40 folder(s), 1234 item(s), 12.3 GiB (3 folders with unknown size, not counted)"; the size is "unknown" when no folder gives one. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Totals)
+    # -AtMost: the folder totals are the most an export of a period can take (the period is applied while the items are listed)
+    param([Parameter(Mandatory)]$Totals, [switch]$AtMost)
     $size = if ($Totals.SizeUnknown) { 'size unknown' } else { Format-MbtBytes $Totals.KnownSizeBytes }
     $unknown = if ($Totals.FoldersWithUnknownSize -gt 0 -and -not $Totals.SizeUnknown) { " ($($Totals.FoldersWithUnknownSize) folder$(if ($Totals.FoldersWithUnknownSize -ne 1) { 's' }) with unknown size, not counted)" } else { '' }
-    return ('{0} folder(s), {1} item(s), {2}{3}' -f $Totals.Folders, $Totals.Items, $size, $unknown)
+    return ('{0} folder(s), {1}{2} item(s), {3}{4}' -f $Totals.Folders, $(if ($AtMost) { 'at most ' }), $Totals.Items, $size, $unknown)
 }
 
 function Show-MbtBrowseItems {
@@ -1797,7 +1798,8 @@ function Show-MbtBrowsePreview {
 function Show-MbtExportPlan {
     <# Prints what an export plan will take, and what cannot be exported. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Plan)
+    # -AtMost: the folders of the plan are taken with a period, so the counts of whole folders are the most the export can take
+    param([Parameter(Mandatory)]$Plan, [switch]$AtMost)
     foreach ($f in $Plan.Folders) {
         $what = if ($f.ItemIds) { "$($f.ItemIds.Count) item(s)" } elseif ($f.IncludeSubfolders) { 'folder and its subfolders' } else { 'folder' }
         $where = if ($f.MailboxId) { " in $($f.MailboxId)" } else { '' }
@@ -1805,7 +1807,7 @@ function Show-MbtExportPlan {
         $count = ''
         if ($f.Resolved -and $f.Items -ge 0) {
             $size = if ($f.SizeComplete) { Format-MbtBytes $f.Bytes } elseif ($f.Bytes -ge 0) { "{0} known, {1} folder(s) of unknown size" -f (Format-MbtBytes $f.Bytes), $f.FoldersUnknownSize } else { 'size unknown' }
-            $count = "{0} item(s) in {1} folder(s), {2}" -f $f.Items, $f.FolderCount, $size
+            $count = "{0}{1} item(s) in {2} folder(s), {3}" -f $(if ($AtMost -and -not $f.ItemIds) { 'at most ' }), $f.Items, $f.FolderCount, $size
         }
         Write-MbtJobObject -Step plan -Key $f.Path -State $(if ($f.Resolved) { 'planned' } else { 'refused' }) -Total $(if ($f.Resolved) { $f.Items } else { -1 }) -Bytes $(if ($f.Resolved -and $f.SizeComplete) { $f.Bytes } else { -1 }) -Msg ("{0} [{1}]{2}" -f $what, $f.Match, $(if ($f.Note) { " - $($f.Note)" }))
         Write-MbtItem $(if ($f.Resolved) { 'OK' } else { 'FAIL' }) ("{0}: {1}{2} [{3}]{4}{5}" -f $f.Path, $what, $where, $f.Match, $(if ($count) { " - $count" }), $(if ($f.Resolved -and $f.Note) { " - $($f.Note)" }))
@@ -2357,6 +2359,34 @@ function Write-MbtThrottleReport {
     }
 }
 
+function ConvertTo-MbtArrivalPeriod {
+    <#
+    .SYNOPSIS
+        The period of an export from the two bounds the operator gave (-ArrivedFrom, -ArrivedTo): a [MailboxTransfer.ArrivalPeriod], or $null when no bound is given.
+    .DESCRIPTION
+        A bound is text in ISO form, read the same way whatever the language of Windows: yyyy-MM-dd (a whole day of the local time zone: the start of the day for the first bound, the end of it
+        for the last one) or yyyy-MM-ddTHH:mm[:ss] with an optional Z or +hh:mm (used as it is). A date and time value is used as it is. A bound that is not a date, or a start after the end, is an error
+        with a sentence for the operator.
+    #>
+    [CmdletBinding()]
+    param($From, $To)
+    Initialize-MbtEngine
+    $text = {
+        param($Value)
+        if ($null -eq $Value) { return '' }
+        if ($Value -is [datetime]) { return $Value.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff", [Globalization.CultureInfo]::InvariantCulture) }
+        if ($Value -is [DateTimeOffset]) { return $Value.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffffzzz", [Globalization.CultureInfo]::InvariantCulture) }
+        return ([string]$Value).Trim()
+    }
+    $a = & $text $From; $b = & $text $To
+    if (-not $a -and -not $b) { return $null }
+    try { return [MailboxTransfer.ArrivalPeriod]::Parse($a, $b) }
+    catch {
+        $inner = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
+        throw "-ArrivedFrom / -ArrivedTo: $($inner.Message)"
+    }
+}
+
 function Export-MbtMailbox {
     <#
     .SYNOPSIS
@@ -2385,6 +2415,8 @@ function Export-MbtMailbox {
         # Also export Recoverable Items (deleted items, purges, versions, holds), under the folder "Recoverable Items": -RecoverableItemsFolders names the folders (default Deletions, Purges, Versions, DiscoveryHolds)
         [switch]$IncludeRecoverableItems,
         [string[]]$RecoverableItemsFolders,
+        # Only the items that arrived in the mailbox inside this period are exported (a [MailboxTransfer.ArrivalPeriod]); items named one by one in -Plan are always taken
+        $Period,
         [Parameter(Mandatory)][string]$TempPath,
         [int]$IntervalSeconds = 5
     )
@@ -2397,6 +2429,7 @@ function Export-MbtMailbox {
     if ($Plan) { $o.Plan = $Plan }
     $o.IncludeRecoverableItems = [bool]$IncludeRecoverableItems
     if ($RecoverableItemsFolders) { $o.RecoverableItemsFolders = [string[]]$RecoverableItemsFolders }
+    if ($Period) { $o.Period = $Period }
     $job = [MailboxTransfer.ExportJob]::Start($s.Api, $Store, $o)
     $null = Wait-MbtTransferJob -Job $job -IntervalSeconds $IntervalSeconds
     $r = $job.Result
@@ -2404,6 +2437,10 @@ function Export-MbtMailbox {
     Write-MbtItem $(if ($r.Failed -eq 0 -and $r.Completed) { 'OK' } else { 'WARN' }) ("export {0}: {1} items exported ({2}), {3} failed, {4} folders read, {5} items listed, {6} previews with a warning" -f
         $(if ($r.Completed) { 'finished' } else { 'NOT finished' }), $r.Exported, (Format-MbtBytes $r.Bytes), $r.Failed, $r.Folders, $r.Inventoried, $r.PreviewWarnings)
     if ($r.Final) { Write-MbtDetail $r.Final.ToString() }
+    if ($r.Period) {
+        Write-MbtItem INFO ("period ({0}): {1} item(s) kept, {2} outside the period left out (not an error)" -f $r.Period.Describe(), (Format-MbtNumber $r.Inventoried), (Format-MbtNumber $r.ItemsOutsidePeriod))
+        if ($r.ItemsWithoutDate -gt 0) { Write-MbtItem INFO ("{0} item(s) without a date were kept" -f (Format-MbtNumber $r.ItemsWithoutDate)) }
+    }
     if ($r.RecoverableFolders -gt 0) { Write-MbtItem INFO ("Recoverable Items: {0} folder(s) recorded under '{1}'. An import puts them in a normal folder named '{2}', never back into Recoverable Items." -f $r.RecoverableFolders, [MailboxTransfer.RecoverableItems]::TopName, [MailboxTransfer.RecoverableItems]::RestoredName) }
     if ($r.FoldersMoved -gt 0 -or $r.AuxMailboxes.Count -gt 0) {
         Write-MbtItem INFO ("auto-expanding archive: {0} expanded folder(s) (recorded once in the main archive tree), items recorded in {1} auxiliary archive(s): {2}{3}" -f $r.FoldersMoved, $r.AuxMailboxes.Count, ($r.AuxMailboxes -join ', '),
@@ -3331,7 +3368,7 @@ Export-ModuleMember -Function @(
     'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath',
     'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem',
     'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
-    'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
+    'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
     'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
     'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
     'Show-MbtBrowseTree', 'Show-MbtBrowseItems', 'Show-MbtBrowsePreview', 'Show-MbtExportPlan'

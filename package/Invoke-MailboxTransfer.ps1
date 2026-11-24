@@ -17,7 +17,8 @@
                   (redirections to an auxiliary archive of an auto-expanding archive are followed). -IncludeRecoverableItems also exports the
                   deleted items kept in Recoverable Items (Deletions, Purges, Versions, DiscoveryHolds; -RecoverableItemsFolders names others), stored
                   under one top folder "Recoverable Items" in the store and in the PST, never mixed with the normal folders. An import of such an export
-                  puts them in a normal folder named "Restored deleted items", never back into Recoverable Items.
+                  puts them in a normal folder named "Restored deleted items", never back into Recoverable Items. -ArrivedFrom / -ArrivedTo keep only the
+                  items that arrived in the mailbox inside a period (see them below).
     Mode ExportPst  Converts the store into PST files with our own writer (no Outlook, no third-party component): the real folder tree of each
                   location under one top folder (Primary, Archive, "Auxiliary archive n (guid8)"), the standard folders first, split at -PstMaxSizeGB
                   (default 50 = 51,200 MiB) on item boundaries, <name>.pst, <name>-002.pst... and <name>.manifest.json. The auxiliary archives are merged
@@ -197,6 +198,20 @@
     Export, Import: only this folder and the folders below it (path as in the store). Browse: the folder to list (id or path, or the end of a path
     such as Inbox/Reports).
 
+.PARAMETER ArrivedFrom
+    Export, ExportEml (live mailbox): the first day, or the first instant, of the period of the export. Only the items that arrived in the mailbox on or after it are listed and exported (the bound is
+    included). Written year first, whatever the language of Windows: 2026-03-01 (the whole day, from midnight of the local time zone) or 2026-03-01T08:30 (used as it is; seconds, a fraction and
+    Z or +hh:mm are accepted). Not case sensitive. Left out: no start. "Arrived" is the date the item was created in the mailbox (createdDateTime of the import-export listing). For mail that was migrated
+    or imported into the mailbox it is the date of that import, not the original date of the message. One period for the whole export (every mailbox of a -MailboxCsv batch, every location of a selection).
+    Items named one by one in a -SelectionFile are always taken, whatever their date: the period applies to the items listed from the folders asked. An item that has no date is kept, and counted.
+    Items outside the period are skipped, not an error: the exit code does not change. A store keeps one period for a mailbox: continuing an export with another period is refused. -WhatIf shows the
+    folder totals as the most the export can take: the exact numbers come at the end of the run (kept, outside the period, without a date). Not for the import modes, nor for -Mode ExportPst
+    and -Mode ExportEml from a store or a PST (they hold no date of arrival): give the period to the -Mode Export that fills the store.
+
+.PARAMETER ArrivedTo
+    Export, ExportEml (live mailbox): the last day, or the last instant, of the period (the bound is included). 2026-03-31 is the whole day, up to the last instant of it in the local time zone;
+    2026-03-31T18:30 is used as it is. Left out: no end. -ArrivedFrom must not be after -ArrivedTo: the run is refused before anything starts. See -ArrivedFrom.
+
 .PARAMETER IncludeFolder
     ImportPst, ImportEml, ExportPst (from -PstPath): only some folders of the PST or of the folder of .eml files. Paths below the top folder of the PST (Top of Personal Folders)
     or below -EmlPath ("Inbox", "Inbox/Projects"), wildcards * (any text, slashes included) and ? (one character), case does not matter. A path chooses the folder and the folders
@@ -370,6 +385,8 @@
     .\Invoke-MailboxTransfer.ps1 -Mode Export -SelectionFile D:\sel.json -StorePath D:\store
     .\Invoke-MailboxTransfer.ps1 -Mode Export -SelectionFile D:\selections\all-locations.json -StorePath D:\store -OutputPst D:\pst\adele.pst -RetryWaitSeconds 5
     .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store -OutputPst D:\pst\adele.pst -PstMaxSizeGB 10
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -StorePath D:\store -ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\batch\mailboxes.csv -OutputPst D:\pst -ArrivedFrom 2025-07-01
     .\Invoke-MailboxTransfer.ps1 -Mode ExportPst -StorePath D:\store -OutputPst D:\pst\adele.pst
     .\Invoke-MailboxTransfer.ps1 -Mode ExportPst -StorePath D:\store -OutputPst D:\pst\adele.pst -WhatIf
     .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox All -StorePath D:\store -WhatIf
@@ -414,6 +431,8 @@ param(
     [int]$IntervalSeconds = 5,
 
     [string]$Folder,
+    [object]$ArrivedFrom,
+    [object]$ArrivedTo,
     [string]$SelectionFile,
     [switch]$SkipInventory,
     [int]$MaxAttempts = 3,
@@ -603,6 +622,18 @@ if ($Mode -eq 'Export' -and $IncludeRecoverableItems) {
     if ($Folder -and -not [MailboxTransfer.RecoverableItems]::IsPath($Folder)) { throw "-IncludeRecoverableItems adds Recoverable Items to the export of the whole mailbox; it cannot be combined with -Folder '$Folder'. Use -Folder 'Recoverable Items/Deletions' for the deleted items alone." }
 }
 
+# The period of an export (-ArrivedFrom, -ArrivedTo): read here, before the sign-in, so that a date that cannot be read or a start after the end stops everything at once.
+$arrivalPeriod = $null
+if ($PSBoundParameters.ContainsKey('ArrivedFrom') -or $PSBoundParameters.ContainsKey('ArrivedTo')) {
+    if ($Mode -eq 'ExportPst') { throw '-ArrivedFrom and -ArrivedTo choose the items an export lists in a mailbox. -Mode ExportPst only converts what a store or a PST already holds: give the period to the -Mode Export that fills the store (with -OutputPst it writes the PST files in the same command).' }
+    if ($Mode -notin 'Export', 'ExportEml') { throw '-ArrivedFrom and -ArrivedTo belong to the export modes (-Mode Export, and -Mode ExportEml from the live mailbox): an import takes every item its source holds. Choose the period when the items are exported.' }
+    $arrivalPeriod = ConvertTo-MbtArrivalPeriod -From $ArrivedFrom -To $ArrivedTo
+    if ($arrivalPeriod -and $Mode -eq 'ExportEml') {
+        $emlSourceAsked = if ($EmlSource) { $EmlSource } elseif ($PstPath) { 'Pst' } elseif ($PSBoundParameters.ContainsKey('StorePath')) { 'Store' } else { 'Live' }
+        if ($emlSourceAsked -ne 'Live') { throw '-ArrivedFrom and -ArrivedTo apply to -Mode ExportEml from the live mailbox: a store or a PST holds no date of arrival. Give the period to the -Mode Export that fills the store.' }
+    }
+}
+
 # The frames and the icons of the console are Unicode; a redirected output (a job of the console, a scheduled task) is UTF-8 without BOM.
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { Write-Verbose "Console output encoding unchanged: $($_.Exception.Message)" }
 if (-not $LogFolder) { $LogFolder = if ($env:MAILBOXTRANSFER_LOG_FOLDER) { $env:MAILBOXTRANSFER_LOG_FOLDER } else { Join-Path $outRoot 'logs' } }
@@ -627,6 +658,7 @@ elseif ($Mode -in 'Export', 'ExportPst', 'Import', 'Status', 'ExportEml') { $ban
 $bannerSource = @($PstPath, $EmlPath, $Path | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ', '
 if ($bannerSource) { $bannerDetails.Source = @('Folder', $bannerSource) }
 if ($OutputPst) { $bannerDetails.Output = @('Folder', $OutputPst) }
+if ($arrivalPeriod) { $bannerDetails.Period = @('Clock', $arrivalPeriod.Describe()) }
 if ($Destination) { $bannerDetails.Output = @('Folder', $Destination) }
 if ($logPath) { $bannerDetails.Log = @('Log', $logPath) }
 Write-MbtBanner -Title 'Mailbox Transfer' -Subtitle $bannerSubtitle -Details $bannerDetails
@@ -653,8 +685,13 @@ function Write-MbtRunSummary {
     if ($dryRun -and $ExitCode -eq 0) { $title = "$Mode planned (WhatIf, nothing was written)" }
     $values = [ordered]@{ Result = @($(if ($ExitCode -eq 0) { 'Ok' } elseif ($ExitCode -eq 1) { 'Fail' } else { 'Warn' }), "exit code $ExitCode - $meaning") }
     if ($Failure) { $values.Error = @('Fail', $Failure) }
-    $parts = @(foreach ($k in ($script:counts.Keys | Sort-Object)) { $v = $script:counts[$k]; if ($v -is [ValueType] -or $v -is [string]) { '{0} {1}' -f $k, $(if ($v -is [long] -or $v -is [int]) { Format-MbtNumber $v } else { $v }) } })
+    $parts = @(foreach ($k in ($script:counts.Keys | Sort-Object)) { if ($arrivalPeriod -and $k -in 'kept', 'outsidePeriod', 'withoutDate') { continue }; $v = $script:counts[$k]; if ($v -is [ValueType] -or $v -is [string]) { '{0} {1}' -f $k, $(if ($v -is [long] -or $v -is [int]) { Format-MbtNumber $v } else { $v }) } })
     if ($parts) { $values.Counts = @('Store', ($parts -join ', ')) }
+    if ($arrivalPeriod -and $script:counts.ContainsKey('outsidePeriod')) {
+        $periodNote = "$($arrivalPeriod.Describe()): $(Format-MbtNumber $script:counts['kept']) kept, $(Format-MbtNumber $script:counts['outsidePeriod']) outside the period (skipped, not an error)"
+        if ([long]$script:counts['withoutDate'] -gt 0) { $periodNote += "; $(Format-MbtNumber $script:counts['withoutDate']) without a date were kept" }
+        $values.Period = @('Clock', $periodNote)
+    }
     $values.Duration = @('Clock', (Format-MbtDuration $runClock.Elapsed.TotalSeconds))
     if ($script:next -and $script:next -notin 'done') { $values.Next = @('Plan', [string]$script:next) }
     if ($logPath) { $values.Log = @('Log', $logPath) }
@@ -703,7 +740,7 @@ if ($EventsFile) {
         'Export' { $StorePath + $(if ($OutputPst) { ", PST files: $OutputPst" } else { '' }) } 'ExportPst' { $OutputPst } 'Import' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) }
         'ImportPst' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'ExportEml' { $EmlPath } 'ImportEml' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'RepairPst' { $Destination } default { '' }
     }
-    Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import') { $StorePath }) -Source ([string]$sourceText) -Destination ([string]$destinationText) -Batch $BatchId
+    Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import') { $StorePath }) -Source ([string]$sourceText) -Destination ([string]$destinationText) -Batch $BatchId -Period $arrivalPeriod
     $steps = switch ($Mode) {
         'Export' {
             @(@{ Id = 'tree'; Title = 'Read the folder tree' }, @{ Id = 'list'; Title = 'List the items you chose' }, @{ Id = 'download'; Title = 'Download the items' }, @{ Id = 'verify'; Title = 'Check the downloads' }) +
@@ -860,6 +897,14 @@ function Get-OtherArchiveLocation([string]$ExceptId) {
     }
 }
 
+# What a plan (-WhatIf) of an export with a period says about its numbers: the folder totals are the most the export can take; the period is applied while the items are listed.
+function Write-MbtPeriodPlanNote {
+    if (-not $arrivalPeriod) { return }
+    $note = "period ($($arrivalPeriod.Describe())): the numbers above are the totals of the folders, the most this export can take. The period is applied while the items are listed during the export; the end of the export gives the exact numbers (items kept, items outside the period)."
+    Write-MbtItem INFO $note
+    Write-MbtEvent info ([ordered]@{ msg = $note })
+}
+
 # The export of a list of mailboxes (-MailboxCsv, or -ResumeBatch for a batch that exists). The whole CSV file is checked first and every problem is printed together; then each mailbox is an ordinary
 # export job in a process of its own (Invoke-MbtBatch). The sign-in is done once here, and never asked for again in the middle of a run.
 function Invoke-BatchExport {
@@ -891,6 +936,20 @@ function Invoke-BatchExport {
     }
     foreach ($n in 'SkipInventory', 'IncludeRecoverableItems', 'SeparateAuxArchives', 'SkipCheck', 'Force') {
         if ($boundParameters.ContainsKey($n)) { $pass[$n] = [bool](Get-Variable -Name $n -ValueOnly) }
+    }
+    # the period applies to every mailbox of the batch: the children get the bounds as written (ISO text), the same ones again when the batch is continued
+    foreach ($n in 'ArrivedFrom', 'ArrivedTo') {
+        if ($boundParameters.ContainsKey($n)) {
+            $v = Get-Variable -Name $n -ValueOnly
+            $pass[$n] = if ($v -is [datetime]) { $v.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff", [Globalization.CultureInfo]::InvariantCulture) } elseif ($null -eq $v) { '' } else { ([string]$v).Trim() }
+        }
+    }
+    if ($batch -and ($boundParameters.ContainsKey('ArrivedFrom') -or $boundParameters.ContainsKey('ArrivedTo'))) {
+        $wasPeriod = ConvertTo-MbtArrivalPeriod -From $storedPass['ArrivedFrom'] -To $storedPass['ArrivedTo']
+        $nowPeriod = ConvertTo-MbtArrivalPeriod -From $pass['ArrivedFrom'] -To $pass['ArrivedTo']
+        if ([MailboxTransfer.ArrivalPeriod]::KeyOf($wasPeriod) -ne [MailboxTransfer.ArrivalPeriod]::KeyOf($nowPeriod)) {
+            & $stop @("The batch $id was started with the period '$(if ($wasPeriod) { $wasPeriod.Describe() } else { 'all dates' })', this run asks '$(if ($nowPeriod) { $nowPeriod.Describe() } else { 'all dates' })'. Continuing it would mix two periods in the stores of the batch. Give the same period, or another -BatchName."); return
+        }
     }
     $givenAuth = $useCertificate -or $boundParameters.ContainsKey('UserPrincipalName') -or $boundParameters.ContainsKey('TenantId') -or $boundParameters.ContainsKey('ClientId')
     $appOnly = [bool]$useCertificate
@@ -1046,7 +1105,7 @@ try {
                     # a selection made on an archive still resolves when a folder moved to an auxiliary archive since: the other archives are searched by folder entry key
                     $also = if ($selection.Kind -in 'Archive', 'AuxArchive') { @(Get-OtherArchiveLocation $selectedId) } else { @() }
                     $selectionPlan = Resolve-MbtBrowsePlan -Selection $selection -AlsoSearch $also -RecoverableItemsFolders $RecoverableItemsFolders
-                    Show-MbtExportPlan -Plan $selectionPlan
+                    Show-MbtExportPlan -Plan $selectionPlan -AtMost:([bool]$arrivalPeriod)
                     if (-not $selectionPlan.IsComplete) { throw "-SelectionFile: $($selectionPlan.Problems.Count) problem(s), nothing was exported. Remove those entries from the selection (or select them again) and run again." }
                     $units += [pscustomobject]@{ Plan = $selectionPlan; Kind = [string]$selection.Kind; Id = $selectedId }
                 }
@@ -1055,9 +1114,10 @@ try {
                     # the counts of the plan (the service now, folders below included), not the ones the browse view wrote in the file
                     foreach ($unit in $units) {
                         $selTotals = $unit.Plan.Totals()
-                        Write-MbtItem INFO ("selection ({0} mailbox): {1}{2}" -f $unit.Kind, (Format-MbtBrowseTotals $selTotals), $(if (-not $selTotals.SizeUnknown) { "; about {0} PST file(s) of at most {1} if converted (-OutputPst)" -f [math]::Max(1, [math]::Ceiling($selTotals.KnownSizeBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes) }))
+                        Write-MbtItem INFO ("selection ({0} mailbox): {1}{2}" -f $unit.Kind, (Format-MbtBrowseTotals $selTotals -AtMost:([bool]$arrivalPeriod)), $(if (-not $selTotals.SizeUnknown) { "; about {0} PST file(s) of at most {1} if converted (-OutputPst)" -f [math]::Max(1, [math]::Ceiling($selTotals.KnownSizeBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes) }))
                     }
                     Write-MbtJobStep -Id tree -State done
+                    Write-MbtPeriodPlanNote
                     Write-MbtItem WARN 'WhatIf: the selection is valid, nothing was exported and no store was created.'
                     break
                 }
@@ -1095,9 +1155,10 @@ try {
                     } catch { Write-MbtItem WARN "the folders of the $($tg.Kind) mailbox $($tg.Id) could not be read: $($_.Exception.Message)" }
                 }
                 if ($asked -in 'Archive', 'All') { Write-MbtDetail 'an auto-expanding archive: the items of its expanded folders live in auxiliary archives; the export follows them and records them under the folder of the main archive' }
-                Write-MbtItem INFO ("total: {0} item(s), {1}{2}; about {3} PST file(s) of at most {4} if converted ({5})" -f $sumItems, (Format-MbtBytes $sumBytes), $(if ($sumUnknown) { ' announced (some folders give no size)' } else { ' announced' }),
+                Write-MbtItem INFO ("total: {0}{1} item(s), {2}{3}; about {4} PST file(s) of at most {5} if converted ({6})" -f $(if ($arrivalPeriod) { 'at most ' }), $sumItems, (Format-MbtBytes $sumBytes), $(if ($sumUnknown) { ' announced (some folders give no size)' } else { ' announced' }),
                     [math]::Max(1, [math]::Ceiling($sumBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes), $(if ($OutputPst) { $OutputPst } else { 'give -OutputPst to convert' }))
                 if ($OutputPst) { Write-MbtDetail "after the export the store would be converted: $OutputPst, then -002.pst... and a manifest" }
+                Write-MbtPeriodPlanNote
                 Stop-MbtPhaseProgress; Write-MbtJobStep -Id tree -State done
                 if (-not $PSCmdlet.ShouldProcess($StorePath, "Export $($targets.Count) location(s) into the store")) { Write-MbtItem WARN 'WhatIf: nothing was exported and no store was created.' }
                 break
@@ -1119,8 +1180,13 @@ try {
                 Write-MbtItem INFO "exporting the $Kind mailbox $Id into $StorePath"
                 $exported[$Id.ToLowerInvariant()] = $true
                 $r = Export-MbtMailbox -Store $store -MailboxId $Id -Kind $Kind -UserPrincipalName $UserPrincipalName -Concurrency $Concurrency `
-                    -BatchItems $BatchItems -BatchBytes ([long]$BatchMiB * 1MB) -MaxAttempts $MaxAttempts -NotReadyTrip $NotReadyTrip -SkipInventory:$SkipInventory -Folder $Folder -Plan $subPlan -IncludeRecoverableItems:$IncludeRecoverableItems -RecoverableItemsFolders $RecoverableItemsFolders -TempPath $TempPath -IntervalSeconds $IntervalSeconds
+                    -BatchItems $BatchItems -BatchBytes ([long]$BatchMiB * 1MB) -MaxAttempts $MaxAttempts -NotReadyTrip $NotReadyTrip -SkipInventory:$SkipInventory -Folder $Folder -Plan $subPlan -IncludeRecoverableItems:$IncludeRecoverableItems -RecoverableItemsFolders $RecoverableItemsFolders -Period $arrivalPeriod -TempPath $TempPath -IntervalSeconds $IntervalSeconds
                 if ($r.Error) { throw $r.Error.Message }
+                if ($arrivalPeriod) {
+                    $script:counts['kept'] = [long]$script:counts['kept'] + [long]$r.Result.Inventoried
+                    $script:counts['outsidePeriod'] = [long]$script:counts['outsidePeriod'] + [long]$r.Result.ItemsOutsidePeriod
+                    $script:counts['withoutDate'] = [long]$script:counts['withoutDate'] + [long]$r.Result.ItemsWithoutDate
+                }
                 $script:counts['done'] = [long]$script:counts['done'] + [long]$r.Result.Exported
                 $script:counts['failed'] = [long]$script:counts['failed'] + [long]$r.Result.Failed
                 $script:counts['deferred'] = [long]$script:counts['deferred'] + [long]$r.Result.FoldersDeferred.Count
@@ -1349,6 +1415,7 @@ try {
                     $kind = Get-AskedKind
                     $id = Resolve-MbtMailboxId -Mailbox $kind -TenantId $TenantId -UserPrincipalName $UserPrincipalName -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId -MailboxId $MailboxId -LocationsFile $LocationsFile
                     $loc = New-MbtBrowseLocation -Kind $kind -MailboxId $id
+                    if ($arrivalPeriod) { $emlArgs.Period = $arrivalPeriod }
                     $r = Export-MbtEml @emlArgs -Location $loc
                 }
             }
@@ -1356,6 +1423,12 @@ try {
             foreach ($n in $r.FolderNotes) { Write-MbtItem WARN "folder not exported: $n" }
             foreach ($p in @($r.Problems | Select-Object -First 20)) { Write-MbtItem WARN ("{0}: {1} - {2} ({3})" -f $p.State, $p.Folder, $p.Subject, $p.Reason) }
             $script:counts = @{ done = [long]$r.Exported; resumed = [long]$r.Resumed; skipped = [long]$r.Skipped; failed = [long]$r.Failed; bytes = [long]$r.Bytes; folders = [long]$r.Folders }
+            if ($arrivalPeriod) {
+                $script:counts.kept = [long]($r.Exported + $r.Resumed + $r.Skipped + $r.Failed)
+                $script:counts.outsidePeriod = [long]$r.OutsidePeriod
+                $script:counts.withoutDate = [long]$r.WithoutDate
+                Write-MbtItem INFO ("period ({0}): {1} message(s) outside the period left out (not an error){2}" -f $arrivalPeriod.Describe(), (Format-MbtNumber $r.OutsidePeriod), $(if ($r.WithoutDate) { "; $(Format-MbtNumber $r.WithoutDate) without a date were kept" }))
+            }
             if ($r.Failed -gt 0 -or $r.Cancelled) { $exitCode = 2 }
             Write-MbtJobStep -Id export -State $(if ($exitCode -eq 0) { 'done' } else { 'running' }) -Done ($r.Exported + $r.Resumed + $r.Skipped + $r.Failed) -Bytes $r.Bytes -Msg $(if ($r.Cancelled) { 'stopped' })
         }

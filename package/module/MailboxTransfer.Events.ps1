@@ -45,16 +45,31 @@ function Open-MbtEventLog {
         # the batch this job belongs to (status.json: batch): the overview lists the jobs of a batch together; left out, the job belongs to none
         [string]$Batch,
         # period of the heartbeat that detects a sleep (milliseconds, 0 = none)
-        [int]$HeartbeatMs = 5000
+        [int]$HeartbeatMs = 5000,
+        # the period of an export (a [MailboxTransfer.ArrivalPeriod]): written in the plan event and in status.json; left out when there is none
+        $Period
     )
     Initialize-MbtEngine
     Close-MbtEventLog
     $full = [IO.Path]::GetFullPath($Path)
     $script:EventLog = [MailboxTransfer.EventLog]::new($full, $null, $HeartbeatMs, 120)
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
-    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false }
+    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false; Period = $null; PeriodOutside = 0L }
     $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch
+    $script:JobInfo.Period = ConvertTo-MbtPeriodField $Period
+    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch -Period $script:JobInfo.Period
+}
+
+function ConvertTo-MbtPeriodField {
+    <# The period of an export as the field of the events and of status.json: from and to (UTC, ISO 8601, a bound left out is open) and text (in words, local time zone); $null for no period. #>
+    param($Period)
+    if (-not $Period -or $Period.IsEmpty) { return $null }
+    $iso = { param($d) $d.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture) }
+    $field = [ordered]@{}
+    if ($Period.From) { $field.from = & $iso $Period.From }
+    if ($Period.To) { $field.to = & $iso $Period.To }
+    $field.text = [string]$Period.Describe()
+    return $field
 }
 
 function Close-MbtEventLog {
@@ -109,7 +124,9 @@ function Write-MbtJobPlan {
     if (-not $script:EventLog) { return }
     $list = @($Steps | ForEach-Object { [ordered]@{ id = $_.Id; title = $_.Title } })
     foreach ($s in $Steps) { $script:JobInfo.Steps[$s.Id] = 'waiting' }
-    Write-MbtEvent plan ([ordered]@{ job = $script:JobInfo.Id; task = $script:JobInfo.Task; mode = $script:JobInfo.Mode; steps = $list })
+    $plan = [ordered]@{ job = $script:JobInfo.Id; task = $script:JobInfo.Task; mode = $script:JobInfo.Mode; steps = $list }
+    if ($script:JobInfo.Period) { $plan.period = $script:JobInfo.Period }
+    Write-MbtEvent plan $plan
 }
 
 function Update-MbtJobStatusTick {
@@ -228,7 +245,9 @@ function Write-MbtJobStatus {
         [Parameter(Mandatory)][string]$JobFolder,
         [Parameter(Mandatory)][ValidateSet('running', 'stopped', 'resumable', 'needs-decision', 'complete', 'error')][string]$State,
         [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store, [string]$Source, [string]$Destination, [string]$Batch,
-        [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason
+        [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason,
+        # the period of an export (see ConvertTo-MbtPeriodField); a job without one has no period field
+        [System.Collections.IDictionary]$Period
     )
     if (-not (Test-Path -LiteralPath $JobFolder)) { New-Item -ItemType Directory -Path $JobFolder -Force | Out-Null }
     $file = Join-Path $JobFolder 'status.json'
@@ -242,6 +261,7 @@ function Write-MbtJobStatus {
     $s.lastEvent = if ($script:EventLog) { [MailboxTransfer.EventLog]::Iso($script:EventLog.LastEventUtc) } else { $now }
     foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('source', $Source), @('destination', $Destination), @('batch', $Batch), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
     if ($Counts) { $s.counts = $Counts }
+    if ($Period) { $s.period = $Period }
     if ($PSBoundParameters.ContainsKey('ExitCode') -and $null -ne $ExitCode) { $s.exitCode = [int]$ExitCode }
     $json = $s | ConvertTo-Json -Depth 6
     $tmp = "$file.$PID.tmp"
@@ -557,7 +577,15 @@ function Update-MbtJobProgress {
     if ($current -and $order -contains $current -and $current -ne $p.Step) {
         $i = [array]::IndexOf($order, $current)
         # the steps before the current one are done (a reconcile pass is a side step of the send step)
-        if ($current -ne 'reconcile' -and $i -gt 0) { foreach ($s in @($order[0..($i - 1)])) { if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') { Write-MbtJobStep -Id $s -State done } } }
+        if ($current -ne 'reconcile' -and $i -gt 0) {
+            foreach ($s in @($order[0..($i - 1)])) {
+                if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') {
+                    # the listing is over: with a period it says how many items were left out (all the locations of the run together)
+                    $note = if ($s -eq 'list') { Get-MbtPeriodListNote -Job $Job } else { $null }
+                    if ($note) { Write-MbtJobStep -Id $s -State done -Msg $note } else { Write-MbtJobStep -Id $s -State done }
+                }
+            }
+        }
         Write-MbtJobStep -Id $current -State running
         $p.Step = $current
     }
@@ -603,9 +631,30 @@ function Update-MbtJobProgress {
                 if ($s -eq $counting) { Write-MbtJobStep -Id $s -State done -Done $snap.Items -Total $snap.TotalItems -Bytes $snap.Bytes -BytesTotal $snap.TotalBytes } else { Write-MbtJobStep -Id $s -State done }
             }
         }
+        if ($export) { $result = Get-MbtJobPeriodResult -Job $Job; if ($result) { $script:JobInfo.PeriodOutside = [long]$script:JobInfo.PeriodOutside + [long]$result.ItemsOutsidePeriod } }
         if ($export -and $done) { Write-MbtJobStep -Id verify -State done -Msg 'Each item is checked against its fingerprint as it arrives.' }
         if ($Job.Error) { if ($p.Step) { Write-MbtJobStep -Id $p.Step -State failed -Msg $Job.Error.Message } }
     }
+}
+
+function Get-MbtJobPeriodResult {
+    <# The result of an export job that has a period (the engine's ExportResult), or $null. #>
+    param($Job)
+    if (-not $Job -or -not $Job.PSObject.Properties['Result'] -or -not $Job.Result) { return $null }
+    if (-not $Job.Result.PSObject.Properties['Period'] -or -not $Job.Result.Period) { return $null }
+    return $Job.Result
+}
+
+function Get-MbtPeriodListNote {
+    <# "25 items outside the period left out" (the items of the earlier locations of the run included), or $null when the job has no period or has not counted yet. #>
+    param($Job)
+    $result = Get-MbtJobPeriodResult -Job $Job
+    if (-not $result) { return $null }
+    $before = [long]$script:JobInfo.PeriodOutside
+    $outside = $before + [long]$result.ItemsOutsidePeriod
+    $text = '{0} {1} outside the period left out' -f $outside.ToString('N0', [Globalization.CultureInfo]::InvariantCulture), $(if ($outside -eq 1) { 'item' } else { 'items' })
+    if ([long]$result.ItemsWithoutDate -gt 0) { $text += '; {0} without a date kept' -f ([long]$result.ItemsWithoutDate).ToString('N0', [Globalization.CultureInfo]::InvariantCulture) }
+    return $text
 }
 
 function Get-MbtPstProgressHook {

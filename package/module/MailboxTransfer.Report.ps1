@@ -272,6 +272,7 @@ function Get-MbtJobReportModel {
     $waitCount = 0L; $waitSeconds = 0.0
     $eventCount = 0L
     $job = [string](Get-MbtReportValue $status 'jobId' ''); $task = [string](Get-MbtReportValue $status 'task' ''); $mode = [string](Get-MbtReportValue $status 'mode' '')
+    $period = [string](Get-MbtReportValue (Get-MbtReportValue $status 'period' $null) 'text' '')
     $tickWords = [regex]::new('\d[\d,\.]*')
     $oneText = { param([string]$S) if ($S.Length -gt $MaxText) { $S.Substring(0, $MaxText) + '...' } else { $S } }
 
@@ -415,6 +416,8 @@ function Get-MbtJobReportModel {
                     if (-not $job) { $job = [string]$e['job'] }
                     if (-not $task) { $task = [string]$e['task'] }
                     if (-not $mode) { $mode = [string]$e['mode'] }
+                    $planPeriod = [string](Get-MbtReportValue (Get-MbtReportValue $e 'period' $null) 'text' '')
+                    if ($planPeriod) { $period = $planPeriod }
                     foreach ($s in @(Get-MbtReportValue $e 'steps' @())) { & $addStep ([string](Get-MbtReportValue $s 'id' '')) ([string](Get-MbtReportValue $s 'title' '')) }
                 }
                 'result' {
@@ -471,7 +474,7 @@ function Get-MbtJobReportModel {
     $source = $ends.Source; $destination = $ends.Destination
 
     $model = [ordered]@{
-        Title = $title; Task = $task; TaskName = (Get-MbtReportTaskName -Task $task -Mode $mode); Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store
+        Title = $title; Task = $task; TaskName = (Get-MbtReportTaskName -Task $task -Mode $mode); Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store; Period = $period
         Started = $first; Finished = $finished; Seconds = $seconds; Interrupted = $interrupted
         Result = $(if ($result) { @{ Exit = $result.Exit; Complete = $result.Complete; Next = $result.Next; Reason = $result.Reason } } else { $null })
         Verdict = $verdict
@@ -615,6 +618,7 @@ function ConvertTo-MbtJobReportHtml {
     $metaItems = [ordered]@{
         'Task' = $Model.TaskName; 'Source' = $Model.Source; 'Destination' = $Model.Destination
         'Store' = $(if ($Model.Store -and $Model.Store -ne $Model.Source -and $Model.Store -ne $Model.Destination) { $Model.Store } else { '' })
+        'Period' = $(if ($Model.Contains('Period') -and $Model.Period) { 'Items that ' + $Model.Period + ' in the mailbox' } else { '' })
         'Started' = (Format-MbtReportTime $started); 'Finished' = $(if ($Model.Interrupted) { 'not written (last event ' + (Format-MbtReportTime $finished) + ')' } else { Format-MbtReportTime $finished })
         'Duration' = (Format-MbtReportDuration $Model.Seconds)
         'Result' = $(if ($Model.Result) { $verdict.Text + ' (exit code ' + $Model.Result.Exit + ')' } else { $verdict.Text })
@@ -634,7 +638,7 @@ function ConvertTo-MbtJobReportHtml {
         @('done', 'Items done', 'ok', $true), @('recovered', 'Recovered', 'ok', $false), @('itemsWritten', 'Items written', 'ok', $false), @('foldersCreated', 'Folders created', '', $false), @('folders', 'Folders', '', $false),
         @('failed', 'Failed', 'fail', $true), @('refused', 'Refused', 'warn', $false), @('deferred', 'Deferred', 'warn', $false), @('unknown', 'To settle', 'warn', $false), @('pending', 'Left to do', 'warn', $false),
         @('partial', 'Partly recovered', 'warn', $false), @('lost', 'Lost', 'fail', $false), @('orphan', 'Orphans', 'warn', $false), @('errors', 'Errors', 'fail', $false), @('warnings', 'Warnings', 'warn', $false), @('infos', 'Notes', '', $false),
-        @('skipped', 'Skipped', '', $false), @('resumed', 'Resumed', '', $false), @('bytes', 'Data', 'bytes', $false), @('fileBytes', 'File size', 'bytes', $false), @('parts', 'PST files', '', $false)
+        @('skipped', 'Skipped', '', $false), @('resumed', 'Resumed', '', $false), @('kept', 'Items kept', '', $false), @('outsidePeriod', 'Outside the period', '', $false), @('withoutDate', 'Kept without a date', '', $false), @('bytes', 'Data', 'bytes', $false), @('fileBytes', 'File size', 'bytes', $false), @('parts', 'PST files', '', $false)
     )
     foreach ($s in $spec) {
         $has = $counts.Contains($s[0])
@@ -776,6 +780,7 @@ function ConvertTo-MbtJobReportHtml {
     # data for tools
     $data = [ordered]@{
         format = 1; title = $Model.Title; task = $Model.Task; mode = $Model.Mode; job = $Model.JobId; source = $Model.Source; destination = $Model.Destination; store = $Model.Store
+        period = $(if ($Model.Contains('Period') -and $Model.Period) { [string]$Model.Period } else { $null })
         started = $started.ToString('o'); finished = $finished.ToString('o'); seconds = [math]::Round($Model.Seconds, 1); interrupted = $Model.Interrupted
         result = $Model.Result; verdict = $verdict.Text; counts = $Model.Counts; waits = $Model.Waits
         steps = @($Model.Steps | ForEach-Object { [ordered]@{ id = $_.Id; title = $_.Title; state = $_.State; started = $(if ($_.Started) { ([datetime]$_.Started).ToString('o') } else { $null }); finished = $(if ($_.Finished) { ([datetime]$_.Finished).ToString('o') } else { $null }); done = $_.Done; total = $_.Total; bytes = $_.Bytes; msg = $_.Msg } })

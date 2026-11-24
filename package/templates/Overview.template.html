@@ -230,6 +230,7 @@ footer { color: var(--cp-text-muted); font-size: 12px; line-height: 1.6; margin-
         const status = element("td"); status.appendChild(element("span", "badge " + res.tone, text(r, "result"))); tr.appendChild(status);
         const items = element("td", "num", r[col.done] >= 0 ? en.format(r[col.done]) : "");
         if (r[col.failed] > 0) { items.appendChild(document.createTextNode(" ")); items.appendChild(element("span", "failed", "(" + en.format(r[col.failed]) + " failed)")); }
+        if (r[col.outside] > 0) { items.appendChild(document.createTextNode(" ")); const outside = element("span", "", "(" + en.format(r[col.outside]) + " outside the period)"); outside.title = "Items left out because they arrived outside the period of the export. Not an error."; items.appendChild(outside); }
         tr.appendChild(items);
         tr.appendChild(element("td", "num", bytes(r[col.bytes])));
         tr.appendChild(element("td", "num", r[col.code] === 7 ? "" : length(r[col.seconds])));

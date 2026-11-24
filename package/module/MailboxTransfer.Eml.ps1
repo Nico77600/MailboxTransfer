@@ -34,6 +34,8 @@ function Export-MbtEml {
         [ValidateRange(1, 4)][int]$Concurrency = 4,
         [switch]$NoResume,
         [switch]$NoTransportHeaders,
+        # Live only: the messages that arrived in the mailbox inside this period (a [MailboxTransfer.ArrivalPeriod]); the others are left out and counted
+        [Parameter(ParameterSetName = 'Live')]$Period,
         [int]$ProgressSeconds = 5,
         [Threading.CancellationToken]$CancellationToken = [Threading.CancellationToken]::None
     )
@@ -46,6 +48,7 @@ function Export-MbtEml {
             'Pst' { $reader = [MailboxTransfer.PstReader]::Open($PstPath); [MailboxTransfer.PstEmlSource]::new($reader, [IO.Path]::GetFileNameWithoutExtension($PstPath)) }
         }
         if ($source -is [MailboxTransfer.MapiEmlSource]) { $source.Mime.UseTransportHeaders = -not $NoTransportHeaders }
+        if ($Period -and $source -is [MailboxTransfer.LiveEmlSource]) { $source.Period = $Period }
         $o = [MailboxTransfer.EmlExportOptions]::new()
         $o.OutputDirectory = if ([IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location).Path $OutputPath }
         $o.WhatIf = -not $PSCmdlet.ShouldProcess($o.OutputDirectory, "Write .eml files from $($source.Description)")

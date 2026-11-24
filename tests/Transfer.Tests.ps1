@@ -299,6 +299,278 @@ Describe 'Export engine: resume' {
     }
 }
 
+Describe 'Export engine: period of arrival' {
+    BeforeAll {
+        $script:Zone = [TimeZoneInfo]::CreateCustomTimeZone('Test+02', [TimeSpan]::FromHours(2), 'Test+02', 'Test+02')
+        function Get-Utc([string]$Text) { [datetime]::Parse($Text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+        # Inbox: IA is the last second before March, IB the first instant, IC the middle, ID the last second, IE the first instant of April, IN has no date. Projects: P1 is old, P2 is in March.
+        function New-DatedService {
+            $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+            $null = $svc.AddMailbox($script:Src)
+            $null = $svc.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+            $null = $svc.AddFolder($script:Src, 'F-PROJ', 'Projects', 'F-INBOX')
+            $dates = [ordered]@{ IA = '2026-02-28T23:59:59Z'; IB = '2026-03-01T00:00:00Z'; IC = '2026-03-15T12:00:00Z'; ID = '2026-03-31T23:59:59Z'; IE = '2026-04-01T00:00:00Z' }
+            foreach ($k in $dates.Keys) { $null = $svc.AddItem($script:Src, 'F-INBOX', $k, (New-Message "Inbox $k"), "ck-$k", (Get-Utc $dates[$k])) }
+            $undated = $svc.AddItem($script:Src, 'F-INBOX', 'IN', (New-Message 'Inbox undated'), 'ck-IN')
+            $undated.OmitCreated = $true
+            $null = $svc.AddItem($script:Src, 'F-PROJ', 'P1', (New-Message 'Project old'), 'ck-P1', (Get-Utc '2025-01-01T08:00:00Z'))
+            $null = $svc.AddItem($script:Src, 'F-PROJ', 'P2', (New-Message 'Project March'), 'ck-P2', (Get-Utc '2026-03-10T08:00:00Z'))
+            return $svc
+        }
+        function Get-RecordedItem($Store) {
+            $ids = foreach ($f in $Store.GetFolders($script:Src)) { foreach ($i in $Store.GetFolderItemRefs($f.Key)) { $i.ItemId } }
+            return @($ids | Sort-Object)
+        }
+        function New-PeriodOptions([string]$From, [string]$To) {
+            $p = [MailboxTransfer.ArrivalPeriod]::Parse($From, $To, $script:Zone)
+            return { param($o) $o.Period = $p }.GetNewClosure()
+        }
+    }
+
+    It 'reads a date as a whole day, a date and a time as it is, and the same way in a French culture' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            $day = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-03-31', $script:Zone)
+            $day.From | Should -Be ([DateTimeOffset]::new(2026, 3, 1, 0, 0, 0, [TimeSpan]::FromHours(2)))
+            $day.To.AddTicks(1) | Should -Be ([DateTimeOffset]::new(2026, 4, 1, 0, 0, 0, [TimeSpan]::FromHours(2)))
+            $exact = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01T08:30', '2026-03-31T18:30:15', $script:Zone)
+            $exact.From | Should -Be ([DateTimeOffset]::new(2026, 3, 1, 8, 30, 0, [TimeSpan]::FromHours(2)))
+            $exact.To | Should -Be ([DateTimeOffset]::new(2026, 3, 31, 18, 30, 15, [TimeSpan]::FromHours(2)))
+            ([MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01T10:00:00Z', $null, $script:Zone)).From | Should -Be ([DateTimeOffset]::new(2026, 3, 1, 10, 0, 0, [TimeSpan]::Zero))
+            ([MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01t10:00:00z', $null, $script:Zone)).From | Should -Be ([DateTimeOffset]::new(2026, 3, 1, 10, 0, 0, [TimeSpan]::Zero))
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
+    }
+
+    It 'gives one key to the same period written two ways, and describes it in words' {
+        $a = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-03-31', $script:Zone)
+        $b = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01T00:00:00', '2026-03-31T23:59:59.9999999', $script:Zone)
+        $b.Key | Should -Be $a.Key
+        $a.Describe($script:Zone) | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+        ([MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '', $script:Zone)).Describe($script:Zone) | Should -Be 'arrived from 2026-03-01'
+        ([MailboxTransfer.ArrivalPeriod]::Parse('', '2026-03-31', $script:Zone)).Describe($script:Zone) | Should -Be 'arrived until 2026-03-31'
+        [MailboxTransfer.ArrivalPeriod]::FromKey($a.Key).Key | Should -Be $a.Key
+        [MailboxTransfer.ArrivalPeriod]::FromKey('') | Should -BeNullOrEmpty
+    }
+
+    It 'refuses a start after the end, a text that is not a date and a date written the local way' {
+        { [MailboxTransfer.ArrivalPeriod]::Parse('2026-04-01', '2026-03-31', $script:Zone) } | Should -Throw '*starts after it ends*'
+        { [MailboxTransfer.ArrivalPeriod]::Parse('2026-04-01T10:00', '2026-04-01T09:00', $script:Zone) } | Should -Throw '*starts after it ends*'
+        { [MailboxTransfer.ArrivalPeriod]::Parse('tomorrow', '', $script:Zone) } | Should -Throw '*yyyy-MM-dd*'
+        { [MailboxTransfer.ArrivalPeriod]::Parse('03/04/2026', '', $script:Zone) } | Should -Throw '*yyyy-MM-dd*'
+        { [MailboxTransfer.ArrivalPeriod]::Parse('2026-02-30', '', $script:Zone) } | Should -Throw '*yyyy-MM-dd*'
+        { [MailboxTransfer.ArrivalPeriod]::new([DateTimeOffset]::new(2026, 4, 1, 0, 0, 0, [TimeSpan]::Zero), [DateTimeOffset]::new(2026, 3, 1, 0, 0, 0, [TimeSpan]::Zero)) } | Should -Throw '*starts after it ends*'
+    }
+
+    It 'keeps the items inside the period with both bounds included, leaves the others out and counts the item with no date' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-both'
+        try {
+            $r = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-01T00:00:00Z' '2026-03-31T23:59:59Z')
+            $r.Result.Completed | Should -BeTrue
+            Get-RecordedItem $store | Should -Be @('IB', 'IC', 'ID', 'IN', 'P2')
+            $r.Result.Inventoried | Should -Be 5
+            $r.Result.ItemsOutsidePeriod | Should -Be 3
+            $r.Result.ItemsWithoutDate | Should -Be 1
+            $r.Result.Exported | Should -Be 5
+            $r.Result.NeedsAnotherRun | Should -BeFalse
+            $r.Result.Failed | Should -Be 0
+            ($r.Messages -join "`n") | Should -Match '3 item\(s\) outside the period'
+            ($r.Messages -join "`n") | Should -Match '1 item\(s\) without a date were kept'
+        } finally { $store.Dispose() }
+    }
+
+    It 'takes every item before the end when only the end is given, and after the start when only the start is given' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-to'
+        try {
+            $null = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '' '2026-03-01T00:00:00Z')
+            Get-RecordedItem $store | Should -Be @('IA', 'IB', 'IN', 'P1')
+        } finally { $store.Dispose() }
+        $store = New-TestStoreAt 'period-from'
+        try {
+            $r = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-31T23:59:59Z' '')
+            Get-RecordedItem $store | Should -Be @('ID', 'IE', 'IN')
+            $r.Result.ItemsOutsidePeriod | Should -Be 5
+        } finally { $store.Dispose() }
+    }
+
+    It 'takes everything without a period, and a period with no bound is no period' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-none'
+        try {
+            $r = Invoke-ExportJob -Service $svc -Store $store -Options { param($o) $o.Period = [MailboxTransfer.ArrivalPeriod]::new($null, $null) }
+            (Get-RecordedItem $store).Count | Should -Be 8
+            $r.Result.ItemsOutsidePeriod | Should -Be 0
+            $r.Result.Period | Should -BeNullOrEmpty
+        } finally { $store.Dispose() }
+    }
+
+    It 'applies the period to the folders of a plan and keeps the messages named one by one whatever their date' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-plan'
+        try {
+            $plan = [MailboxTransfer.ExportPlan]::new()
+            $plan.MailboxId = $script:Src; $plan.Kind = 'Primary'
+            $plan.Folders.Add([MailboxTransfer.ExportPlanFolder]@{ SourceFolderId = 'F-INBOX'; ExportFolderId = 'F-INBOX'; Path = 'Inbox'; Match = 'SameId' })
+            $plan.Folders.Add([MailboxTransfer.ExportPlanFolder]@{ SourceFolderId = 'F-PROJ'; ExportFolderId = 'F-PROJ'; Path = 'Inbox/Projects'; Match = 'SameId'; ItemIds = [Collections.Generic.List[string]]@('P1') })
+            $period = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01T00:00:00Z', '2026-03-31T23:59:59Z', $script:Zone)
+            $r = Invoke-ExportJob -Service $svc -Store $store -Options { param($o) $o.Plan = $plan; $o.Period = $period }.GetNewClosure()
+            Get-RecordedItem $store | Should -Be @('IB', 'IC', 'ID', 'IN', 'P1')
+            $r.Result.ItemsOutsidePeriod | Should -Be 2
+        } finally { $store.Dispose() }
+    }
+
+    It 'continues with the same period written another way, and refuses another period, or none' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-resume'
+        try {
+            $null = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-01T00:00:00+02:00' '2026-03-31T23:59:59.9999999+02:00')
+            $same = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-01' '2026-03-31')
+            $same.Job.Error | Should -BeNullOrEmpty
+            $same.Result.ItemsOutsidePeriod | Should -Be 3
+            $other = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-01' '2026-04-30')
+            $wasText = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-03-31', $script:Zone).Describe()
+            $askedText = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-04-30', $script:Zone).Describe()
+            $other.Job.Error.Message | Should -Match ([regex]::Escape("was started with the period '$wasText'"))
+            $other.Job.Error.Message | Should -Match ([regex]::Escape("this run asks '$askedText'"))
+            $other.Job.Error.Message | Should -Match 'another -StorePath'
+            $none = Invoke-ExportJob -Service $svc -Store $store
+            $none.Job.Error.Message | Should -Match "this run asks 'all dates'"
+        } finally { $store.Dispose() }
+    }
+
+    It 'refuses a period for a store that already holds the whole mailbox' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-after-all'
+        try {
+            $null = Invoke-ExportJob -Service $svc -Store $store
+            $r = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-01' '2026-03-31')
+            $r.Job.Error.Message | Should -Match "was started with the period 'all dates'"
+            (Get-RecordedItem $store).Count | Should -Be 8
+        } finally { $store.Dispose() }
+    }
+
+    It 'gives the counts of the last listing again when the run does not list' {
+        $svc = New-DatedService
+        $store = New-TestStoreAt 'period-skip'
+        try {
+            $null = Invoke-ExportJob -Service $svc -Store $store -Options (New-PeriodOptions '2026-03-01' '2026-03-31')
+            $r = Invoke-ExportJob -Service $svc -Store $store -Options { param($o) $o.SkipInventory = $true; $o.Period = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-03-31', $script:Zone) }
+            $r.Job.Error | Should -BeNullOrEmpty
+            $r.Result.ItemsOutsidePeriod | Should -BeGreaterThan 0
+        } finally { $store.Dispose() }
+    }
+    Context 'the entry script' {
+        BeforeAll {
+            $script:Entry = Join-Path $script:Root 'Invoke-MailboxTransfer.ps1'
+            function Invoke-PeriodEntry {
+                param([Parameter(Mandatory)]$Service, [hashtable]$Parameters = @{}, [string]$Culture = 'fr-FR')
+                $global:MbtEntryClient = New-FakeClient -Service $Service
+                $global:LASTEXITCODE = $null
+                $was = [Globalization.CultureInfo]::CurrentCulture
+                try {
+                    [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($Culture)
+                    $text = & $script:Entry @Parameters *>&1 | Out-String
+                } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
+                $global:MbtEntryExit = $LASTEXITCODE
+                return $text
+            }
+            function Get-PeriodEntryOption([string]$Name) {
+                return @{ Mode = 'Export'; StorePath = (Join-Path $script:Tmp "pcli-$Name\store"); TempPath = (Join-Path $script:Tmp "pcli-$Name\tmp"); PrimaryMailboxId = $script:Src; Concurrency = 2 }
+            }
+        }
+        BeforeEach {
+            Mock Connect-MbtGraph {
+                $session = Set-MbtSession -Graph $global:MbtEntryClient
+                $session.Token = [pscustomobject]@{
+                    Account = 'adele.vance@contoso.com'; Name = 'Adele Vance'; TenantId = '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; AppId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
+                    Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                }
+                return $session
+            }
+        }
+        AfterAll { Remove-Variable -Name MbtEntryClient, MbtEntryExit -Scope Global -ErrorAction SilentlyContinue }
+
+        It 'exports the items of a period given as ISO dates under a French culture, and says how many were left out' {
+            $svc = New-DatedService
+            $o = Get-PeriodEntryOption 'dates'
+            $text = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' })
+            $global:MbtEntryExit | Should -Be 0
+            $text | Should -Match 'Period\s+arrived between 2026-03-01 and 2026-03-31'
+            $text | Should -Match 'export finished: 5 items exported'
+            $text | Should -Match 'period \(arrived between 2026-03-01 and 2026-03-31\): 5 item\(s\) kept, 3 outside the period left out \(not an error\)'
+            $text | Should -Match '1 item\(s\) without a date were kept'
+            $text | Should -Match 'outside the period \(skipped, not an error\)'
+            $store = Open-MbtExportStore -Path $o.StorePath -ReadOnly
+            try { (Get-RecordedItem $store).Count | Should -Be 5 } finally { $store.Dispose() }
+        }
+
+        It 'takes a date and a time as it is, with both bounds included' {
+            $svc = New-DatedService
+            $o = Get-PeriodEntryOption 'datetime'
+            $text = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-15T12:00:00Z'; ArrivedTo = '2026-03-15T12:00:00Z' })
+            $text | Should -Match 'period \(arrived between .*\): 2 item\(s\) kept, 6 outside the period left out'
+            $store = Open-MbtExportStore -Path $o.StorePath -ReadOnly
+            try { Get-RecordedItem $store | Should -Be @('IC', 'IN') } finally { $store.Dispose() }
+        }
+
+        It 'refuses a start after the end, and a date it cannot read, before anything is signed in or written' {
+            $svc = New-DatedService
+            $o = Get-PeriodEntryOption 'refused'
+            { Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-04-01'; ArrivedTo = '2026-03-01' }) } | Should -Throw '*starts after it ends*'
+            { Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '31/03/2026' }) } | Should -Throw '*is not a date this tool reads*'
+            { Invoke-PeriodEntry $svc ($o + @{ ArrivedTo = 'yesterday' }) } | Should -Throw '*yyyy-MM-dd*'
+            Should -Invoke Connect-MbtGraph -Times 0 -Exactly
+            (Test-Path -LiteralPath (Join-Path $o.StorePath 'catalog.db')) | Should -BeFalse
+        }
+
+        It 'refuses the period for an import, for ExportPst and for ExportEml from a store' {
+            $svc = New-DatedService
+            { Invoke-PeriodEntry $svc @{ Mode = 'Import'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); ArrivedFrom = '2026-03-01' } } | Should -Throw '*belong to the export modes*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'ImportPst'; PstPath = 'x.pst'; TargetRoot = 'R'; ArrivedTo = '2026-03-01' } } | Should -Throw '*belong to the export modes*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'ExportPst'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); OutputPst = (Join-Path $script:Tmp 'x.pst'); ArrivedFrom = '2026-03-01' } } | Should -Throw '*only converts what a store or a PST already holds*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'ExportEml'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); EmlPath = (Join-Path $script:Tmp 'eml'); ArrivedFrom = '2026-03-01' } } | Should -Throw '*live mailbox*'
+            Should -Invoke Connect-MbtGraph -Times 0 -Exactly
+        }
+
+        It 'continues with the same period written another way and refuses another one' {
+            $svc = New-DatedService
+            $o = Get-PeriodEntryOption 'resume'
+            $null = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' })
+            $same = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01T00:00:00'; ArrivedTo = '2026-03-31T23:59:59.9999999' })
+            $global:MbtEntryExit | Should -Be 0
+            $same | Should -Match '3 outside the period left out'
+            { Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-05-31' }) } | Should -Throw '*Continuing it would mix two periods*'
+            { Invoke-PeriodEntry $svc $o } | Should -Throw "*this run asks 'all dates'*"
+        }
+
+        It 'writes the period and the counts in the events and in status.json, and the report says them' {
+            $svc = New-DatedService
+            $o = Get-PeriodEntryOption 'events'
+            $job = Join-Path $script:Tmp 'pcli-events\job'
+            $events = Join-Path $job 'events.jsonl'
+            $null = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31'; EventsFile = $events; JobId = 'export-p1' })
+            $lines = @(Get-Content -LiteralPath $events | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+            $plan = $lines | Where-Object { $_.e -eq 'plan' } | Select-Object -First 1
+            $plan.period.text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+            (Get-Content -LiteralPath $events -Raw) | Should -Match '"period":\{"from":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z","to":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z","text":'
+            $result = $lines | Where-Object { $_.e -eq 'result' } | Select-Object -Last 1
+            $result.exit | Should -Be 0
+            $result.counts.kept | Should -Be 5
+            $result.counts.outsidePeriod | Should -Be 3
+            $result.counts.withoutDate | Should -Be 1
+            $status = Get-Content -LiteralPath (Join-Path $job 'status.json') -Raw | ConvertFrom-Json
+            $status.period.text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+            $status.counts.outsidePeriod | Should -Be 3
+            $status.state | Should -Be 'complete'
+            $html = Get-Content -LiteralPath (Join-Path $job 'report.html') -Raw
+            $html | Should -Match 'arrived between 2026-03-01 and 2026-03-31'
+            $html | Should -Match 'Outside the period'
+        }
+    }
+}
+
 Describe 'Export engine: stopping' {
     It 'stops the job on 403 (permission missing) with the error of the service' {
         $svc = New-SourceService

@@ -222,6 +222,8 @@ namespace MailboxTransfer
         public long Exported, Resumed, Skipped, Failed, Bytes;
         public int Folders, FoldersSkipped;
         public bool Cancelled, WhatIf;
+        /// <summary>Live source with a period: the messages that arrived outside it (not listed in the manifest, not an error), and the ones with no date, which were kept.</summary>
+        public long OutsidePeriod, WithoutDate;
         public string ManifestPath, OutputDirectory;
         public TimeSpan Elapsed;
         /// <summary>Skipped and failed items, folders skipped.</summary>
@@ -257,6 +259,9 @@ namespace MailboxTransfer
         public abstract string Label { get; }
         public abstract List<EmlFolderSource> Folders(CancellationToken ct);
         public virtual bool AllowsParallel { get { return false; } }
+        /// <summary>Messages left out because they arrived outside the period of the source, and messages with no date that were kept (0 for a source that has no period).</summary>
+        public virtual long ItemsOutsidePeriod { get { return 0; } }
+        public virtual long ItemsWithoutDate { get { return 0; } }
     }
 
     // ---------------------------------------------------------------------------------------------------------------------
@@ -438,6 +443,8 @@ namespace MailboxTransfer
             finally { if (manifest != null) manifest.Dispose(); }
             started.Stop();
             result.Elapsed = started.Elapsed;
+            result.OutsidePeriod = source.ItemsOutsidePeriod;
+            result.WithoutDate = source.ItemsWithoutDate;
             Report(o, "done", null, null, result, -1);
             return result;
         }
@@ -465,6 +472,11 @@ namespace MailboxTransfer
         readonly MailboxBrowser _browser;
         readonly BrowseLocation _location;
         public bool IncludeNonMailFolders;
+        /// <summary>Only the messages that arrived in the mailbox inside this period (createdDateTime); null: every date. A message with no date is kept.</summary>
+        public ArrivalPeriod Period;
+        long _outsidePeriod, _withoutDate;
+        public override long ItemsOutsidePeriod { get { return System.Threading.Interlocked.Read(ref _outsidePeriod); } }
+        public override long ItemsWithoutDate { get { return System.Threading.Interlocked.Read(ref _withoutDate); } }
 
         public LiveEmlSource(MailboxBrowser browser, BrowseLocation location)
         {
@@ -507,6 +519,11 @@ namespace MailboxTransfer
             {
                 BrowseItem r = row;
                 listed++;
+                if (Period != null)
+                {
+                    if (!r.Created.HasValue) System.Threading.Interlocked.Increment(ref _withoutDate);
+                    else if (!Period.Contains(r.Created.Value)) { System.Threading.Interlocked.Increment(ref _outsidePeriod); continue; }
+                }
                 var item = new EmlItemSource { Id = r.Id, Subject = r.Subject, ItemClass = r.ItemClass, Size = r.Size, Received = r.Received, IsRead = r.IsRead };
                 if (!string.IsNullOrEmpty(r.ItemClass) && !MapiToMime.IsMailClass(r.ItemClass)) item.SkipReason = "item class " + r.ItemClass + " is not a message";
                 else item.Write = (dest, token) => Fetch(r.Id, dest, token, r.HasAttachments);

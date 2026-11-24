@@ -39,6 +39,143 @@ using System.Threading.Tasks;
 
 namespace MailboxTransfer
 {
+    /// <summary>
+    /// The period of an export: the items whose date of arrival in the mailbox (createdDateTime of the import-export listing) is between From and To, both included.
+    /// A bound left out is open. For mail migrated or imported into the mailbox this is the date of that import, not the original date of the message.
+    /// A date written without a time is a whole day of the local time zone (From: its first instant, To: its last one); a date and a time is used as it is.
+    /// </summary>
+    public sealed class ArrivalPeriod
+    {
+        public DateTimeOffset? From { get; private set; }
+        public DateTimeOffset? To { get; private set; }
+
+        public ArrivalPeriod(DateTimeOffset? from, DateTimeOffset? to)
+        {
+            if (from.HasValue && to.HasValue && from.Value > to.Value)
+                throw new ArgumentException("The period starts after it ends (" + Format(from.Value, false, TimeZoneInfo.Local) + " is after " + Format(to.Value, true, TimeZoneInfo.Local) + ").");
+            From = from; To = to;
+        }
+
+        /// <summary>No bound: every date.</summary>
+        public bool IsEmpty { get { return !From.HasValue && !To.HasValue; } }
+
+        /// <summary>True when the date is inside the period, the bounds included.</summary>
+        public bool Contains(DateTimeOffset when)
+        {
+            return (!From.HasValue || when >= From.Value) && (!To.HasValue || when <= To.Value);
+        }
+
+        static readonly System.Text.RegularExpressions.Regex IsoShape = new System.Text.RegularExpressions.Regex(
+            @"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,7}))?)?\s*(Z|[+-]\d{2}:\d{2})?)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// One bound as typed: ISO 8601 (yyyy-MM-dd, yyyy-MM-ddTHH:mm, yyyy-MM-ddTHH:mm:ss[.fffffff], with Z or +hh:mm), read the same way whatever the language of Windows. Dates written the
+        /// local way (03/04/2026) are refused: they mean two dates. A date without a time is the start (From) or the end (To) of that day in <paramref name="zone"/> (default: the local zone).
+        /// </summary>
+        public static bool TryParseBound(string text, bool endOfPeriod, out DateTimeOffset value, TimeZoneInfo zone = null)
+        {
+            value = default(DateTimeOffset);
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var m = IsoShape.Match(text.Trim());
+            if (!m.Success) return false;
+            zone = zone ?? TimeZoneInfo.Local;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            try
+            {
+                bool dateOnly = !m.Groups[4].Success;
+                DateTime local = new DateTime(int.Parse(m.Groups[1].Value, ci), int.Parse(m.Groups[2].Value, ci), int.Parse(m.Groups[3].Value, ci),
+                    dateOnly ? 0 : int.Parse(m.Groups[4].Value, ci), dateOnly ? 0 : int.Parse(m.Groups[5].Value, ci), m.Groups[6].Success ? int.Parse(m.Groups[6].Value, ci) : 0, DateTimeKind.Unspecified);
+                if (m.Groups[7].Success) local = local.AddTicks(long.Parse(m.Groups[7].Value.PadRight(7, '0'), ci));
+                if (m.Groups[8].Success)
+                {
+                    string z = m.Groups[8].Value;
+                    TimeSpan offset = z.Equals("Z", StringComparison.OrdinalIgnoreCase) ? TimeSpan.Zero : TimeSpan.Parse(z.Substring(1), ci);
+                    if (z[0] == '-') offset = offset.Negate();
+                    value = new DateTimeOffset(local, offset);
+                    return true;
+                }
+                if (dateOnly && endOfPeriod)
+                {
+                    DateTime next = local.AddDays(1);
+                    value = new DateTimeOffset(next, zone.GetUtcOffset(next)).AddTicks(-1);
+                }
+                else value = new DateTimeOffset(local, zone.GetUtcOffset(local));
+                return true;
+            }
+            catch (ArgumentException) { return false; }
+            catch (FormatException) { return false; }
+            catch (OverflowException) { return false; }
+        }
+
+        /// <summary>The period of two bounds as typed (either may be null or empty: open). A text that is not a date, or a start after the end, is a FormatException with a sentence for the operator.</summary>
+        public static ArrivalPeriod Parse(string from, string to, TimeZoneInfo zone = null)
+        {
+            DateTimeOffset a = default(DateTimeOffset), b = default(DateTimeOffset);
+            bool hasFrom = !string.IsNullOrWhiteSpace(from), hasTo = !string.IsNullOrWhiteSpace(to);
+            if (hasFrom && !TryParseBound(from, false, out a, zone)) throw new FormatException(BoundMessage(from));
+            if (hasTo && !TryParseBound(to, true, out b, zone)) throw new FormatException(BoundMessage(to));
+            if (hasFrom && hasTo && a > b) throw new FormatException("The period starts after it ends: the start (" + from.Trim() + ") is after the end (" + to.Trim() + "). Give the earlier date first.");
+            return new ArrivalPeriod(hasFrom ? (DateTimeOffset?)a : null, hasTo ? (DateTimeOffset?)b : null);
+        }
+
+        static string BoundMessage(string text)
+        {
+            return "'" + text.Trim() + "' is not a date this tool reads. Write it year first, as yyyy-MM-dd (for example 2026-03-31), or with a time as yyyy-MM-ddTHH:mm (for example 2026-03-31T18:30).";
+        }
+
+        /// <summary>The same period in one canonical text (UTC instants), whatever way the bounds were written: two spellings of one period have the same key.</summary>
+        public string Key
+        {
+            get
+            {
+                if (IsEmpty) return "";
+                Func<DateTimeOffset?, string> f = d => d.HasValue ? d.Value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture) : "";
+                return "from=" + f(From) + ";to=" + f(To);
+            }
+        }
+
+        /// <summary>The period of a <see cref="Key"/>; null for an empty key or one that is not a key.</summary>
+        public static ArrivalPeriod FromKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            string[] parts = key.Split(';');
+            if (parts.Length != 2 || !parts[0].StartsWith("from=", StringComparison.Ordinal) || !parts[1].StartsWith("to=", StringComparison.Ordinal)) return null;
+            Func<string, DateTimeOffset?> p = s =>
+            {
+                DateTimeOffset d;
+                return s.Length > 0 && DateTimeOffset.TryParseExact(s, "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out d) ? (DateTimeOffset?)d : null;
+            };
+            return new ArrivalPeriod(p(parts[0].Substring(5)), p(parts[1].Substring(3)));
+        }
+
+        static string Format(DateTimeOffset d, bool isTo, TimeZoneInfo zone)
+        {
+            DateTime t = TimeZoneInfo.ConvertTime(d, zone).DateTime;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            if (!isTo && t.TimeOfDay == TimeSpan.Zero) return t.ToString("yyyy-MM-dd", ci);
+            if (isTo && t.TimeOfDay.Ticks == TimeSpan.TicksPerDay - 1) return t.ToString("yyyy-MM-dd", ci);
+            return t.ToString(t.Second == 0 && t.Ticks % TimeSpan.TicksPerSecond == 0 ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd HH:mm:ss", ci);
+        }
+
+        /// <summary>In words, as the operator wrote it: "all dates", "arrived between 2026-03-01 and 2026-03-31", "arrived from 2026-03-01", "arrived until 2026-03-31" (local time zone unless <paramref name="zone"/> is given).</summary>
+        public string Describe(TimeZoneInfo zone = null)
+        {
+            zone = zone ?? TimeZoneInfo.Local;
+            if (IsEmpty) return "all dates";
+            if (From.HasValue && To.HasValue) return "arrived between " + Format(From.Value, false, zone) + " and " + Format(To.Value, true, zone);
+            return From.HasValue ? "arrived from " + Format(From.Value, false, zone) : "arrived until " + Format(To.Value, true, zone);
+        }
+
+        public override string ToString() { return Describe(); }
+
+        /// <summary>The key of a period that may be null (every date).</summary>
+        public static string KeyOf(ArrivalPeriod p) { return p == null ? "" : p.Key; }
+
+        /// <summary>A period with no bound is no period.</summary>
+        public static ArrivalPeriod OrNull(ArrivalPeriod p) { return p == null || p.IsEmpty ? null : p; }
+    }
+
     public sealed class ExportOptions
     {
         public string MailboxId;
@@ -79,11 +216,19 @@ namespace MailboxTransfer
         public bool WholeFolderTree;
         /// <summary>Names of the folders of Recoverable Items to export (see RecoverableItems.KnownFolders); null or empty: the default set.</summary>
         public string[] RecoverableItemsFolders;
+        /// <summary>Only the items that arrived in the mailbox inside this period are listed for export; null or empty: every date. Items named one by one in a plan are always taken.</summary>
+        public ArrivalPeriod Period;
     }
 
     public sealed class ExportResult
     {
         public long Exported, Failed, Bytes, Inventoried, PendingAtStart, RequeuedFailed;
+        /// <summary>The period of the run (null: every date). With a period, Inventoried is the number of items kept: the ones inside it, the ones without a date and the ones named one by one.</summary>
+        public ArrivalPeriod Period;
+        /// <summary>Items listed that arrived outside the period: not recorded, not exported (skipped, not a failure).</summary>
+        public long ItemsOutsidePeriod;
+        /// <summary>Items listed with no date of arrival: kept, whatever the period.</summary>
+        public long ItemsWithoutDate;
         /// <summary>Folders read: the tree of the mailbox, or with <see cref="FolderTreeNarrow"/> the folders of the selection, the ones below them and the ones above them.</summary>
         public int Folders, FoldersNotListed, PreviewWarnings;
         /// <summary>The tree of the whole mailbox was not read: only the folders of the selection and the path to each of them (<see cref="Folders"/> counts those).</summary>
@@ -170,6 +315,7 @@ namespace MailboxTransfer
                 throw new ArgumentException("The export plan has folders of other mailboxes (a folder that moved to an auxiliary archive): export each mailbox with plan.ForMailbox(mailboxId).");
             if (options.BatchItems < 1 || options.BatchItems > MailboxApi.MaxExportBatch)
                 throw new ArgumentOutOfRangeException("options", "BatchItems must be between 1 and " + MailboxApi.MaxExportBatch + ".");
+            options.Period = ArrivalPeriod.OrNull(options.Period);
             var job = new ExportJob(api, store, options);
             job.Begin(job.Run);
             return job;
@@ -189,6 +335,7 @@ namespace MailboxTransfer
             _store.UpsertMailbox(new StoreMailbox { Id = mailbox, Kind = _kind, Upn = _o.Upn, DisplayName = _kind + " mailbox" });
             _store.RecordLocation(new StoreMailboxLocation { MailboxId = mailbox, Kind = _kind, Upn = _o.Upn, Source = "ExportTarget", Detail = "mailbox exported", Rank = StoreMailboxLocation.RankGiven });
             if (_kind == StoreMailboxKind.AuxArchive) MapOwnedFolders(tree);
+            CheckPeriod();
             PrepareScope(tree);
             List<FolderInfo> scope = tree.Where(InScope).ToList();
             // The store records the folders that are exported and the path to them, not the whole folder tree of the mailbox: a PST made from the store
@@ -388,6 +535,51 @@ namespace MailboxTransfer
             return _o.Plan == null || _planWhole.Contains(folderId) || (_planItems.TryGetValue(folderId, out named) && named.Contains(itemId));
         }
 
+        /// <summary>Is this item named one by one in the plan? It is taken whatever its date: the period applies to the items listed from the folders asked.</summary>
+        bool ItemPicked(string folderId, string itemId)
+        {
+            HashSet<string> named;
+            return _o.Plan != null && _planItems.TryGetValue(folderId, out named) && named.Contains(itemId);
+        }
+
+        long _outsidePeriod, _withoutDate;
+        // the mailboxes (auxiliary archives) whose period was recorded by this run: once for each, not for each item
+        readonly ConcurrentDictionary<string, byte> _periodMarked = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+
+        static string PeriodOptionName(string mailboxId) { return "period|" + (mailboxId ?? "").ToLowerInvariant(); }
+        static string CountsOptionName(string mailboxId) { return "periodCounts|" + (mailboxId ?? "").ToLowerInvariant(); }
+
+        /// <summary>
+        /// One period for all the runs of an export of a mailbox into a store: a run that asks another period than the first one would mix two periods in the same store.
+        /// A store that holds items of this mailbox and no recorded period was exported with every date.
+        /// </summary>
+        void CheckPeriod()
+        {
+            string asked = ArrivalPeriod.KeyOf(_o.Period);
+            _result.Period = _o.Period;
+            string name = PeriodOptionName(_o.MailboxId);
+            string was = _store.GetExportOption(name);
+            if (was == null && _store.GetItemStats(_o.MailboxId).Sum(st => st.Count) > 0) was = "";
+            if (was != null && !string.Equals(was, asked, StringComparison.Ordinal))
+                throw new InvalidOperationException("The export of this mailbox (" + _o.MailboxId + ") in this store was started with the period '" + Describe(was) + "', this run asks '" + Describe(asked) +
+                    "'. Continuing it would mix two periods in one store. Give the same period, or another -StorePath.");
+            if (was == null) _store.SetExportOption(name, asked, true);
+            if (_o.Period != null) Log("period: only the items that " + _o.Period.Describe() + " in the mailbox are listed (items named one by one are always taken; an item with no date is kept)");
+            if (_o.SkipInventory)
+            {
+                string[] known = (_store.GetExportOption(CountsOptionName(_o.MailboxId)) ?? "").Split(';');
+                long kept, outside, undated;
+                if (known.Length == 3 && long.TryParse(known[0], out kept) && long.TryParse(known[1], out outside) && long.TryParse(known[2], out undated))
+                { _result.ItemsOutsidePeriod = outside; _result.ItemsWithoutDate = undated; }
+            }
+        }
+
+        static string Describe(string key)
+        {
+            ArrivalPeriod p = ArrivalPeriod.FromKey(key);
+            return p == null ? "all dates" : p.Describe();
+        }
+
         /// <summary>The ids of the folders of <paramref name="scope"/> and of the folders above them (the path to each one).</summary>
         static HashSet<string> FoldersOnPath(List<FolderInfo> tree, List<FolderInfo> scope)
         {
@@ -448,12 +640,18 @@ namespace MailboxTransfer
                                 foreach (ItemInfo i in _api.EnumerateItems(_o.MailboxId, f.Id, _o.ItemPageSize, ct, once ? 1 : 0))
                                 {
                                     if (!ItemWanted(f.Id, i.Id)) continue;
+                                    if (_o.Period != null && !ItemPicked(f.Id, i.Id))
+                                    {
+                                        if (!i.Created.HasValue) Interlocked.Increment(ref _withoutDate);
+                                        else if (!_o.Period.Contains(i.Created.Value)) { Interlocked.Increment(ref _outsidePeriod); continue; }
+                                    }
                                     string real = string.IsNullOrEmpty(i.MailboxId) ? _o.MailboxId : i.MailboxId;
                                     if (!MailboxApi.SameMailbox(real, _o.MailboxId))
                                     {
                                         inAux = true;
                                         _learner.Learn(real, "Redirect308", "the listing of the items of folder '" + f.Path + "' of " + _o.MailboxId + " was answered by this mailbox");
                                         lock (_result.AuxMailboxes) if (!_result.AuxMailboxes.Contains(real, StringComparer.OrdinalIgnoreCase)) _result.AuxMailboxes.Add(real);
+                                        if (_periodMarked.TryAdd(real, 1)) _store.SetExportOption(PeriodOptionName(real), ArrivalPeriod.KeyOf(_o.Period), true);
                                     }
                                     // the folder is recorded once (where its tree is: the main archive), the item with the mailbox that holds it
                                     string folderMailbox = owner != null ? owner.Item1 : (MailboxApi.SameMailbox(real, _o.MailboxId) ? null : _o.MailboxId);
@@ -501,6 +699,13 @@ namespace MailboxTransfer
             _result.Inventoried = listed;
             _result.FoldersMoved = _foldersMoved;
             _result.FoldersNotListed = _foldersNotListed;
+            _result.ItemsOutsidePeriod = Interlocked.Read(ref _outsidePeriod);
+            _result.ItemsWithoutDate = Interlocked.Read(ref _withoutDate);
+            if (_o.Period != null)
+            {
+                Log("inventory: " + _result.ItemsOutsidePeriod + " item(s) outside the period (" + _o.Period.Describe() + ") were left out" + (_result.ItemsWithoutDate > 0 ? "; " + _result.ItemsWithoutDate + " item(s) without a date were kept" : ""));
+                _store.SetExportOption(CountsOptionName(_o.MailboxId), listed + ";" + _result.ItemsOutsidePeriod + ";" + _result.ItemsWithoutDate);
+            }
             Log("inventory: " + listed + " items listed in " + folders.Count(f => f.TotalItemCount > 0) + " folders" +
                 (_foldersNotListed > 0 ? ", " + _foldersNotListed + " folders could not be listed" : "") +
                 (_result.FoldersDeferred.Count > 0 ? ", " + _result.FoldersDeferred.Count + " folder(s) deferred (content not available yet)" : ""));

@@ -31,7 +31,7 @@ $script:MbtOverviewResults = @(
     @{ Code = 7; Name = 'Unknown'; Tone = 'wait' }
 )
 $script:MbtOverviewRank = @{ 1 = 0; 3 = 1; 4 = 2; 2 = 3; 6 = 4; 5 = 5; 7 = 6; 0 = 7 }
-$script:MbtOverviewColumns = @('id', 'started', 'seconds', 'task', 'source', 'destination', 'result', 'code', 'done', 'failed', 'bytes', 'link', 'batch')
+$script:MbtOverviewColumns = @('id', 'started', 'seconds', 'task', 'source', 'destination', 'result', 'code', 'done', 'failed', 'bytes', 'link', 'batch', 'outside')
 
 function Read-MbtOverviewStatus {
     <#
@@ -54,7 +54,7 @@ function Read-MbtOverviewStatus {
                 'counts' {
                     if ($kind -eq [Text.Json.JsonValueKind]::Object) {
                         foreach ($c in $p.Value.EnumerateObject()) {
-                            if ($c.Name -in 'done', 'failed', 'bytes', 'fileBytes') { $n = [long]0; if ($c.Value.ValueKind -eq [Text.Json.JsonValueKind]::Number -and $c.Value.TryGetInt64([ref]$n)) { $s.counts[$c.Name] = $n } }
+                            if ($c.Name -in 'done', 'failed', 'bytes', 'fileBytes', 'outsidePeriod') { $n = [long]0; if ($c.Value.ValueKind -eq [Text.Json.JsonValueKind]::Number -and $c.Value.TryGetInt64([ref]$n)) { $s.counts[$c.Name] = $n } }
                         }
                     }
                 }
@@ -257,7 +257,7 @@ function Get-MbtJobOverviewModel {
             }
             $seconds = if ($hasStatus -and $code -ne 7) { [math]::Max(0L, [long][math]::Floor(($endTicks - $startTicks) / 10000000)) } else { 0L }
 
-            $done = -1L; $failed = -1L; $bytes = -1L
+            $done = -1L; $failed = -1L; $bytes = -1L; $outside = -1L
             $counts = $status['counts']
             if ($counts -isnot [hashtable]) { $counts = @{} }
             if ($hasStatus -and $code -ne 7 -and -not $counts.ContainsKey('done')) {
@@ -269,6 +269,7 @@ function Get-MbtJobOverviewModel {
             }
             $v = $counts['done']; if ($null -ne $v) { $done = [long]$v }
             $v = $counts['failed']; if ($null -ne $v) { $failed = [long]$v }
+            $v = $counts['outsidePeriod']; if ($null -ne $v) { $outside = [long]$v }
             $v = $counts['bytes']; if ($null -eq $v) { $v = $counts['fileBytes'] }
             if ($null -ne $v) { $bytes = [long]$v }
 
@@ -278,7 +279,7 @@ function Get-MbtJobOverviewModel {
             $taskKey = "$task|$mode"
             $taskName = $taskMemo[$taskKey]
             if ($null -eq $taskName) { $taskName = Get-MbtReportTaskName -Task $task -Mode $mode; $taskMemo[$taskKey] = $taskName }
-            $row = @($stamp, $name, $started, $seconds, $taskName, $source, $destination, $text, $code, $done, $failed, $bytes, $link, ([string]$status['batch']))
+            $row = @($stamp, $name, $started, $seconds, $taskName, $source, $destination, $text, $code, $done, $failed, $bytes, $link, ([string]$status['batch']), $outside)
             # a job that is running changes without its folder changing: it is read again every time
             if ($code -ne 5) { $cacheRows.Add($row) }
             $known[$name] = $row
@@ -294,7 +295,7 @@ function Get-MbtJobOverviewModel {
         if ($null -eq $r -or $r.Count -lt 3) { continue }
         $jobBatch = [string]$r[13]
         if ($batchText -and $jobBatch -ine $batchText) { continue }
-        $row = [object[]]::new(13)
+        $row = [object[]]::new(14)
         $row[0] = $r[1]; $row[1] = [long]$r[2]; $row[2] = [long]$r[3]
         $i = 3
         foreach ($s in $r[4], $r[5], $r[6], $r[7]) {
@@ -304,6 +305,7 @@ function Get-MbtJobOverviewModel {
         }
         $row[7] = [int]$r[8]; $row[8] = [long]$r[9]; $row[9] = [long]$r[10]; $row[10] = [long]$r[11]; $row[11] = [int]$r[12]
         $row[12] = -1
+        $row[13] = if ($r.Count -gt 14) { [long]$r[14] } else { -1L }
         if ($jobBatch) { $at = $index[$jobBatch]; if ($null -eq $at) { $at = $strings.Count; $strings.Add($jobBatch); $index[$jobBatch] = $at }; $row[12] = $at }
         $rows.Add($row)
         $keys.Add([long]$r[2])
@@ -361,7 +363,7 @@ function ConvertTo-MbtOverviewJson {
     $lines = [string[]]::new($Model.Rows.Count)
     for ($n = 0; $n -lt $lines.Length; $n++) {
         $r = $Model.Rows[$n]
-        $lines[$n] = '["' + [Text.Json.JsonEncodedText]::Encode([string]$r[0]).ToString() + '",' + ($r[1..12] -join ',') + ']'
+        $lines[$n] = '["' + [Text.Json.JsonEncodedText]::Encode([string]$r[0]).ToString() + '",' + ($r[1..13] -join ',') + ']'
     }
     [void]$sb.Append([string]::Join(',', $lines))
     [void]$sb.Append(']}')

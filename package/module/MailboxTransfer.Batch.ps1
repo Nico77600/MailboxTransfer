@@ -300,12 +300,12 @@ function Read-MbtBatch {
 function Get-MbtBatchCount {
     <# What a batch holds, as numbers: rows by state, items done and failed, data. #>
     param([Parameter(Mandatory)]$Batch)
-    $c = [ordered]@{ Total = 0; Pending = 0; Running = 0; Complete = 0; Partial = 0; Failed = 0; Done = [long]0; FailedItems = [long]0; Bytes = [long]0 }
+    $c = [ordered]@{ Total = 0; Pending = 0; Running = 0; Complete = 0; Partial = 0; Failed = 0; Done = [long]0; FailedItems = [long]0; Bytes = [long]0; OutsidePeriod = [long]0 }
     foreach ($r in @($Batch.rows)) {
         $c.Total++
         $state = [string]$r['state']
         switch ($state) { 'complete' { $c.Complete++ } 'partial' { $c.Partial++ } 'failed' { $c.Failed++ } 'running' { $c.Running++ } default { $c.Pending++ } }
-        foreach ($pair in @(@('done', 'Done'), @('failedItems', 'FailedItems'), @('bytes', 'Bytes'))) { if ($r.Contains($pair[0]) -and $null -ne $r[$pair[0]]) { $c[$pair[1]] += [long]$r[$pair[0]] } }
+        foreach ($pair in @(@('done', 'Done'), @('failedItems', 'FailedItems'), @('bytes', 'Bytes'), @('outsidePeriod', 'OutsidePeriod'))) { if ($r.Contains($pair[0]) -and $null -ne $r[$pair[0]]) { $c[$pair[1]] += [long]$r[$pair[0]] } }
     }
     return $c
 }
@@ -352,7 +352,7 @@ function New-MbtBatch {
     $rows = @(foreach ($r in $Row) {
             [ordered]@{
                 n = [int]$r.Number; line = [int]$r.Line; upn = [string]$r.UserPrincipalName; location = [string]$r.Location; selection = [string]$r.SelectionFile; output = [string]$r.Output; store = [string]$r.Store
-                state = 'pending'; job = ''; attempts = 0; exit = $null; reason = ''; message = ''; done = $null; failedItems = $null; bytes = $null; started = ''; finished = ''
+                state = 'pending'; job = ''; attempts = 0; exit = $null; reason = ''; message = ''; done = $null; failedItems = $null; bytes = $null; outsidePeriod = $null; started = ''; finished = ''
             }
         })
     $b = [ordered]@{ v = 1; id = $Id; name = $Id; created = $now; updated = $now; state = 'pending'; mode = 'Export'; csv = $Csv; parallel = $Parallel; options = $Option; counts = $null; rows = $rows }
@@ -608,12 +608,13 @@ function Complete-MbtBatchRow {
     }
     $row.state = $state; $row.exit = $exit; $row.reason = $reason; $row.message = $message
     $row.finished = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z')
-    foreach ($pair in @(@('done', 'done'), @('failed', 'failedItems'), @('bytes', 'bytes'))) { $v = $counts[$pair[0]]; if ($null -ne $v) { $row[$pair[1]] = [long]$v } }
+    foreach ($pair in @(@('done', 'done'), @('failed', 'failedItems'), @('bytes', 'bytes'), @('outsidePeriod', 'outsidePeriod'))) { $v = $counts[$pair[0]]; if ($null -ne $v) { $row[$pair[1]] = [long]$v } }
     $seconds = ([DateTime]::UtcNow - $Item.Started).TotalSeconds
     $detail = @()
     if ($null -ne $row.done) { $detail += (Format-MbtNumber $row.done) + $(if ([long]$row.done -eq 1) { ' item' } else { ' items' }) }
     if ($null -ne $row.failedItems -and [long]$row.failedItems -gt 0) { $detail += (Format-MbtNumber $row.failedItems) + ' failed' }
     if ($null -ne $row.bytes -and [long]$row.bytes -gt 0) { $detail += (Format-MbtBytes ([double]$row.bytes)) }
+    if ($row.Contains('outsidePeriod') -and $null -ne $row.outsidePeriod) { $detail += (Format-MbtNumber $row.outsidePeriod) + ' outside the period' }
     $detail += (Format-MbtDuration $seconds)
     $head = '[{0}/{1}] {2} ({3})' -f $Position, $Of, $row.upn, $row.location
     switch ($state) {
@@ -816,7 +817,10 @@ function Write-MbtBatchSummary {
     if ($Batch) {
         $c = Get-MbtBatchCount $Batch
         $values.Mailboxes = @('Store', ('{0} in {1}: {2} complete, {3} not complete, {4} failed, {5} not started' -f (Format-MbtNumber $c.Total), [string]$Batch.id, (Format-MbtNumber $c.Complete), (Format-MbtNumber ($c.Partial + $c.Running)), (Format-MbtNumber $c.Failed), (Format-MbtNumber $c.Pending)))
-        if ($c.Done -gt 0 -or $c.FailedItems -gt 0) { $values.Items = @('Store', ('{0} exported, {1} failed, {2}' -f (Format-MbtNumber $c.Done), (Format-MbtNumber $c.FailedItems), (Format-MbtBytes ([double]$c.Bytes)))) }
+        if ($c.Done -gt 0 -or $c.FailedItems -gt 0) {
+            $outside = if ($c.OutsidePeriod -gt 0) { ", $(Format-MbtNumber $c.OutsidePeriod) outside the period (skipped)" } else { '' }
+            $values.Items = @('Store', ('{0} exported, {1} failed, {2}{3}' -f (Format-MbtNumber $c.Done), (Format-MbtNumber $c.FailedItems), (Format-MbtBytes ([double]$c.Bytes)), $outside))
+        }
     }
     if ($Seconds -gt 0) { $values.Duration = @('Clock', (Format-MbtDuration $Seconds)) }
     if ($Folder) { $values.Batch = @('Folder', $Folder) }

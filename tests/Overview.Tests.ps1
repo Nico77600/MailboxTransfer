@@ -153,6 +153,18 @@ Describe 'The overview of all the jobs' {
         $r.done | Should -Be 42; $r.failed | Should -Be 1; $r.bytes | Should -Be 99
     }
 
+    It 'gives the items left out by the period of an export, and none for a job that has no period (also after the cache)' {
+        $w = Join-Path $TestDrive 'period'
+        $null = New-TestJob $w '20261110-1000-export-aaaa' @{ counts = @{ done = 40; failed = 0; bytes = 900; kept = 40; outsidePeriod = 25; withoutDate = 1 }; period = @{ text = 'arrived between 2026-03-01 and 2026-03-31' } } 30 -Files 'report.html'
+        $null = New-TestJob $w '20261111-1000-export-bbbb' @{ counts = @{ done = 7; failed = 0; bytes = 10 } } 12
+        foreach ($pass in 1, 2) {
+            $o = Get-OverviewData (Get-OverviewPage $w)
+            ($o.Rows | Where-Object id -EQ '20261110-1000-export-aaaa').outside | Should -Be 25
+            ($o.Rows | Where-Object id -EQ '20261111-1000-export-bbbb').outside | Should -Be -1
+        }
+        (Get-OverviewPage $w) | Should -Match 'outside the period'
+    }
+
     It 'encodes every text of a job: markup, a closing script tag, quotes and a marker of the template are only text' {
         $w = Join-Path $TestDrive 'a&b'
         $evil = '</script><img src=x onerror=alert(1)> & "quoted" {{TITLE}} <!-- x'
