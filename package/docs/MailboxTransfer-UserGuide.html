@@ -873,7 +873,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor" version="1.1" width="16" height="16" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>On the command line, <code>-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31</code> keeps only the items that arrived between two days (the same as the <strong>Period</strong> box of the console, section 4.4). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps <strong>one period for a mailbox</strong>: running the same export again with another period is refused (use another <code>-StorePath</code>); the console gives an export with a period a folder of its own, so it never meets another one.</p>
 </div>
-<p>If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a <strong>CSV file</strong> (one mailbox on each line) and start <strong>one command</strong>. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one <strong>batch</strong> that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the <strong>command line</strong>: the console shows a batch, read only, but does not start one. Only <strong>export</strong> works this way; a batch of imports is not part of this version.</p>
+<p>If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a <strong>CSV file</strong> (one mailbox on each line) and start <strong>one command</strong>. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one <strong>batch</strong> that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the <strong>command line</strong>: the console shows a batch, read only, but does not start one. The same way works for <strong>imports</strong>: see <em>Importing many mailboxes</em> below.</p>
 <p><strong>1. The list.</strong> A text file, saved as UTF-8 (Excel: <em>CSV UTF-8</em>). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:</p>
 <div class="table-wrap"><table>
 <thead>
@@ -941,7 +941,77 @@ grady.archie@contoso.com;;;uses the default
 <p><strong>7. In the console.</strong> The Task page, in <strong>Continue a job</strong>, shows a batch as one line (<em>Batch Wave1: 412 of 500 mailboxes complete, 3 failed...</em>) with a button that opens its report. The jobs of the batch that are not complete are listed with the name of the batch and continue like any job; the finished ones are not listed one by one. <strong>All jobs</strong> has a <strong>Batch</strong> list that shows one batch. The folders of a batch's jobs are never tidied away while the batch is not complete (see below).</p>
 <div class="markdown-alert markdown-alert-note">
 <p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor" version="1.1" width="16" height="16" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p><strong>Limits.</strong> Export only (no batch of imports yet). At most 4 mailboxes at a time; use <code>Both</code> on one line for the primary mailbox and the archive of the same address. Another mailbox than your own with a delegated sign-in: <code>Primary</code> only. The report lists the jobs of the batch, so a mailbox that has not started has no row until it starts. A batch that is never finished keeps the folders of its jobs for ever: remove the batch folder (<code>batches\&lt;name&gt;</code>) when you give it up.</p>
+<p><strong>Limits.</strong> At most 4 mailboxes at a time; use <code>Both</code> on one line for the primary mailbox and the archive of the same address. Another mailbox than your own with a delegated sign-in: <code>Primary</code> only. The report lists the jobs of the batch, so a mailbox that has not started has no row until it starts. A batch that is never finished keeps the folders of its jobs for ever: remove the batch folder (<code>batches\&lt;name&gt;</code>) when you give it up.</p>
+</div>
+<h3 id="importing-many-mailboxes">Importing many mailboxes</h3>
+<p>The same way, the other direction. If you have to put 40 PST files into 40 mailboxes, you write the list in a <strong>CSV file</strong> (one import on each line) and start <strong>one command</strong>. The tool makes an ordinary <strong>import job</strong> for each line, up to 4 at a time, and keeps one <strong>batch</strong> that remembers where it is. Everything the export batch does (the list checked first, one sign-in, <em>the same command again continues</em>, the report of the batch, the exit codes) is the same here. This is for the <strong>command line</strong>; the console shows an import batch like an export batch (see 7 below), read only.</p>
+<p><strong>1. The list.</strong> A text file, saved as UTF-8 (Excel: <em>CSV UTF-8</em>). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Needed</th>
+<th>What it says</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Mailbox</code></td>
+<td>yes</td>
+<td>The address of the mailbox <strong>the items go into</strong>.</td>
+</tr>
+<tr>
+<td><code>Source</code></td>
+<td>yes</td>
+<td>Where the items come from: for <code>-Mode ImportPst</code> a <code>.pst</code> file, or a folder of <code>.pst</code> files (the parts of a split PST are taken in order); for <code>-Mode ImportEml</code> a folder of <code>.eml</code> files, or one <code>.eml</code> file; for <code>-Mode Import</code> an export store (the folder that holds <code>catalog.db</code>). A relative path starts from the folder of the CSV file.</td>
+</tr>
+<tr>
+<td><code>Location</code></td>
+<td>no</td>
+<td><code>Primary</code> or <code>Archive</code>: which mailbox of that address receives them. Empty: <code>-Mailbox</code> of the command, <code>Primary</code> unless you say otherwise.</td>
+</tr>
+<tr>
+<td><code>TargetRoot</code></td>
+<td>no</td>
+<td>The folder the items are created <strong>below</strong> (for instance <code>Imported/2019</code>). Empty: <code>-TargetRoot</code> of the command. An export store may keep its own folder names, so it needs none; a PST needs one, or <code>-MergeWellKnown</code> on the command (its Inbox, Sent Items... are then merged into the real folders); <code>.eml</code> files need one.</td>
+</tr>
+<tr>
+<td><code>SourceMailbox</code></td>
+<td>no</td>
+<td>Only for <code>-Mode Import</code>: <code>Primary</code> or <code>Archive</code>, the mailbox of a store that holds both. Empty: <code>-SourceMailbox</code> of the command.</td>
+</tr>
+<tr>
+<td><code>Notes</code></td>
+<td>no</td>
+<td>Anything you want. It is ignored. Any <strong>other</strong> column is a mistake: it is reported, so that a misspelled <code>TargetRoot</code> is not silently lost.</td>
+</tr>
+</tbody>
+</table></div>
+<div class="code"><div class="code-head"><span>Text</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>Mailbox;Source;Location;TargetRoot;Notes
+adele.vance@contoso.com;D:\Old\adele.pst;Primary;Imported/2019;Finance
+adele.vance@contoso.com;D:\Old\adele-archive.pst;Archive;Imported/2019;
+alex.wilber@contoso.com;D:\Old\alex;;;uses the defaults
+</code></pre></div>
+<p>The whole file is checked <strong>before anything starts</strong>, and every problem is printed together, each with its line: an empty or wrong address, a wrong <code>Location</code>, a <code>Source</code> that is empty, <strong>not found</strong> or of <strong>the wrong kind</strong> (a file where a store is expected, a folder with no <code>.pst</code> in it), a <code>TargetRoot</code> that is missing where the source needs one, a column the tool does not know, and the same address, <code>Location</code> and <code>Source</code> twice (capitals do not matter). With a <strong>delegated</strong> sign-in, a line whose mailbox is not the signed-in account is refused too (see 3). Nothing starts while one problem is left.</p>
+<p><strong>2. The command.</strong> Run it with <code>-WhatIf</code> first: it checks the file and every source, prints <strong>every mailbox that would be written to</strong>, and writes nothing.</p>
+<div class="code"><div class="code-head"><span>PowerShell</span><button type="button" class="copy"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>Copy</span></button></div><pre><code>.\Invoke-MailboxTransfer.ps1 -Mode ImportPst -MailboxCsv D:\Batch\imports.csv -TargetRoot Imported -WhatIf
+.\Invoke-MailboxTransfer.ps1 -Mode ImportPst -MailboxCsv D:\Batch\imports.csv -BatchName Restore1 -TargetRoot Imported -ParallelMailboxes 2 -AppOnly
+.\Invoke-MailboxTransfer.ps1 -Mode ImportPst -ResumeBatch Restore1
+</code></pre></div>
+<ul>
+<li><code>-Mode Import</code> (stores), <code>ImportPst</code> or <code>ImportEml</code>: one kind of source for a batch. <code>-ResumeBatch</code> needs the same <code>-Mode</code> as the batch.</li>
+<li><code>-TargetRoot</code>, <code>-SourceMailbox</code>, <code>-Mailbox</code> are the defaults of the lines that leave the column empty. The usual options of an import apply to every line (<code>-MappingFile</code>, <code>-MergeWellKnown</code>, <code>-PerFileSubfolder</code>, <code>-Repair</code>, <code>-NoAutoReconcile</code>, <code>-Concurrency</code>, <code>-MaxAttempts</code>...). What belongs to one import (<code>-PstPath</code>, <code>-StorePath</code>, <code>-EmlPath</code>, <code>-JobName</code>, <code>-IncludeFolder</code>...) is refused: it is in the list.</li>
+<li><code>-BatchName</code>, <code>-ParallelMailboxes</code> (1 to 4, default 1) and <code>-WorkFolder</code> are the ones of the export batch.</li>
+</ul>
+<p><strong>Lines that share a mailbox wait for each other.</strong> Microsoft slows down each target mailbox, so two lines that write into <strong>the same mailbox location</strong> (the same address and <code>Location</code>) never run together, whatever <code>-ParallelMailboxes</code> says: the second starts when the first has ended. Different mailboxes run side by side. A source (a store, a folder of <code>.eml</code> files) read by two lines is opened by one line at a time as well. The plan says how many lines wait.</p>
+<p><strong>3. Writing into mailboxes: the same rules as one import.</strong> An import only <strong>adds</strong>; it never changes or deletes an item. There is no question to answer in the command line (as for one import): the <code>-WhatIf</code> plan and the list printed before the start name <strong>every</strong> mailbox that will be written to, and <code>batch.json</code> keeps it. To write into <strong>another person's mailbox or a shared mailbox</strong>, sign in as <strong>the application</strong> (<code>-AppOnly</code>, the reference guide, 4.6): Microsoft refuses a delegated write into a mailbox that is not the signed-in user's. With a <strong>delegated</strong> sign-in (you), only the lines whose <code>Mailbox</code> is <strong>your own address</strong> are accepted; any other line is reported when the file is checked, before anything is written. The sign-in is done once, and a line never asks for it in the middle of a run (the rules of exports 3 apply).</p>
+<p><strong>4. Never twice.</strong> Every line is an ordinary import with the memory of an ordinary import: it keeps a <strong>journal</strong> of what it created (for a PST, in <code>&lt;work folder&gt;\imports\&lt;key&gt;</code>, outside the job folders so that the tidying of old jobs never removes it; for a store, in the store, under a job name made from the line; for <code>.eml</code> files, beside the files). The key is made from the address, the <code>Location</code>, the source and the folder, <strong>whatever the capitals</strong>. So running the same line again, in the same batch or in another one, imports <strong>only what is not there yet</strong>. An item whose answer was lost is <em>uncertain</em>: the next run looks for it in the mailbox before it decides (reference guide, 7.2).</p>
+<p><strong>5. Continue, the report and the exit codes.</strong> Run <strong>the same command again</strong> (or <code>-ResumeBatch Restore1</code>): the lines that are <em>complete</em> are skipped, the others go on in their own job folder. <code>&lt;work folder&gt;\batches\&lt;name&gt;\report.html</code> is the page <em>All jobs</em> of the jobs of this batch; its title line says how many items were <strong>imported</strong>, <strong>refused</strong> and <strong>uncertain</strong>, and each line links to the report of its job. The summary card prints the same numbers and the next steps. Exit code <strong>0</strong>: every line is complete. <strong>2</strong>: not complete (stopped, a sign-in needed, uncertain items, lines left); nothing is lost, run the command again. <strong>1</strong>: the file has problems (nothing started), or a line failed, or <strong>items were refused for good</strong> in a line (its job report lists them; there is nothing to continue for them).</p>
+<p><strong>6. Stop.</strong> <strong>Ctrl+C</strong>, or a file named <code>stop.request</code> in the folder of the batch (or <code>-StopFile</code>), as for an export: the running lines stop the way <strong>Stop and keep progress</strong> stops them, and the same command continues.</p>
+<p><strong>7. In the console.</strong> The Task page, in <strong>Continue a job</strong>, shows an import batch as <em>Import batch Restore1: 3 of 12 imports complete, 1 failed...</em> with a button that opens its report, as for an export batch. The batch is started and continued from the command line only.</p>
+<div class="markdown-alert markdown-alert-note">
+<p class="markdown-alert-title"><svg class="icon-sm" viewBox="0 0 16 16" fill="currentColor" version="1.1" width="16" height="16" aria-hidden="true"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><strong>Limits.</strong> At most 4 lines at a time. One kind of source for a batch (<code>Import</code>, <code>ImportPst</code> or <code>ImportEml</code>). The folders of the source to take or to leave out (<code>-IncludeFolder</code>...) are not available for a list: use one import for that. The plan of a list does not count folders and items; to see them for one line, run that import alone with <code>-WhatIf</code>.</p>
 </div>
 <h3 id="many-jobs-one-page-for-all-of-them">Many jobs: one page for all of them</h3>
 <p>After a few dozen jobs the question is no longer &quot;what did this job do&quot; but &quot;which of my jobs need me&quot;. The tool answers it with one page, <strong>overview.html</strong>, in the folder <code>jobs</code> of your work folder. It has one row for each job: when it started, the task, the mailbox or the source, the destination, the result, the items done (and failed), the data, the duration, and a link to the report of the job. The tiles at the top give the totals.</p>
@@ -1330,7 +1400,7 @@ grady.archie@contoso.com;;;uses the default
 <hr />
 <p><strong>Next:</strong> the <a href="MailboxTransfer-Guide.html">reference guide</a> has every setting, the exact rights, the file formats, the exit codes and the limits.</p>
 </div></section>
-<footer>Mailbox Transfer 1.3.0 · Nicolas Fabert · generated 2026-11-24 21:42 from MailboxTransfer-UserGuide.md</footer></main>
+<footer>Mailbox Transfer 1.3.0 · Nicolas Fabert · generated 2026-11-24 22:14 from MailboxTransfer-UserGuide.md</footer></main>
 <button type="button" id="to-top" title="Back to top"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
 <dialog id="zoom"><img alt=""></dialog>
 <script>

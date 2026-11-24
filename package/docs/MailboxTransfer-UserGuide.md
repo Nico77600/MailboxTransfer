@@ -632,7 +632,7 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 > [!NOTE]
 > On the command line, `-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31` keeps only the items that arrived between two days (the same as the **Period** box of the console, section 4.4). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps **one period for a mailbox**: running the same export again with another period is refused (use another `-StorePath`); the console gives an export with a period a folder of its own, so it never meets another one.
 
-If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a **CSV file** (one mailbox on each line) and start **one command**. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one **batch** that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the **command line**: the console shows a batch, read only, but does not start one. Only **export** works this way; a batch of imports is not part of this version.
+If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a **CSV file** (one mailbox on each line) and start **one command**. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one **batch** that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the **command line**: the console shows a batch, read only, but does not start one. The same way works for **imports**: see *Importing many mailboxes* below.
 
 **1. The list.** A text file, saved as UTF-8 (Excel: *CSV UTF-8*). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:
 
@@ -686,8 +686,58 @@ To **stop**, press **Ctrl+C**, or create a file named `stop.request` in the fold
 **7. In the console.** The Task page, in **Continue a job**, shows a batch as one line (*Batch Wave1: 412 of 500 mailboxes complete, 3 failed...*) with a button that opens its report. The jobs of the batch that are not complete are listed with the name of the batch and continue like any job; the finished ones are not listed one by one. **All jobs** has a **Batch** list that shows one batch. The folders of a batch's jobs are never tidied away while the batch is not complete (see below).
 
 > [!NOTE]
-> **Limits.** Export only (no batch of imports yet). At most 4 mailboxes at a time; use `Both` on one line for the primary mailbox and the archive of the same address. Another mailbox than your own with a delegated sign-in: `Primary` only. The report lists the jobs of the batch, so a mailbox that has not started has no row until it starts. A batch that is never finished keeps the folders of its jobs for ever: remove the batch folder (`batches\<name>`) when you give it up.
+> **Limits.** At most 4 mailboxes at a time; use `Both` on one line for the primary mailbox and the archive of the same address. Another mailbox than your own with a delegated sign-in: `Primary` only. The report lists the jobs of the batch, so a mailbox that has not started has no row until it starts. A batch that is never finished keeps the folders of its jobs for ever: remove the batch folder (`batches\<name>`) when you give it up.
 
+### Importing many mailboxes
+
+The same way, the other direction. If you have to put 40 PST files into 40 mailboxes, you write the list in a **CSV file** (one import on each line) and start **one command**. The tool makes an ordinary **import job** for each line, up to 4 at a time, and keeps one **batch** that remembers where it is. Everything the export batch does (the list checked first, one sign-in, *the same command again continues*, the report of the batch, the exit codes) is the same here. This is for the **command line**; the console shows an import batch like an export batch (see 7 below), read only.
+
+**1. The list.** A text file, saved as UTF-8 (Excel: *CSV UTF-8*). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:
+
+| Column | Needed | What it says |
+|---|---|---|
+| `Mailbox` | yes | The address of the mailbox **the items go into**. |
+| `Source` | yes | Where the items come from: for `-Mode ImportPst` a `.pst` file, or a folder of `.pst` files (the parts of a split PST are taken in order); for `-Mode ImportEml` a folder of `.eml` files, or one `.eml` file; for `-Mode Import` an export store (the folder that holds `catalog.db`). A relative path starts from the folder of the CSV file. |
+| `Location` | no | `Primary` or `Archive`: which mailbox of that address receives them. Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
+| `TargetRoot` | no | The folder the items are created **below** (for instance `Imported/2019`). Empty: `-TargetRoot` of the command. An export store may keep its own folder names, so it needs none; a PST needs one, or `-MergeWellKnown` on the command (its Inbox, Sent Items... are then merged into the real folders); `.eml` files need one. |
+| `SourceMailbox` | no | Only for `-Mode Import`: `Primary` or `Archive`, the mailbox of a store that holds both. Empty: `-SourceMailbox` of the command. |
+| `Notes` | no | Anything you want. It is ignored. Any **other** column is a mistake: it is reported, so that a misspelled `TargetRoot` is not silently lost. |
+
+```text
+Mailbox;Source;Location;TargetRoot;Notes
+adele.vance@contoso.com;D:\Old\adele.pst;Primary;Imported/2019;Finance
+adele.vance@contoso.com;D:\Old\adele-archive.pst;Archive;Imported/2019;
+alex.wilber@contoso.com;D:\Old\alex;;;uses the defaults
+```
+
+The whole file is checked **before anything starts**, and every problem is printed together, each with its line: an empty or wrong address, a wrong `Location`, a `Source` that is empty, **not found** or of **the wrong kind** (a file where a store is expected, a folder with no `.pst` in it), a `TargetRoot` that is missing where the source needs one, a column the tool does not know, and the same address, `Location` and `Source` twice (capitals do not matter). With a **delegated** sign-in, a line whose mailbox is not the signed-in account is refused too (see 3). Nothing starts while one problem is left.
+
+**2. The command.** Run it with `-WhatIf` first: it checks the file and every source, prints **every mailbox that would be written to**, and writes nothing.
+
+```powershell
+.\Invoke-MailboxTransfer.ps1 -Mode ImportPst -MailboxCsv D:\Batch\imports.csv -TargetRoot Imported -WhatIf
+.\Invoke-MailboxTransfer.ps1 -Mode ImportPst -MailboxCsv D:\Batch\imports.csv -BatchName Restore1 -TargetRoot Imported -ParallelMailboxes 2 -AppOnly
+.\Invoke-MailboxTransfer.ps1 -Mode ImportPst -ResumeBatch Restore1
+```
+
+- `-Mode Import` (stores), `ImportPst` or `ImportEml`: one kind of source for a batch. `-ResumeBatch` needs the same `-Mode` as the batch.
+- `-TargetRoot`, `-SourceMailbox`, `-Mailbox` are the defaults of the lines that leave the column empty. The usual options of an import apply to every line (`-MappingFile`, `-MergeWellKnown`, `-PerFileSubfolder`, `-Repair`, `-NoAutoReconcile`, `-Concurrency`, `-MaxAttempts`...). What belongs to one import (`-PstPath`, `-StorePath`, `-EmlPath`, `-JobName`, `-IncludeFolder`...) is refused: it is in the list.
+- `-BatchName`, `-ParallelMailboxes` (1 to 4, default 1) and `-WorkFolder` are the ones of the export batch.
+
+**Lines that share a mailbox wait for each other.** Microsoft slows down each target mailbox, so two lines that write into **the same mailbox location** (the same address and `Location`) never run together, whatever `-ParallelMailboxes` says: the second starts when the first has ended. Different mailboxes run side by side. A source (a store, a folder of `.eml` files) read by two lines is opened by one line at a time as well. The plan says how many lines wait.
+
+**3. Writing into mailboxes: the same rules as one import.** An import only **adds**; it never changes or deletes an item. There is no question to answer in the command line (as for one import): the `-WhatIf` plan and the list printed before the start name **every** mailbox that will be written to, and `batch.json` keeps it. To write into **another person's mailbox or a shared mailbox**, sign in as **the application** (`-AppOnly`, the reference guide, 4.6): Microsoft refuses a delegated write into a mailbox that is not the signed-in user's. With a **delegated** sign-in (you), only the lines whose `Mailbox` is **your own address** are accepted; any other line is reported when the file is checked, before anything is written. The sign-in is done once, and a line never asks for it in the middle of a run (the rules of exports 3 apply).
+
+**4. Never twice.** Every line is an ordinary import with the memory of an ordinary import: it keeps a **journal** of what it created (for a PST, in `<work folder>\imports\<key>`, outside the job folders so that the tidying of old jobs never removes it; for a store, in the store, under a job name made from the line; for `.eml` files, beside the files). The key is made from the address, the `Location`, the source and the folder, **whatever the capitals**. So running the same line again, in the same batch or in another one, imports **only what is not there yet**. An item whose answer was lost is *uncertain*: the next run looks for it in the mailbox before it decides (reference guide, 7.2).
+
+**5. Continue, the report and the exit codes.** Run **the same command again** (or `-ResumeBatch Restore1`): the lines that are *complete* are skipped, the others go on in their own job folder. `<work folder>\batches\<name>\report.html` is the page *All jobs* of the jobs of this batch; its title line says how many items were **imported**, **refused** and **uncertain**, and each line links to the report of its job. The summary card prints the same numbers and the next steps. Exit code **0**: every line is complete. **2**: not complete (stopped, a sign-in needed, uncertain items, lines left); nothing is lost, run the command again. **1**: the file has problems (nothing started), or a line failed, or **items were refused for good** in a line (its job report lists them; there is nothing to continue for them).
+
+**6. Stop.** **Ctrl+C**, or a file named `stop.request` in the folder of the batch (or `-StopFile`), as for an export: the running lines stop the way **Stop and keep progress** stops them, and the same command continues.
+
+**7. In the console.** The Task page, in **Continue a job**, shows an import batch as *Import batch Restore1: 3 of 12 imports complete, 1 failed...* with a button that opens its report, as for an export batch. The batch is started and continued from the command line only.
+
+> [!NOTE]
+> **Limits.** At most 4 lines at a time. One kind of source for a batch (`Import`, `ImportPst` or `ImportEml`). The folders of the source to take or to leave out (`-IncludeFolder`...) are not available for a list: use one import for that. The plan of a list does not count folders and items; to see them for one line, run that import alone with `-WhatIf`.
 ### Many jobs: one page for all of them
 
 After a few dozen jobs the question is no longer "what did this job do" but "which of my jobs need me". The tool answers it with one page, **overview.html**, in the folder `jobs` of your work folder. It has one row for each job: when it started, the task, the mailbox or the source, the destination, the result, the items done (and failed), the data, the duration, and a link to the report of the job. The tiles at the top give the totals.

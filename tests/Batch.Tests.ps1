@@ -539,7 +539,7 @@ Describe 'The command line of a batch' {
         $global:CliExit | Should -Be 1
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; ParallelMailboxes = 9 }) } | Should -Throw
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; SelectionFile = 'x.json' }) } | Should -Throw '*-SelectionFile is for one mailbox*'
-        { Invoke-Cli (@{ MailboxCsv = $csv; Mode = 'Import' }) } | Should -Throw '*belong to -Mode Export*'
+        { Invoke-Cli (@{ MailboxCsv = $csv; Mode = 'Browse' }) } | Should -Throw '*belong to -Mode Export, Import, ImportPst and ImportEml*'
         { Invoke-Cli @{ Mode = 'Export'; BatchName = 'X' } } | Should -Throw '*belong to -MailboxCsv*'
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; Mailbox = 'AuxArchive' }) } | Should -Throw '*AuxArchive*'
     }

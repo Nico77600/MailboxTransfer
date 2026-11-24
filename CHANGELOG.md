@@ -6,6 +6,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 
 ### Added
 - **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` keep the items that arrived in the mailbox between two days (the console: the **Period** line under the browser of the From page). One period for the whole export, a list of mailboxes included. Messages you tick one by one are always exported; an item with no date is kept. The items left out are skipped, not an error; the summary, the report and the page of all the jobs say how many.
+- **Import many mailboxes from a list**: `-Mode Import`, `ImportPst` or `ImportEml` with `-MailboxCsv list.csv` imports a list of sources into a list of mailboxes, one ordinary import job for each, up to 4 at a time. The file and every source are checked first; lines that write into the same mailbox run one after the other; the same command again continues, and nothing is imported twice.
 
 ### Changed
 - **PowerShell 7.6 or later is the minimum**, for the console and for the command line (it was 7.5 and 7.4). Install it with `winget install Microsoft.PowerShell`, or update it with `winget upgrade Microsoft.PowerShell`.

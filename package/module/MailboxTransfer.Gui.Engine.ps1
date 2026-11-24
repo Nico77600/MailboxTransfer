@@ -94,12 +94,12 @@ function New-MbtGuiRealEngine {
         $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 3)
         $lines = [Collections.Generic.List[object]]::new()
         foreach ($b in $batches) {
-            $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
+            $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Mode -ne 'Export') { 'import' + $(if ($b.Total -eq 1) { '' } else { 's' }) } elseif ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
             if ($b.Partial + $b.Running) { $sub += ', {0} not complete' -f (Format-MbtNumber ($b.Partial + $b.Running)) }
             if ($b.Failed) { $sub += ', {0} failed' -f (Format-MbtNumber $b.Failed) }
             if ($b.Pending) { $sub += ', {0} not started' -f (Format-MbtNumber $b.Pending) }
             if ($b.State -ne 'complete') { $sub += '. Run it again from the command line to continue.' }
-            $lines.Add([pscustomobject]@{ Task = 'batch'; Title = "Batch $($b.Id)"; Sub = $sub; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id })
+            $lines.Add([pscustomobject]@{ Task = 'batch'; Title = "$(if ($b.Mode -ne 'Export') { 'Import batch' } else { 'Batch' }) $($b.Id)"; Sub = $sub; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id })
         }
         $finished = @($(foreach ($b in @(Get-MbtBatchList -WorkFolder $Work -Limit 1000 | Where-Object { $_.State -eq 'complete' })) { $b.Jobs }))
         $ofBatch = 0
