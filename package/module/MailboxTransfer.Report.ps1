@@ -108,8 +108,10 @@ function Get-MbtReportTaskName {
     param([string]$Task, [string]$Mode)
     $name = ($Task -replace '-plan$', '').Trim()
     if ($name -eq 'exportpst') { $name = 'export' }
+    if ($name -eq 'mailcopy') { return $(if ($Task -match '-plan$') { 'Copy to another mailbox (plan check)' } else { 'Copy to another mailbox' }) }
     if (-not $name) {
-        $name = switch -Regex ($Mode) { '^Export' { 'export' } '^Import' { 'import' } '^Check' { 'check' } '^Repair' { 'repair' } default { '' } }
+        $name = switch -Regex ($Mode) { '^Export' { 'export' } '^Import' { 'import' } '^Copy$' { 'mailcopy' } '^Check' { 'check' } '^Repair' { 'repair' } default { '' } }
+        if ($name -eq 'mailcopy') { return 'Copy to another mailbox' }
     }
     if (-not $name) { return '' }
     $text = $name.Substring(0, 1).ToUpperInvariant() + $name.Substring(1).ToLowerInvariant()
@@ -224,6 +226,7 @@ function Get-MbtJobEndpoint {
             'ImportPst' { $Source = 'PST files'; $Destination = $tail }
             'ExportEml' { $Destination = $tail }
             'ImportEml' { $Source = 'EML files'; $Destination = $tail }
+            'Copy' { $ends = $tail -split ' to ', 2; $Source = $ends[0]; $Destination = if ($ends.Count -gt 1) { $ends[1] } else { '' } }
             'CheckPst' { $Source = $tail }
             'RepairPst' { $Source = $tail }
         }

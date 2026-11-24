@@ -765,6 +765,7 @@ function Get-MbtAppPermission {
         Browse (AuxArchive)        MailboxFolder.Read.All + MailboxItem.Read.All (the Mail API cannot open an auxiliary archive)
         Export                     MailboxFolder.Read.All + MailboxItem.Read.All (folder tree, inventory) + MailboxItem.Export.All (exportItems; ImportExport.All also does)
         Import, ImportPst          MailboxFolder.ReadWrite.All (creates the folders) + MailboxItem.Read.All (looks up an item whose answer was lost) + MailboxItem.ImportExport.All (importItem)
+        Copy                       as Import (MailboxItem.ImportExport.All also covers the export half)
         ImportEml                  as Import; with -MimeConversion Exchange also Mail.ReadWrite (a draft is created with the Mail API, then exported)
         ExportEml                  as Browse (Mail.Read: the message is read with the Mail API)
         Status, ExportPst, CheckPst, RepairPst  nothing (local), except -Locations / -Unknown -Check (as Browse of the folders)
@@ -773,7 +774,7 @@ function Get-MbtAppPermission {
     #>
     [CmdletBinding()]
     param(
-        [ValidateSet('Browse', 'Export', 'Import', 'ImportPst', 'ExportEml', 'ImportEml', 'ExportPst', 'Status', 'CheckPst', 'RepairPst')][string]$Mode = 'Browse',
+        [ValidateSet('Browse', 'Export', 'Import', 'ImportPst', 'ExportEml', 'ImportEml', 'ExportPst', 'Copy', 'Status', 'CheckPst', 'RepairPst')][string]$Mode = 'Browse',
         [ValidateSet('Primary', 'Archive', 'AuxArchive', 'All')][string]$Mailbox = 'Primary',
         [switch]$ExchangeConversion
     )
@@ -785,7 +786,7 @@ function Get-MbtAppPermission {
         'Browse' { if ($Mailbox -eq 'AuxArchive') { @($folderRead, $itemRead) } else { @($mailRead, $folderRead, $itemRead) } }
         'ExportEml' { if ($Mailbox -eq 'AuxArchive') { @($folderRead, $itemRead) } else { @($mailRead, $folderRead, $itemRead) } }
         'Export' { @($folderRead, $itemRead, (& $row 'MailboxItem.Export.All' @('MailboxItem.Export.All', 'MailboxItem.ImportExport.All') 'exportItems')) }
-        { $_ -in 'Import', 'ImportPst', 'ImportEml' } {
+        { $_ -in 'Import', 'ImportPst', 'ImportEml', 'Copy' } {
             @((& $row 'MailboxFolder.ReadWrite.All' @('MailboxFolder.ReadWrite.All') 'create the folders (and read them)'),
                 $itemRead,
                 (& $row 'MailboxItem.ImportExport.All' @('MailboxItem.ImportExport.All') 'importItem'))
@@ -2614,6 +2615,117 @@ function Import-MbtMailbox {
     return [pscustomobject]@{ Plan = $plan; Result = $r; Job = $job; Error = $job.Error }
 }
 
+#region 10b. Copy of a mailbox into another (the export, then the import of its store) ---------------
+
+function Get-MbtCopyChoiceKey {
+    <#
+    .SYNOPSIS
+        Eight hexadecimal digits that are the same for the same choice of what a copy reads (the kind of mailbox, the selection file by its content, the folder, the period, Recoverable Items),
+        whatever the case of the text. The default store of a copy is named after it: another choice never lands in the store of this one.
+    #>
+    [CmdletBinding()]
+    param([string]$Kind = 'Primary', [string]$SelectionFile, [string]$Folder, $Period, [switch]$IncludeRecoverableItems, [string[]]$RecoverableItemsFolders)
+    Initialize-MbtEngine
+    # the selection by what it chooses (the mailbox, the folders and the items), not by the counts the browse view wrote in it: the same ticks are the same choice on another day
+    $selection = ''
+    if ($SelectionFile -and [IO.File]::Exists($SelectionFile)) {
+        $parts = foreach ($sel in @(Read-MbtBrowseSelectionSet -Path $SelectionFile)) {
+            $entries = foreach ($e in $sel.Entries) { '{0}/{1}/{2}/{3}' -f $e.FolderId, $e.FolderPath, [bool]$e.IncludeSubfolders, ((@($e.Items | Where-Object { $_ } | ForEach-Object { $_.Id }) | Sort-Object) -join ',') }
+            '{0}|{1}|{2}' -f $sel.Kind, $sel.MailboxId, ((@($entries) | Sort-Object) -join ';')
+        }
+        $selection = (@($parts) | Sort-Object) -join "`n"
+    }
+    $folderKey = if ($Folder) { (($Folder -replace '\\', '/').Trim('/', ' ')) } else { '' }
+    $names = (@($RecoverableItemsFolders | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Sort-Object { $_.ToLowerInvariant() }) -join ',')
+    $text = (@($Kind, $selection, $folderKey, [MailboxTransfer.ArrivalPeriod]::KeyOf($Period), [string][bool]$IncludeRecoverableItems, $names) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() }) -join '|'
+    return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).Substring(0, 8).ToLowerInvariant())
+}
+
+function Get-MbtCopyStorePath {
+    <# The folder of the export store of a copy when -StorePath is not given: <work folder>\stores\copy-<source>-<kind>-<choice key>, or in -StoreBase (the folder that holds the stores of a batch). A store holds one copy of one source: the key says which. #>
+    [CmdletBinding()]
+    param([string]$WorkFolder, [string]$StoreBase, [Parameter(Mandatory)][string]$Source, [string]$Kind = 'Primary', [Parameter(Mandatory)][string]$Key)
+    $name = 'copy-{0}-{1}-{2}' -f (ConvertTo-MbtBatchSafeName $Source), $Kind.ToLowerInvariant(), $Key.ToLowerInvariant()
+    $base = if ($StoreBase) { $StoreBase } else { [IO.Path]::Combine($WorkFolder, 'stores') }
+    return [IO.Path]::Combine($base, $name)
+}
+
+function Get-MbtCopyJobName {
+    <#
+    .SYNOPSIS
+        The name of the import job of a copy: copy-<12 hexadecimal digits> that come from the target mailbox, its Location, the store, the folder and the source mailbox, whatever the case.
+        The same copy again (even from another command or another batch) finds the same job: it never creates an item twice.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$TargetKind, [Parameter(Mandatory)][string]$StorePath, [string]$TargetRoot, [Parameter(Mandatory)][string]$SourceKind)
+    $root = (([string]$TargetRoot).Trim() -replace '\\', '/').Trim('/', ' ')
+    return 'copy-' + (Get-MbtImportBatchKey -Mailbox $Target -Location $TargetKind -Source ([IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($StorePath))) -TargetRoot $root -SourceMailbox $SourceKind)
+}
+
+function Set-MbtCopyStoreKey {
+    <#
+    .SYNOPSIS
+        Marks an export store as the store of this copy, or refuses a store that is not: a store that holds another copy (another mailbox, selection, folder or period), or an export made by -Mode Export
+        (its items were not chosen for this copy and would all be imported).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Store, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$StorePath)
+    $was = $Store.GetExportOption('copy.key')
+    if ($was) {
+        if ($was -ine $Key) { throw "The store $StorePath holds the copy of another choice (another mailbox, selection, folder or period). Give another -StorePath, or leave -StorePath out: the default store is named after the choice." }
+        return
+    }
+    if (@($Store.GetMailboxes()).Count) { throw "The store $StorePath was not made by a copy (it holds an export): -Mode Import puts an export store into a mailbox. For a copy give another -StorePath, or leave it out." }
+    [void]$Store.SetExportOption('copy.key', $Key, $true)
+}
+
+function Get-MbtCopyEstimate {
+    <# Seconds an import of this many bytes takes at the rate observed per target mailbox (about 4 GiB per hour); 0 when the size is not known. #>
+    [CmdletBinding()]
+    param([double]$Bytes, [double]$GiBPerHour = 4)
+    if ($Bytes -le 0 -or $GiBPerHour -le 0) { return 0 }
+    return [math]::Ceiling($Bytes / ($GiBPerHour * 1GB / 3600))
+}
+
+function Format-MbtCopyDuration {
+    <# A long time in words: "about 45 minutes", "about 12.5 hours", "about 3.2 days". #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][double]$Seconds)
+    $en = [Globalization.CultureInfo]::InvariantCulture
+    if ($Seconds -lt 90) { return 'about a minute' }
+    if ($Seconds -lt 5400) { return [string]::Format($en, 'about {0:0} minutes', [math]::Round($Seconds / 60)) }
+    if ($Seconds -lt 172800) { return [string]::Format($en, 'about {0:0.#} hours', ($Seconds / 3600)) }
+    return [string]::Format($en, 'about {0:0.#} days', ($Seconds / 86400))
+}
+
+function Show-MbtCopyPlan {
+    <#
+    .SYNOPSIS
+        The plan of a copy (-WhatIf, and the start of a run), in one block for both halves: what is read, where it is kept, where it goes, how long it takes. Prints; nothing is read or written here.
+    .PARAMETER Items
+        The items to read, as the service announces them (with a period: the most it can take). -Bytes: their size, -SizeUnknown when a folder gives none.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$SourceKind, [string]$What = 'the whole mailbox',
+        [Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$TargetKind, [string]$TargetRoot, [string]$MappingFile,
+        [Parameter(Mandatory)][string]$StorePath, [long]$Items, [double]$Bytes, [switch]$SizeUnknown, [switch]$AtMost, [string]$Period, [switch]$AppOnly, [string]$SignedIn
+    )
+    Write-MbtStep 'The copy in one plan'
+    $size = if ($SizeUnknown -and $Bytes -le 0) { 'size not announced' } else { (Format-MbtBytes $Bytes) + $(if ($SizeUnknown) { ' announced, some folders give no size' } else { ' announced' }) }
+    Write-MbtItem INFO ("read:  the {0} mailbox {1}, {2}{3}: {4}{5} items, {6}" -f $SourceKind, $Source, $What, $(if ($Period) { " ($Period)" } else { '' }), $(if ($AtMost) { 'at most ' } else { '' }), (Format-MbtNumber $Items), $size)
+    Write-MbtItem INFO ("keep:  the export store $StorePath stays on disk after the copy: it is the resume point and the proof of what was read, and it can be imported again or opened in the console")
+    $where = if ($MappingFile) { "following the mapping file $MappingFile" } elseif ($TargetRoot) { "below the folder '$TargetRoot'" } else { 'with the same folder names as the source' }
+    Write-MbtItem INFO ("write: the {0} mailbox {1}, {2}. Folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice" -f $TargetKind, $Target, $where)
+    $seconds = Get-MbtCopyEstimate -Bytes $Bytes
+    if ($seconds -gt 0) { Write-MbtItem INFO ("time:  {0}{1}, dominated by the import at the observed rate of about 4 GiB per hour per target mailbox (the reading before it is faster). The real time depends on the service" -f $(if ($SizeUnknown -or $AtMost) { 'at least ' } else { '' }), (Format-MbtCopyDuration $seconds)) }
+    else { Write-MbtItem INFO 'time:  cannot be estimated (the service announces no size); the import goes at about 4 GiB per hour per target mailbox' }
+    if ($AppOnly) { Write-MbtItem INFO 'sign-in: as the application: it reads and writes the mailboxes of its scope' }
+    elseif ($SignedIn) { Write-MbtItem INFO "sign-in: delegated as ${SignedIn}: it reads what that account can read and writes into the mailbox of that account only" }
+}
+
+#endregion
+
 function Show-MbtPstImportPlan {
     <# The plan of an import from PST (Import-MbtPst -WhatIf and the start of a real run): files, folders, items, size, estimated duration. #>
     [CmdletBinding()]
@@ -3421,16 +3533,17 @@ Export-ModuleMember -Function @(
     'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem',
     'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
     'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
+    'Get-MbtCopyChoiceKey', 'Get-MbtCopyStorePath', 'Get-MbtCopyJobName', 'Set-MbtCopyStoreKey', 'Get-MbtCopyEstimate', 'Format-MbtCopyDuration', 'Show-MbtCopyPlan'
     'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
     'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
     'Show-MbtBrowseTree', 'Show-MbtBrowseItems', 'Show-MbtBrowsePreview', 'Show-MbtExportPlan'
     'Test-MbtPst', 'Repair-MbtPst', 'Export-MbtPst', 'Copy-MbtPst', 'Get-MbtPstPreview', 'Show-MbtPstExportPlan', 'Resolve-MbtPstDestination', 'Show-MbtLiveExportPlan',
     'Export-MbtEml', 'Import-MbtEml', 'Resolve-MbtEmlUnknown', 'Compare-MbtEml',
     'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
-    'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
+    'Set-MbtJobPhase', 'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
     'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
-    'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken', 'Read-MbtImportBatchCsv', 'Compare-MbtImportBatchRow', 'Get-MbtBatchMode', 'Get-MbtImportBatchKey', 'Get-MbtImportChildArgument', 'Get-MbtBatchRowLock'
+    'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken', 'Read-MbtImportBatchCsv', 'Compare-MbtImportBatchRow', 'Get-MbtBatchMode', 'Get-MbtImportBatchKey', 'Get-MbtImportChildArgument', 'Get-MbtBatchRowLock', 'Read-MbtCopyBatchCsv', 'Compare-MbtCopyBatchRow', 'Get-MbtCopyChildArgument'
 )
 
 # SIG # Begin signature block

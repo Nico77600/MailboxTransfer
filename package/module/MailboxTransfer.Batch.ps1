@@ -4,20 +4,22 @@
     Mailbox Transfer - the export or the import of a list of mailboxes, a batch (dot-sourced by MailboxTransfer.psm1).
 
 .DESCRIPTION
-    A batch exports the mailboxes of a CSV file, or imports into them, one ordinary job for each mailbox (or for each import): its own job folder (events.jsonl, status.json with the batch name, report.html,
+    A batch exports the mailboxes of a CSV file, imports into them, or copies one mailbox into another, one ordinary job for each mailbox (or for each import, or each copy): its own job folder (events.jsonl, status.json with the batch name, report.html,
     request.json for the Continue of the console), run by a child process of Invoke-MailboxTransfer.ps1, so that the engine, the sign-in cache and the throttling of one mailbox never meet those of another.
     The batch itself is a folder, <work folder>\batches\<batch>\, with batch.json (the rows of the CSV, the options, the state of each row and its job), batch.log and report.html (the overview of
     the jobs of the batch). The same command again continues it: complete mailboxes are skipped, the others do only what is left.
 
         Read-MbtBatchCsv         reads and checks the whole CSV of an export before anything starts; every problem is returned, not the first only
         Read-MbtImportBatchCsv   the same for the CSV of an import (-Mode Import, ImportPst, ImportEml)
+        Read-MbtCopyBatchCsv     the same for the CSV of a copy (-Mode Copy): one line for each source mailbox location and target mailbox location
         Read-MbtBatch            batch.json of a batch folder
         Invoke-MbtBatch          runs the rows, 1 to 4 mailboxes at a time; returns the counts and the exit code
         Write-MbtBatchReport     <batch folder>\report.html
         Get-MbtBatchList         the batches of a work folder with their counts (the console lists them)
         Get-MbtBatchProtection   the jobs and batches that the retention of the job folders must keep
 
-    An import batch runs the rows that write into different mailboxes side by side and never two rows that write into the same mailbox location, or read the same source, at the same time.
+    An import batch runs the rows that write into different mailboxes side by side and never two rows that write into the same mailbox location, or read the same source, at the same time. A batch of copies
+    does the same for the target mailbox location and the source mailbox location of its lines.
 
 .NOTES
     Author  : Nicolas Fabert
@@ -27,6 +29,7 @@ $script:MbtBatchLocations = @('Primary', 'Archive', 'Both')
 $script:MbtBatchRowStates = @('pending', 'running', 'complete', 'partial', 'failed')
 $script:MbtBatchImportModes = @('Import', 'ImportPst', 'ImportEml')
 $script:MbtBatchImportColumns = @('Mailbox', 'Source', 'Location', 'TargetRoot', 'SourceMailbox', 'Notes')
+$script:MbtBatchCopyColumns = @('SourceAddress', 'SourceLocation', 'TargetAddress', 'TargetLocation', 'TargetRoot', 'SelectionFile', 'Notes')
 
 #region Names and folders -----------------------------------------------------------------------
 
@@ -465,6 +468,165 @@ function Read-MbtImportBatchCsv {
 
 #endregion
 
+#region The CSV of a copy ------------------------------------------------------------------------
+
+function Read-MbtCopyBatchCsv {
+    <#
+    .SYNOPSIS
+        Reads the CSV file of a batch of copies and checks all of it: the problems of every row are returned together, so that one correction of the file is enough.
+    .DESCRIPTION
+        One line for each copy: the mailbox location it reads and the mailbox location it writes into. Columns (the names do not depend on upper or lower case; the delimiter is a comma or a semicolon; UTF-8 with
+        or without BOM): SourceAddress (the mailbox read, required), SourceLocation (Primary or Archive; empty: -DefaultSourceLocation), TargetAddress (the mailbox written into, required), TargetLocation (Primary or
+        Archive; empty: -DefaultTargetLocation), TargetRoot (the folder everything is created below; empty: the global one; empty everywhere: the folder names of the source), SelectionFile (optional: what to copy,
+        written by the browse view or the console, of one mailbox location; relative to the folder of the CSV file), Notes (ignored). Any other column is a problem.
+        Returns Rows (Number, Line, SourceAddress, SourceLocation, TargetAddress, TargetLocation, TargetRoot, SelectionFile, Store), Problems (text), Delimiter. Checked: a missing or wrong address, a wrong Location,
+        a SelectionFile that is missing or of several mailbox locations, a source that is the target (the same address and Location), the same copy twice (the same source, target, Locations and selection), and, with a
+        delegated sign-in, a target that is not the signed-in account (the service refuses a delegated write into another mailbox) and an archive read from a mailbox that is not the signed-in account's. Lines that
+        write into the same target location, or read the same source location, are fine: they run one after the other.
+    .PARAMETER StoreBase
+        The folder that holds one export store for each source location and choice (<StoreBase>\copy-<address>-<location>-<8 digits of the choice>): a source copied into two targets is read once.
+    .PARAMETER Choice
+        What every line of the batch reads besides its selection (the options of the command): Folder, Period (a period of the engine), IncludeRecoverableItems, RecoverableItemsFolders. They make the store of a line.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [ValidateSet('Primary', 'Archive')][string]$DefaultSourceLocation = 'Primary',
+        [ValidateSet('Primary', 'Archive')][string]$DefaultTargetLocation = 'Primary',
+        [string]$DefaultTargetRoot, [string]$StoreBase, [hashtable]$Choice = @{}, [string]$SignedInUser, [switch]$AppOnly
+    )
+    Set-StrictMode -Version Latest
+    $problems = [Collections.Generic.List[string]]::new()
+    $rows = [Collections.Generic.List[object]]::new()
+    $delimiter = ','
+    $result = { [pscustomobject]@{ Rows = $rows.ToArray(); Problems = $problems.ToArray(); Delimiter = $delimiter } }
+    if (-not [IO.File]::Exists($Path)) { $problems.Add("The CSV file was not found: $Path"); return (& $result) }
+    $text = $null
+    try {
+        $reader = [IO.StreamReader]::new($Path, [Text.UTF8Encoding]::new($false), $true)
+        try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } catch { $problems.Add("The CSV file cannot be read ($Path): $($_.Exception.Message)"); return (& $result) }
+    $csv = ConvertFrom-MbtBatchCsvText $text
+    $delimiter = $csv.Delimiter
+    $csvFolder = Split-Path ([IO.Path]::GetFullPath($Path)) -Parent
+    if ($csv.Unclosed) { $problems.Add('A quote is not closed: the end of the file is inside a quoted text.') }
+    if (-not $csv.Records.Count) { $problems.Add('The CSV file is empty: the first line names the columns, then one copy on each line.'); return (& $result) }
+
+    $known = @{}
+    foreach ($c in $script:MbtBatchCopyColumns) { $known[$c.ToLowerInvariant()] = $c }
+    $header = $csv.Records[0]
+    $column = @{}
+    for ($i = 0; $i -lt $header.Fields.Count; $i++) {
+        $name = $header.Fields[$i].Trim()
+        if (-not $name) { continue }
+        $k = $name.ToLowerInvariant()
+        if ($column.ContainsKey($k)) { $problems.Add("The column $name is there twice (the first line): keep one."); continue }
+        $column[$k] = $i
+        if (-not $known.ContainsKey($k)) { $problems.Add("The column $name is not known (the columns are $($script:MbtBatchCopyColumns -join ', ')): check the spelling, or remove it.") }
+    }
+    if (-not $column.ContainsKey('sourceaddress') -or -not $column.ContainsKey('targetaddress')) {
+        $problems.Add('The first line must name the columns, and SourceAddress and TargetAddress are required (found: ' + $(if ($column.Count) { (($header.Fields | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ', ') } else { 'nothing' }) + ').')
+        return (& $result)
+    }
+    $cell = { param($record, [string]$name) $at = $column[$name]; if ($null -ne $at -and $at -lt $record.Fields.Count) { $record.Fields[$at].Trim() } else { '' } }
+    $address = '^[^@\s,;"<>]+@[^@\s,;"<>]+$'
+    $seen = @{}
+    $number = 0
+    foreach ($record in @($csv.Records | Select-Object -Skip 1)) {
+        $number++
+        $line = $record.Line
+        $before = $problems.Count
+
+        $source = & $cell $record 'sourceaddress'
+        if (-not $source) { $problems.Add("line ${line}: SourceAddress is empty."); $source = '' }
+        elseif ($source -notmatch $address) { $problems.Add("line ${line}: '$source' is not a mailbox address (user@domain)."); $source = '' }
+        $target = & $cell $record 'targetaddress'
+        if (-not $target) { $problems.Add("line ${line}: TargetAddress is empty."); $target = '' }
+        elseif ($target -notmatch $address) { $problems.Add("line ${line}: '$target' is not a mailbox address (user@domain)."); $target = '' }
+        elseif ($SignedInUser -and -not $AppOnly -and $target -ine $SignedInUser) {
+            $problems.Add("line ${line}: $target is not the signed-in account ($SignedInUser). With a delegated sign-in only the mailbox of the signed-in account can be written into (the service refuses a delegated write into another person's or a shared mailbox): sign in as the application (-AppOnly), or list only that mailbox as the target.")
+        }
+
+        $sourceLocation = $DefaultSourceLocation
+        $given = & $cell $record 'sourcelocation'
+        if ($given) {
+            $match = @('Primary', 'Archive' | Where-Object { $_ -ieq $given })
+            if ($match.Count) { $sourceLocation = $match[0] } else { $problems.Add("line ${line}: SourceLocation '$given' is not Primary or Archive (a copy reads one mailbox location: use a second line for the other)."); $sourceLocation = '' }
+        }
+        $targetLocation = $DefaultTargetLocation
+        $given = & $cell $record 'targetlocation'
+        if ($given) {
+            $match = @('Primary', 'Archive' | Where-Object { $_ -ieq $given })
+            if ($match.Count) { $targetLocation = $match[0] } else { $problems.Add("line ${line}: TargetLocation '$given' is not Primary or Archive (a copy goes into one mailbox location)."); $targetLocation = '' }
+        }
+
+        $selection = & $cell $record 'selectionfile'
+        $selectionKind = ''
+        if ($selection) {
+            if (-not [IO.Path]::IsPathRooted($selection)) { $selection = [IO.Path]::Combine($csvFolder, $selection) }
+            if (-not [IO.File]::Exists($selection)) { $problems.Add("line ${line}: the SelectionFile was not found: $selection"); $selection = '' }
+            else {
+                $selection = [IO.Path]::GetFullPath($selection)
+                try {
+                    $sets = @(Read-MbtBrowseSelectionSet -Path $selection)
+                    if ($sets.Count -ne 1) { $problems.Add("line ${line}: the SelectionFile names $($sets.Count) mailbox locations: a copy takes one (Primary or Archive). Make one file for each location, on its own line."); $selection = '' }
+                    elseif ([string]$sets[0].Kind -notin 'Primary', 'Archive') { $problems.Add("line ${line}: the SelectionFile is of the $($sets[0].Kind) mailbox: a copy reads the Primary or the Archive."); $selection = '' }
+                    else {
+                        $selectionKind = [string]$sets[0].Kind
+                        if ($given = & $cell $record 'sourcelocation') { if ($given -ine $selectionKind) { $problems.Add("line ${line}: SourceLocation $given does not match the SelectionFile, which is of the $selectionKind mailbox: leave SourceLocation empty."); $selection = '' } }
+                        $sourceLocation = $selectionKind
+                    }
+                } catch { $problems.Add("line ${line}: the SelectionFile cannot be read: $($_.Exception.Message)"); $selection = '' }
+            }
+        }
+        if ($source -and $sourceLocation -eq 'Archive' -and $SignedInUser -and -not $AppOnly -and $source -ine $SignedInUser) {
+            $problems.Add("line ${line}: $source is not the signed-in account ($SignedInUser). With a delegated sign-in only its primary mailbox can be read: use SourceLocation Primary, or sign in as the application (-AppOnly).")
+        }
+
+        $rootText = & $cell $record 'targetroot'
+        if (-not $rootText) { $rootText = $DefaultTargetRoot }
+        $root = ConvertTo-MbtBatchTargetRoot $rootText
+        if ($rootText -and -not $root) { $problems.Add("line ${line}: TargetRoot '$rootText' is not a folder path.") }
+        elseif ($root -and @($root -split '/' | Where-Object { -not $_.Trim() }).Count) { $problems.Add("line ${line}: TargetRoot '$rootText' has an empty folder name in it.") }
+
+        if ($source -and $target -and $sourceLocation -and $targetLocation -and $source -ieq $target -and $sourceLocation -eq $targetLocation) {
+            $problems.Add("line ${line}: the source and the target are the same mailbox location (the $sourceLocation mailbox of $source): a copy writes into another location.")
+        }
+        if ($problems.Count -gt $before) { continue }
+
+        $twice = (@($source, $sourceLocation, $target, $targetLocation, $selection) | ForEach-Object { $_.ToLowerInvariant() }) -join '|'
+        if ($seen.ContainsKey($twice)) { $problems.Add("line ${line}: $source ($sourceLocation) is already copied into $target ($targetLocation) on line $($seen[$twice]) (the same source, target, Locations and SelectionFile; upper and lower case are the same)."); continue }
+        $seen[$twice] = $line
+        $rows.Add([pscustomobject]@{ Number = $number; Line = $line; SourceAddress = $source; SourceLocation = $sourceLocation; TargetAddress = $target; TargetLocation = $targetLocation; TargetRoot = $root; SelectionFile = $selection; Store = '' })
+    }
+    if (-not $rows.Count -and -not $problems.Count) { $problems.Add('The CSV file has no copy: the first line names the columns, then one copy on each line.') }
+
+    # the store of a line: named after the source location and the choice, so that a source copied into several targets is read once, and another choice never lands in it
+    if ($StoreBase) {
+        foreach ($r in $rows) {
+            $key = Get-MbtCopyChoiceKey -Kind $r.SourceLocation -SelectionFile $r.SelectionFile -Folder $(if ($Choice.ContainsKey('Folder')) { $Choice.Folder }) -Period $(if ($Choice.ContainsKey('Period')) { $Choice.Period }) `
+                -IncludeRecoverableItems:($Choice.ContainsKey('IncludeRecoverableItems') -and [bool]$Choice.IncludeRecoverableItems) -RecoverableItemsFolders $(if ($Choice.ContainsKey('RecoverableItemsFolders')) { $Choice.RecoverableItemsFolders })
+            $r.Store = [IO.Path]::GetFullPath((Get-MbtCopyStorePath -StoreBase $StoreBase -Source $r.SourceAddress -Kind $r.SourceLocation -Key $key))
+        }
+    }
+    return (& $result)
+}
+
+function Compare-MbtCopyBatchRow {
+    <# The differences between the rows a batch of copies was made with and the rows of the CSV file given (the same sources, targets, locations, folders and selections), as sentences; none when they agree. #>
+    param([Parameter(Mandatory)]$Batch, [Parameter(Mandatory)][object[]]$Row)
+    $name = { param($source, $sourceLocation, $target, $targetLocation, $root, $selection) "$source ($sourceLocation) into $target ($targetLocation)" + $(if ($root) { " folder $root" }) + $(if ($selection) { ", selection $([IO.Path]::GetFileName($selection))" }) }
+    $key = { param($source, $sourceLocation, $target, $targetLocation, $root, $selection) (@($source, $sourceLocation, $target, $targetLocation, $root, $selection) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() }) -join '|' }
+    $have = @{}; foreach ($r in @($Batch.rows)) { $have[(& $key $r.sourceUpn $r.sourceLocation $r.upn $r.location $r.targetRoot $r.selection)] = (& $name $r.sourceUpn $r.sourceLocation $r.upn $r.location $r.targetRoot $r.selection) }
+    $now = @{}; foreach ($r in $Row) { $now[(& $key $r.SourceAddress $r.SourceLocation $r.TargetAddress $r.TargetLocation $r.TargetRoot $r.SelectionFile)] = (& $name $r.SourceAddress $r.SourceLocation $r.TargetAddress $r.TargetLocation $r.TargetRoot $r.SelectionFile) }
+    $out = [Collections.Generic.List[string]]::new()
+    foreach ($k in $now.Keys) { if (-not $have.ContainsKey($k)) { $out.Add("$($now[$k]) is in the CSV file and not in the batch") } }
+    foreach ($k in $have.Keys) { if (-not $now.ContainsKey($k)) { $out.Add("$($have[$k]) is in the batch and not in the CSV file") } }
+    return $out.ToArray()
+}
+
+#endregion
+
 #region The state of a batch --------------------------------------------------------------------
 
 function Read-MbtBatch {
@@ -482,12 +644,12 @@ function Read-MbtBatch {
 function Get-MbtBatchCount {
     <# What a batch holds, as numbers: rows by state, items done and failed, data. #>
     param([Parameter(Mandatory)]$Batch)
-    $c = [ordered]@{ Total = 0; Pending = 0; Running = 0; Complete = 0; Partial = 0; Failed = 0; Done = [long]0; FailedItems = [long]0; Bytes = [long]0; OutsidePeriod = [long]0; Unknown = [long]0; Refused = [long]0 }
+    $c = [ordered]@{ Total = 0; Pending = 0; Running = 0; Complete = 0; Partial = 0; Failed = 0; Done = [long]0; FailedItems = [long]0; Bytes = [long]0; OutsidePeriod = [long]0; Unknown = [long]0; Refused = [long]0; Exported = [long]0 }
     foreach ($r in @($Batch.rows)) {
         $c.Total++
         $state = [string]$r['state']
         switch ($state) { 'complete' { $c.Complete++ } 'partial' { $c.Partial++ } 'failed' { $c.Failed++ } 'running' { $c.Running++ } default { $c.Pending++ } }
-        foreach ($pair in @(@('done', 'Done'), @('failedItems', 'FailedItems'), @('bytes', 'Bytes'), @('outsidePeriod', 'OutsidePeriod'), @('unknown', 'Unknown'), @('refused', 'Refused'))) { if ($r.Contains($pair[0]) -and $null -ne $r[$pair[0]]) { $c[$pair[1]] += [long]$r[$pair[0]] } }
+        foreach ($pair in @(@('done', 'Done'), @('failedItems', 'FailedItems'), @('bytes', 'Bytes'), @('outsidePeriod', 'OutsidePeriod'), @('unknown', 'Unknown'), @('refused', 'Refused'), @('exported', 'Exported'))) { if ($r.Contains($pair[0]) -and $null -ne $r[$pair[0]]) { $c[$pair[1]] += [long]$r[$pair[0]] } }
     }
     return $c
 }
@@ -528,13 +690,21 @@ function Write-MbtBatchLog {
 }
 
 function New-MbtBatch {
-    <# A batch that has not started: every row pending. The rows are the ones of Read-MbtBatchCsv (-Mode Export) or of Read-MbtImportBatchCsv (an import mode). #>
+    <# A batch that has not started: every row pending. The rows are the ones of Read-MbtBatchCsv (-Mode Export), of Read-MbtImportBatchCsv (an import mode) or of Read-MbtCopyBatchCsv (-Mode Copy). #>
     param(
         [Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)][string]$Csv, [Parameter(Mandatory)][object[]]$Row, [Parameter(Mandatory)][hashtable]$Option, [int]$Parallel = 1,
-        [ValidateSet('Export', 'Import', 'ImportPst', 'ImportEml')][string]$Mode = 'Export'
+        [ValidateSet('Export', 'Import', 'ImportPst', 'ImportEml', 'Copy')][string]$Mode = 'Export'
     )
     $now = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z')
     $rows = @(foreach ($r in $Row) {
+            if ($Mode -eq 'Copy') {
+                [ordered]@{
+                    n = [int]$r.Number; line = [int]$r.Line; upn = [string]$r.TargetAddress; location = [string]$r.TargetLocation; sourceUpn = [string]$r.SourceAddress; sourceLocation = [string]$r.SourceLocation
+                    selection = [string]$r.SelectionFile; targetRoot = [string]$r.TargetRoot; store = [string]$r.Store; output = ''
+                    state = 'pending'; job = ''; attempts = 0; exit = $null; reason = ''; message = ''; done = $null; failedItems = $null; bytes = $null; outsidePeriod = $null; unknown = $null; refused = $null; exported = $null; started = ''; finished = ''
+                }
+                continue
+            }
             if ($Mode -ne 'Export') {
                 [ordered]@{
                     n = [int]$r.Number; line = [int]$r.Line; upn = [string]$r.Mailbox; location = [string]$r.Location; selection = ''; output = ''; store = ''
@@ -630,9 +800,13 @@ function Get-MbtBatchProtection {
 function Get-MbtBatchRowLock {
     <#
         What a row holds while it runs, as names: an import holds its target mailbox location and its source. The service throttles each mailbox, and an export store or a folder of .eml files is
-        opened by one process at a time, so two rows that share a name never run together. An export row holds nothing.
+        opened by one process at a time, so two rows that share a name never run together. A copy holds its target mailbox location and its source mailbox location (the store is read and written by one
+        process at a time, and the service throttles the source too). An export row holds nothing.
     #>
     param([Parameter(Mandatory)]$Row)
+    if ($Row -is [System.Collections.IDictionary] -and $Row.Contains('sourceUpn') -and [string]$Row['sourceUpn']) {
+        return @(('target:' + ([string]$Row['upn']).ToLowerInvariant() + '|' + ([string]$Row['location']).ToLowerInvariant()), ('source:' + ([string]$Row['sourceUpn']).ToLowerInvariant() + '|' + ([string]$Row['sourceLocation']).ToLowerInvariant()))
+    }
     if (-not ($Row -is [System.Collections.IDictionary]) -or -not $Row.Contains('source') -or -not [string]$Row['source']) { return @() }
     return @(('target:' + ([string]$Row['upn']).ToLowerInvariant() + '|' + ([string]$Row['location']).ToLowerInvariant()), ('source:' + ([string]$Row['source']).ToLowerInvariant()))
 }
@@ -644,6 +818,7 @@ function Get-MbtBatchChildArgument {
     #>
     param([Parameter(Mandatory)]$Row, [Parameter(Mandatory)][hashtable]$Option, [Parameter(Mandatory)]$Job, [Parameter(Mandatory)][string]$BatchId, [string]$Mode = 'Export')
     if ($Mode -in $script:MbtBatchImportModes) { return (Get-MbtImportChildArgument -Row $Row -Option $Option -Job $Job -BatchId $BatchId -Mode $Mode) }
+    if ($Mode -eq 'Copy') { return (Get-MbtCopyChildArgument -Row $Row -Option $Option -Job $Job -BatchId $BatchId) }
     $a = [Collections.Generic.List[string]]::new()
     $a.AddRange([string[]]@('-Mode', 'Export'))
     $kind = switch ([string]$Row.location) { 'Archive' { 'Archive' } 'Both' { 'All' } default { 'Primary' } }
@@ -696,11 +871,41 @@ function Get-MbtImportChildArgument {
     return $a.ToArray()
 }
 
+function Get-MbtCopyChildArgument {
+    <#
+        The arguments of Invoke-MailboxTransfer.ps1 for one copy of a batch: an ordinary copy of that source into that target, silent sign-in, the store and the files of its job. The import job of the copy is named
+        by the command itself after the target, the store and the folder, so the same line again, in this batch or another, creates nothing twice.
+        A delegated sign-in writes into the mailbox of the signed-in account only (the CSV file was checked for it) and reads another mailbox by its address; the application sign-in names the source (the mailbox it
+        works on) and the target (-TargetMailboxId) itself. A selection names its own mailbox and location.
+    #>
+    param([Parameter(Mandatory)]$Row, [Parameter(Mandatory)][hashtable]$Option, [Parameter(Mandatory)]$Job, [Parameter(Mandatory)][string]$BatchId)
+    $signer = [string]$Option.SignInUser
+    if (-not $Option.AppOnly -and $signer -and [string]$Row.upn -ine $signer) { throw "A delegated sign-in writes into the mailbox of the signed-in account ($signer) only: $($Row.upn) needs the application sign-in (-AppOnly). Nothing was read or written." }
+    $a = [Collections.Generic.List[string]]::new()
+    $a.AddRange([string[]]@('-Mode', 'Copy'))
+    $other = (-not $Option.AppOnly) -and $signer -and ([string]$Row.sourceUpn -ine $signer)
+    if ($Option.AppOnly -or -not $signer) { $a.AddRange([string[]]@('-UserPrincipalName', [string]$Row.sourceUpn, '-TargetMailboxId', [string]$Row.upn)) }
+    elseif ($other -and -not [string]$Row.selection) { $a.AddRange([string[]]@('-UserPrincipalName', $signer, '-MailboxId', [string]$Row.sourceUpn)) }
+    else { $a.AddRange([string[]]@('-UserPrincipalName', $signer)) }
+    if ([string]$Row.selection) { $a.AddRange([string[]]@('-SelectionFile', [string]$Row.selection)) }
+    else { $a.AddRange([string[]]@('-Mailbox', [string]$Row.sourceLocation)) }
+    $a.AddRange([string[]]@('-TargetMailbox', [string]$Row.location))
+    if ([string]$Row.targetRoot) { $a.AddRange([string[]]@('-TargetRoot', [string]$Row.targetRoot)) }
+    $a.AddRange([string[]]@('-StorePath', [string]$Row.store, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp')))
+    foreach ($name in @($Option.Pass.Keys | Sort-Object)) {
+        $value = $Option.Pass[$name]
+        if ($value -is [bool]) { if ($value) { $a.Add("-$name") } }
+        elseif ($null -ne $value -and [string]$value -ne '') { $a.AddRange([string[]]@("-$name", [string]$value)) }
+    }
+    $a.AddRange([string[]]@('-NoPrompt', '-EventsFile', $Job.EventsPath, '-StopFile', $Job.StopPath, '-JobId', $Job.Id, '-BatchId', $BatchId))
+    return $a.ToArray()
+}
+
 function New-MbtBatchJobFolder {
-    <# A job folder like the console makes (<work folder>\jobs\<yyyyMMdd-HHmm>-<export or import>-<4 hex>), for a mailbox of a batch. #>
-    param([Parameter(Mandatory)][string]$WorkFolder, [string]$Name, [ValidateSet('export', 'import')][string]$Kind = 'export')
+    <# A job folder like the console makes (<work folder>\jobs\<yyyyMMdd-HHmm>-<export, import or mailcopy>-<4 hex>), for a mailbox of a batch. #>
+    param([Parameter(Mandatory)][string]$WorkFolder, [string]$Name, [ValidateSet('export', 'import', 'mailcopy')][string]$Kind = 'export')
     $jobs = [IO.Path]::Combine($WorkFolder, 'jobs')
-    if ($Name) { $dir = [IO.Path]::Combine($jobs, $Name); $id = ($Name -replace '^.*-(export|import)-', '$1-') }
+    if ($Name) { $dir = [IO.Path]::Combine($jobs, $Name); $id = ($Name -replace '^.*-(export|import|mailcopy)-', '$1-') }
     else {
         do {
             $hex = -join ((1..4) | ForEach-Object { '0123456789abcdef'[(Get-Random -Maximum 16)] })
@@ -721,6 +926,20 @@ function Write-MbtBatchJobRequest {
     param([Parameter(Mandatory)]$Row, [Parameter(Mandatory)]$Job, [Parameter(Mandatory)][string[]]$Argument, [Parameter(Mandatory)][hashtable]$Option, [Parameter(Mandatory)][string]$BatchId, [string]$Mode = 'Export')
     $pass = $Option.Pass
     $get = { param($n, $d) if ($pass.Contains($n) -and $null -ne $pass[$n]) { $pass[$n] } else { $d } }
+    if ($Mode -eq 'Copy') {
+        $signer = [string]$Option.SignInUser
+        $app = [bool]$Option.AppOnly -or -not $signer
+        $request = [ordered]@{
+            Title = ('Copy {0} {1} {2} {3} ({4})' -f [char]0x00B7, $Row.sourceUpn, [char]0x2192, $Row.upn, $Row.location); Created = [DateTime]::UtcNow.ToString('o'); JobId = $Job.Id; JobName = $Job.Id; Batch = $BatchId
+            StorePath = [string]$Row.store; SelectionFiles = @(if ([string]$Row.selection) { [string]$Row.selection }); Commands = @(, $Argument)
+            Task = 'mailcopy'; Mailbox = $(if ($app) { [string]$Row.sourceUpn } else { $signer }); Shared = $(if (-not $app -and [string]$Row.sourceUpn -ine $signer) { [string]$Row.sourceUpn } else { '' }); McTarget = $(if ($app) { [string]$Row.upn } else { '' })
+            TgtLoc = [string]$Row.location; TgtMode = $(if ([string]$Row.targetRoot) { 'new' } else { 'same' }); TgtName = [string]$Row.targetRoot
+            Conc = [int](& $get 'Concurrency' 4); Tries = [int](& $get 'MaxAttempts' 3); Awake = $false
+        }
+        if ($pass.Contains('RetryWaitSeconds')) { $request.Retry = [int][math]::Round([double]$pass.RetryWaitSeconds) }
+        [IO.File]::WriteAllText([IO.Path]::Combine($Job.Folder, 'request.json'), ($request | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        return
+    }
     if ($Mode -in $script:MbtBatchImportModes) {
         $request = [ordered]@{
             Title = ('Import {0} {1} ({2})' -f [char]0x00B7, $Row.upn, $Row.location); Created = [DateTime]::UtcNow.ToString('o'); JobId = $Job.Id; JobName = $Job.Id; Batch = $BatchId
@@ -834,7 +1053,10 @@ function Write-MbtBatchReport {
     $notStarted = @($Batch.rows | Where-Object { -not $_.job }).Count
     $caption = '{0} {1} in the CSV file ({2} complete, {3}{4} not complete, {5} failed)' -f (Format-MbtNumber $counts.Total), $(if ($counts.Total -eq 1) { 'mailbox' } else { 'mailboxes' }), (Format-MbtNumber $counts.Complete), $(if ($counts.Running) { (Format-MbtNumber $counts.Running) + ' running, ' } else { '' }), (Format-MbtNumber $counts.Partial), (Format-MbtNumber $counts.Failed)
     if ($notStarted) { $caption += '; ' + (Format-MbtNumber $notStarted) + $(if ($notStarted -eq 1) { ' has' } else { ' have' }) + ' not started yet' }
-    if ((Get-MbtBatchMode $Batch) -ne 'Export' -and ($counts.Done -gt 0 -or $counts.FailedItems -gt 0 -or $counts.Refused -gt 0 -or $counts.Unknown -gt 0)) {
+    if ((Get-MbtBatchMode $Batch) -eq 'Copy' -and ($counts.Done -gt 0 -or $counts.Exported -gt 0 -or $counts.FailedItems -gt 0 -or $counts.Unknown -gt 0)) {
+        $caption += '; ' + (Format-MbtNumber $counts.Exported) + ' items read, ' + (Format-MbtNumber $counts.Done) + ' items copied, ' + (Format-MbtNumber $counts.FailedItems) + ' failed, ' + (Format-MbtNumber $counts.Unknown) + ' uncertain'
+    }
+    elseif ((Get-MbtBatchMode $Batch) -ne 'Export' -and ($counts.Done -gt 0 -or $counts.FailedItems -gt 0 -or $counts.Refused -gt 0 -or $counts.Unknown -gt 0)) {
         $caption += '; ' + (Format-MbtNumber $counts.Done) + ' items imported, ' + (Format-MbtNumber ($counts.FailedItems + $counts.Refused)) + ' refused, ' + (Format-MbtNumber $counts.Unknown) + ' uncertain'
     }
     $caption += '.'
@@ -853,7 +1075,7 @@ function Complete-MbtBatchRow {
     param([Parameter(Mandatory)]$Batch, [Parameter(Mandatory)]$Item, [Parameter(Mandatory)][string]$Folder, [bool]$StopAsked, [Parameter(Mandatory)][string]$BatchId, [int]$Position, [int]$Of)
     $row = $Item.Row; $job = $Item.Job
     $mode = Get-MbtBatchMode $Batch
-    $task = if ($mode -eq 'Export') { 'export' } else { 'import' }
+    $task = if ($mode -eq 'Export') { 'export' } elseif ($mode -eq 'Copy') { 'mailcopy' } else { 'import' }
     $exit = if ($null -ne $Item.ExitCode) { [int]$Item.ExitCode } else { 1 }
     $status = $null
     if ([IO.File]::Exists($job.StatusPath)) { try { $status = Read-MbtJsonFile -Path $job.StatusPath -AsHashtable } catch { $status = $null } }
@@ -864,28 +1086,28 @@ function Complete-MbtBatchRow {
     if ($exit -eq 0) { $state = 'complete' }
     elseif ($exit -eq 2 -and $reason -eq 'signin-required') { $state = 'partial'; $message = 'sign-in required: no valid sign-in is cached, so nothing could be asked in the middle of a run. Sign in once (run the command again without -NoPrompt) and run it again.' }
     elseif ($exit -eq 2) { $state = 'partial'; $message = if ($reason -eq 'stopped' -or $StopAsked) { 'stopped: run the batch again to continue' } else { 'not complete: run the batch again to continue' } }
-    elseif ($exit -eq 3 -and $task -eq 'import') { $state = 'partial'; $message = 'uncertain items: the answer for some items was lost, they may exist. Run the batch again: they are looked up in the mailbox first (or settle them with -Mode Status -Unknown -Check)' }
+    elseif ($exit -eq 3 -and $task -in 'import', 'mailcopy') { $state = 'partial'; $message = 'uncertain items: the answer for some items was lost, they may exist. Run the batch again: they are looked up in the mailbox first (or settle them with -Mode Status -Unknown -Check)' }
     elseif ($exit -eq 1 -and $reason -eq 'refused-items') { $state = 'failed'; $message = 'finished, but some items are refused for good: the report of its job lists them' }
     else { $state = 'failed' }
     if ($state -eq 'failed' -and -not $message) { $message = Get-MbtBatchFailureText -Job $job -ExitCode $exit }
     # a child that ended before it could write its own end: the job still says so in the overview
     if (-not $hasResult -and $state -eq 'failed') {
-        try { Write-MbtJobStatus -JobFolder $job.Folder -State error -JobId $job.Id -Task $task -Mode $mode -Source ([string]$row.upn) -Batch $BatchId -ExitCode $exit -Reason 'start-failed' -Next retry }
+        try { Write-MbtJobStatus -JobFolder $job.Folder -State error -JobId $job.Id -Task $task -Mode $mode -Source $(if ($row.Contains('sourceUpn')) { [string]$row.sourceUpn } else { [string]$row.upn }) -Batch $BatchId -ExitCode $exit -Reason 'start-failed' -Next retry }
         catch { Write-Verbose "status: $($_.Exception.Message)" }
     }
     $row.state = $state; $row.exit = $exit; $row.reason = $reason; $row.message = $message
     $row.finished = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z')
-    foreach ($pair in @(@('done', 'done'), @('failed', 'failedItems'), @('bytes', 'bytes'), @('outsidePeriod', 'outsidePeriod'), @('unknown', 'unknown'), @('refused', 'refused'))) { $v = $counts[$pair[0]]; if ($null -ne $v) { $row[$pair[1]] = [long]$v } }
+    foreach ($pair in @(@('done', 'done'), @('failed', 'failedItems'), @('bytes', 'bytes'), @('outsidePeriod', 'outsidePeriod'), @('unknown', 'unknown'), @('refused', 'refused'), @('exported', 'exported'))) { $v = $counts[$pair[0]]; if ($null -ne $v) { $row[$pair[1]] = [long]$v } }
     $seconds = ([DateTime]::UtcNow - $Item.Started).TotalSeconds
     $detail = @()
-    if ($null -ne $row.done) { $detail += (Format-MbtNumber $row.done) + $(if ($mode -ne 'Export') { ' imported' } elseif ([long]$row.done -eq 1) { ' item' } else { ' items' }) }
+    if ($null -ne $row.done) { $detail += (Format-MbtNumber $row.done) + $(if ($mode -eq 'Copy') { ' copied' } elseif ($mode -ne 'Export') { ' imported' } elseif ([long]$row.done -eq 1) { ' item' } else { ' items' }) }
     if ($null -ne $row.failedItems -and [long]$row.failedItems -gt 0) { $detail += (Format-MbtNumber $row.failedItems) + ' failed' }
     if ($row.Contains('refused') -and $null -ne $row.refused -and [long]$row.refused -gt 0) { $detail += (Format-MbtNumber $row.refused) + ' refused for good' }
     if ($row.Contains('unknown') -and $null -ne $row.unknown -and [long]$row.unknown -gt 0) { $detail += (Format-MbtNumber $row.unknown) + ' uncertain' }
     if ($null -ne $row.bytes -and [long]$row.bytes -gt 0) { $detail += (Format-MbtBytes ([double]$row.bytes)) }
     if ($row.Contains('outsidePeriod') -and $null -ne $row.outsidePeriod) { $detail += (Format-MbtNumber $row.outsidePeriod) + ' outside the period' }
     $detail += (Format-MbtDuration $seconds)
-    $head = '[{0}/{1}] {2} ({3})' -f $Position, $Of, $row.upn, $row.location
+    $head = if ($mode -eq 'Copy') { '[{0}/{1}] {2} ({3}) into {4} ({5})' -f $Position, $Of, $row.sourceUpn, $row.sourceLocation, $row.upn, $row.location } else { '[{0}/{1}] {2} ({3})' -f $Position, $Of, $row.upn, $row.location }
     switch ($state) {
         'complete' { Write-MbtItem OK ("$head complete: " + ($detail -join ', ')) }
         'partial' { Write-MbtItem WARN ("$head $message" + $(if ($detail.Count) { ' - ' + ($detail -join ', ') } else { '' })) }
@@ -930,7 +1152,7 @@ function Invoke-MbtBatch {
     $stopping = $false; $signinStreak = 0; $abandoned = $false
     $of = @($Batch.rows).Count
     $mode = Get-MbtBatchMode $Batch
-    $kind = if ($mode -eq 'Export') { 'export' } else { 'import' }
+    $kind = if ($mode -eq 'Export') { 'export' } elseif ($mode -eq 'Copy') { 'mailcopy' } else { 'import' }
     try {
         if ([IO.File]::Exists($ownStop)) { Remove-Item -LiteralPath $ownStop -Force -ErrorAction SilentlyContinue }
         $queue = [Collections.Generic.List[object]]::new()
@@ -958,15 +1180,15 @@ function Invoke-MbtBatch {
             $argument = Get-MbtBatchChildArgument -Row $row -Option $Option -Job $job -BatchId $id -Mode $mode
             Write-MbtBatchJobRequest -Row $row -Job $job -Argument $argument -Option $Option -BatchId $id -Mode $mode
             if ($row.Contains('journal') -and [string]$row['journal']) { [void][IO.Directory]::CreateDirectory([string]$row['journal']) }
-            $title = if ($mode -eq 'Export') { 'Export - ' + $row.upn } else { 'Import - ' + $row.upn }
-            $sourceText = if ($mode -eq 'Export') { [string]$row.upn } else { [string]$row.source }
+            $title = if ($mode -eq 'Export') { 'Export - ' + $row.upn } elseif ($mode -eq 'Copy') { 'Copy - ' + $row.sourceUpn + ' to ' + $row.upn } else { 'Import - ' + $row.upn }
+            $sourceText = if ($mode -eq 'Export') { [string]$row.upn } elseif ($mode -eq 'Copy') { [string]$row.sourceUpn + ' (' + [string]$row.sourceLocation + ')' } else { [string]$row.source }
             $destinationText = if ($mode -ne 'Export') { [string]$row.upn + ' (' + [string]$row.location + ')' + $(if ([string]$row.targetRoot) { ', folder ' + [string]$row.targetRoot }) } elseif ([string]$row.output) { [string]$row.output } else { [string]$row.store }
             try { Write-MbtJobStatus -JobFolder $job.Folder -State running -JobId $job.Id -Task $kind -Title $title -Mode $mode -Source $sourceText -Destination $destinationText -Batch $id } catch { Write-Verbose "status: $($_.Exception.Message)" }
             $row.job = $job.Name; $row.attempts = [int]$row.attempts + 1; $row.state = 'running'; $row.started = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z'); $row.finished = ''; $row.message = ''
             Save-MbtBatch -Batch $Batch -Folder $folder
             $handle = if ($Launcher) { & $Launcher $argument $job $Batch } else { Start-MbtBatchProcess -EntryScript $EntryScript -Argument $argument -Job $job -LogFolder $LogFolder -DevelopmentMode:$DevelopmentMode }
             Write-MbtBatchLog -Folder $folder -Text "$($row.upn) started: job $($job.Id)"
-            Write-MbtItem INFO ('[{0}/{1}] {2} ({3}) started{4}' -f ([array]::IndexOf(@($Batch.rows), $row) + 1), $of, $row.upn, $row.location, $(if ([int]$row.attempts -gt 1) { ' again (try ' + $row.attempts + ')' } else { '' }))
+            Write-MbtItem INFO ('[{0}/{1}] {2} ({3}){4} started{5}' -f ([array]::IndexOf(@($Batch.rows), $row) + 1), $of, $(if ($mode -eq 'Copy') { $row.sourceUpn } else { $row.upn }), $(if ($mode -eq 'Copy') { $row.sourceLocation } else { $row.location }), $(if ($mode -eq 'Copy') { ' into ' + $row.upn + ' (' + $row.location + ')' } else { '' }), $(if ([int]$row.attempts -gt 1) { ' again (try ' + $row.attempts + ')' } else { '' }))
             [pscustomobject]@{ Row = $row; Job = $job; Handle = $handle; Started = [DateTime]::UtcNow; ExitCode = $null }
         }
         try {
@@ -1065,7 +1287,13 @@ function Show-MbtBatchPlan {
     foreach ($r in $rows) {
         if ($shown -ge $Limit) { break }
         $shown++
+        $isCopy = $r.Contains('sourceUpn') -and [string]$r['sourceUpn']
         $isImport = $r.Contains('source') -and [string]$r['source']
+        if ($isCopy) {
+            $state = if ([string]$r.state -in '', 'pending') { '' } else { " [$($r.state)]" }
+            Write-MbtDetail ('{0,4}  {1} ({2}) into {3} ({4}) - {5}{6} - store {7}{8}' -f $r.n, $r.sourceUpn, $r.sourceLocation, $r.upn, $r.location, $(if ([string]$r.selection) { 'selection ' + $r.selection } else { 'the whole mailbox' }), $(if ([string]$r.targetRoot) { ', folder ' + [string]$r.targetRoot } else { ', the folder names of the source' }), $r.store, $state)
+            continue
+        }
         $where = if ($isImport) { 'from ' + [string]$r['source'] + $(if ([string]$r['sourceMailbox']) { ' (' + [string]$r['sourceMailbox'] + ')' }) + $(if ([string]$r['targetRoot']) { ' into the folder ' + [string]$r['targetRoot'] } else { ' with the folder names of the source' }) }
         elseif ([string]$r.output) { "PST $($r.output)" } else { "store $($r.store)" }
         $what = if ($isImport) { [string]$r.location } elseif ([string]$r.selection) { "selection $($r.selection)" } else { [string]$r.location }
@@ -1088,7 +1316,7 @@ function Write-MbtBatchSummary {
         [Parameter(Mandatory)][int]$ExitCode, $Batch, [string]$Folder, [double]$Seconds, [string]$Report, [string]$AllJobs, [string]$Log,
         [string[]]$Failure = @(), [string]$Command, [switch]$Stopped, [switch]$WhatIf, [string]$Mode = 'Export'
     )
-    $word = if ($Mode -eq 'Export') { 'Export' } else { 'Import' }
+    $word = if ($Mode -eq 'Export') { 'Export' } elseif ($Mode -eq 'Copy') { 'Copy' } else { 'Import' }
     $meaning = switch ($ExitCode) {
         0 { 'complete: every mailbox is complete' }
         1 { 'failed: the CSV file or a mailbox needs a look, see above' }
@@ -1108,7 +1336,15 @@ function Write-MbtBatchSummary {
     if ($Batch) {
         $c = Get-MbtBatchCount $Batch
         $values.Mailboxes = @('Store', ('{0} in {1}: {2} complete, {3} not complete, {4} failed, {5} not started' -f (Format-MbtNumber $c.Total), [string]$Batch.id, (Format-MbtNumber $c.Complete), (Format-MbtNumber ($c.Partial + $c.Running)), (Format-MbtNumber $c.Failed), (Format-MbtNumber $c.Pending)))
-        if ($Mode -ne 'Export') {
+        if ($Mode -eq 'Copy') {
+            if ($c.Done -gt 0 -or $c.Exported -gt 0 -or $c.FailedItems -gt 0 -or $c.Unknown -gt 0) {
+                $parts = @('{0} read, {1} copied' -f (Format-MbtNumber $c.Exported), (Format-MbtNumber $c.Done))
+                if ($c.FailedItems -gt 0) { $parts += '{0} failed (tried again at the next run)' -f (Format-MbtNumber $c.FailedItems) }
+                $parts += '{0} uncertain' -f (Format-MbtNumber $c.Unknown)
+                $values.Items = @('Store', ($parts -join ', '))
+            }
+        }
+        elseif ($Mode -ne 'Export') {
             if ($c.Done -gt 0 -or $c.FailedItems -gt 0 -or $c.Refused -gt 0 -or $c.Unknown -gt 0) {
                 $parts = @('{0} imported' -f (Format-MbtNumber $c.Done))
                 if ($c.Refused -gt 0) { $parts += '{0} refused for good' -f (Format-MbtNumber $c.Refused) }
@@ -1130,6 +1366,10 @@ function Write-MbtBatchSummary {
     $next = [Collections.Generic.List[string]]::new()
     if ($WhatIf) { $next.Add('Run the same command without -WhatIf to start the batch.') }
     elseif ($Failure.Count) { $next.Add('Correct what the lines above say, then run the same command again. Nothing was started.') }
+    elseif ($ExitCode -eq 0 -and $Mode -eq 'Copy') {
+        $next.Add('Open the report: one line for each copy, with its items read and copied and the report of its job. The export store of each source stays in the batch store folder: it is the proof of what was read.')
+        $next.Add('Running this batch again adds nothing: a source that was read is not read again, and an item that was copied is never created twice.')
+    }
     elseif ($ExitCode -eq 0 -and $Mode -ne 'Export') {
         $next.Add('Open the report: one line for each mailbox, with its items imported and the report of its job.')
         $next.Add('Running this batch again adds nothing: an item that was imported is never created twice.')

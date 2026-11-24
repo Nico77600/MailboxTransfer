@@ -23,16 +23,17 @@
         'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem'
         'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
         'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
+        'Get-MbtCopyChoiceKey', 'Get-MbtCopyStorePath', 'Get-MbtCopyJobName', 'Set-MbtCopyStoreKey', 'Get-MbtCopyEstimate', 'Format-MbtCopyDuration', 'Show-MbtCopyPlan'
         'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
         'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
         'Show-MbtBrowseTree', 'Show-MbtBrowseItems', 'Show-MbtBrowsePreview', 'Show-MbtExportPlan'
         'Test-MbtPst', 'Repair-MbtPst', 'Export-MbtPst', 'Copy-MbtPst', 'Get-MbtPstPreview', 'Show-MbtPstExportPlan', 'Resolve-MbtPstDestination', 'Show-MbtLiveExportPlan',
         'Export-MbtEml', 'Import-MbtEml', 'Resolve-MbtEmlUnknown', 'Compare-MbtEml',
         'Open-MbtEventLog', 'Close-MbtEventLog', 'Write-MbtEvent', 'Write-MbtJobPlan', 'Write-MbtJobStep', 'Write-MbtJobObject', 'Write-MbtJobResult', 'Write-MbtJobError', 'ConvertTo-MbtPlainError', 'Write-MbtJobStatus', 'Get-MbtJob'
-        'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
+        'Set-MbtJobPhase', 'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
         'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
         'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
-        'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken', 'Read-MbtImportBatchCsv', 'Compare-MbtImportBatchRow', 'Get-MbtBatchMode', 'Get-MbtImportBatchKey', 'Get-MbtImportChildArgument', 'Get-MbtBatchRowLock'
+        'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken', 'Read-MbtImportBatchCsv', 'Compare-MbtImportBatchRow', 'Get-MbtBatchMode', 'Get-MbtImportBatchKey', 'Get-MbtImportChildArgument', 'Get-MbtBatchRowLock', 'Read-MbtCopyBatchCsv', 'Compare-MbtCopyBatchRow', 'Get-MbtCopyChildArgument'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

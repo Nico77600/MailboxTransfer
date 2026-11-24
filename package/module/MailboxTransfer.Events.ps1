@@ -54,7 +54,7 @@ function Open-MbtEventLog {
     $full = [IO.Path]::GetFullPath($Path)
     $script:EventLog = [MailboxTransfer.EventLog]::new($full, $null, $HeartbeatMs, 120)
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
-    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false; Period = $null; PeriodOutside = 0L }
+    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false; Period = $null; PeriodOutside = 0L; Phase = $null }
     $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
     $script:JobInfo.Period = ConvertTo-MbtPeriodField $Period
     Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch -Period $script:JobInfo.Period
@@ -555,8 +555,24 @@ function Get-MbtCapability {
 
 #region Progress of the long jobs -----------------------------------------------------------------
 
+function Set-MbtJobPhase {
+    <# A job that does two jobs in one process (a copy: the export, then the import) says which one it is in: the progress of the engine then follows that half, its steps and its counters. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidateSet('export', 'import')][string]$Phase)
+    if (-not $script:JobInfo) { return }
+    $script:JobInfo.Phase = $Phase
+    $p = $script:JobProgress
+    $p.Step = ''; $p.Detail = ''; $p.ThrottleSeen = 0; $p.WindowsSeen = 0
+}
+
+function Get-MbtJobPhase {
+    <# export or import for the progress of the job: the half a copy is in, else the task of the job. #>
+    if ($script:JobInfo.Phase) { return [string]$script:JobInfo.Phase }
+    return [string]$script:JobInfo.Task
+}
+
 function Get-MbtJobStepOrder {
-    switch ($script:JobInfo.Task) {
+    switch (Get-MbtJobPhase) {
         'export' { @('tree', 'list', 'download', 'verify', 'pst', 'pstcheck') }
         'import' { @('check', 'folders', 'send', 'reconcile', 'final') }
         default { @() }
@@ -575,7 +591,7 @@ function Update-MbtJobProgress {
     $p = $script:JobProgress
     $snap = $Job.Snapshot()
     $order = @(Get-MbtJobStepOrder)
-    $export = $script:JobInfo.Task -eq 'export'
+    $export = (Get-MbtJobPhase) -eq 'export'
     $current = switch -Regex ($snap.Phase) {
         '^tree$' { 'tree' } '^inventory$' { 'list' } '^export$' { 'download' }
         '^check$' { 'check' } '^folders$|^plan$' { 'folders' } '^import$' { 'send' } '^reconcile$' { 'reconcile' }

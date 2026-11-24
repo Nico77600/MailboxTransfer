@@ -21,10 +21,11 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 }
 $events = [string]$named.EventsFile
 $folder = Split-Path $events -Parent
-$upn = if ($named.ContainsKey('MailboxId')) { [string]$named.MailboxId } else { [string]$named.UserPrincipalName }
-$local = ($upn -split '@')[0]
 $modeName = if ($named.ContainsKey('Mode')) { [string]$named.Mode } else { 'Export' }
-$task = if ($modeName -like 'Import*') { 'import' } else { 'export' }
+# a copy behaves as its target says (the application names it; a delegated sign-in is the target); the others as the mailbox they work on
+$upn = if ($modeName -eq 'Copy') { if ($named.ContainsKey('TargetMailboxId')) { [string]$named.TargetMailboxId } else { [string]$named.UserPrincipalName } } elseif ($named.ContainsKey('MailboxId')) { [string]$named.MailboxId } else { [string]$named.UserPrincipalName }
+$local = ($upn -split '@')[0]
+$task = if ($modeName -eq 'Copy') { 'mailcopy' } elseif ($modeName -like 'Import*') { 'import' } else { 'export' }
 $utf8 = [Text.UTF8Encoding]::new($false)
 $now = { [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z') }
 [IO.File]::WriteAllText((Join-Path $folder 'args.json'), (($args | ForEach-Object { [string]$_ }) | ConvertTo-Json), $utf8)
@@ -66,5 +67,7 @@ if ($local -like 'fail-*') {
 if ($local -like 'signin-*') { & $write 'resumable' 2 'signin-required' @{}; exit 2 }
 if ($local -like 'partial-*' -and $runs -eq 1) { & $write 'resumable' 2 $null @{ done = 3; failed = 1 }; exit 2 }
 Start-Sleep -Milliseconds ([int]$(if ($local -like 'ok-pause*') { 700 } else { 50 }))
-& $write 'complete' 0 $null @{ done = 100 * $runs; failed = 0; bytes = 5000 }
+$counts = @{ done = 100 * $runs; failed = 0; bytes = 5000 }
+if ($modeName -eq 'Copy') { $counts.exported = 100 * $runs }
+& $write 'complete' 0 $null $counts
 exit 0
