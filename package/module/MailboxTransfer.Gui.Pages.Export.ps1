@@ -361,7 +361,7 @@ function Update-MbtGuiPeriodRow {
     $s = $g.S
     $row = $Browser.C.PeriodRow
     $row.Children.Clear()
-    if ($s.Task -ne 'export') { $row.Visibility = 'Collapsed'; return }
+    if ($s.Task -notin 'export', 'mailcopy') { $row.Visibility = 'Collapsed'; return }
     $row.Visibility = 'Visible'
     $p = Get-MbtGuiPeriod $s
     $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items that $($p.Text)" } else { '**Period:** all dates (recommended)' }
@@ -431,13 +431,25 @@ function Reset-MbtGuiPeriod {
 
 #region Export: From -------------------------------------------------------------------------------------
 
+function Get-MbtGuiCopySourceProblem {
+    <# Copy to another mailbox reads ONE place, the Primary mailbox or the Archive (the auxiliary archives follow the Archive): what is ticked must be in one. The sentence that says what to change, or $null. #>
+    param($Selection)
+    if (-not $Selection -or @($Selection.Entries).Count -eq 0) { return $null }
+    $kinds = @($Selection.Entries | ForEach-Object { ([string](Get-MbtGuiRootNode $_.Node).Kind).ToLowerInvariant() } | Sort-Object -Unique)
+    if ($kinds -contains 'aux') { return 'An auxiliary archive cannot be copied on its own: tick the folders of the Archive, its auxiliary archives follow it.' }
+    if ($kinds.Count -gt 1) { return 'Your ticks are in more than one place. A copy reads one place: tick in the Primary mailbox or in the Archive, and copy the other in another task.' }
+    return $null
+}
+
 function Update-MbtGuiExportFromFooter {
     $g = $script:Gui
     if ((Get-MbtGuiScreen) -ne 'exFrom') { return }
     $browser = Get-MbtGuiBrowser 'export'
     $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
     $period = Get-MbtGuiPeriod $g.S
-    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and $sel.Items -gt 0 -and -not $period.Problem) -Footer $(if ($period.Problem -and $sel.Items -gt 0) { $period.Problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed })
+    $copyProblem = if ($g.S.Task -eq 'mailcopy') { Get-MbtGuiCopySourceProblem $sel }
+    $problem = if ($period.Problem) { $period.Problem } else { $copyProblem }
+    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and $sel.Items -gt 0 -and -not $problem) -Footer $(if ($problem -and $sel.Items -gt 0) { $problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed })
     $g.ExportSelection = $sel
 }
 
@@ -447,6 +459,7 @@ function Build-MbtGuiExportFromPage {
     $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
     $g.ExportSelection = $sel
     $left = New-GuiStack @((New-MbtGuiSignInCard 'export'))
+    if ($s.Task -eq 'mailcopy') { $left.Children.Add((New-GuiMessage -Kind info -Icon send -Text '**Copy to another mailbox.** Tick what to copy, in one place: the Primary mailbox or the Archive. This mailbox is only read. The next page asks which mailbox receives the copy.')) | Out-Null }
     if ($s.Signed) { $left.Children.Add((New-MbtGuiLocationsCard)) | Out-Null; $left.Children.Add((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s))) | Out-Null }
     else { $left.Children.Add((New-MbtGuiSelectionCard $sel)) | Out-Null }
     if ($s.Signed) {
@@ -463,7 +476,9 @@ function Build-MbtGuiExportFromPage {
     }
     $g.OnSelectionChanged = { Update-MbtGuiExportFromFooter }
     $periodProblem = (Get-MbtGuiPeriod $s).Problem
-    Set-MbtGuiActions -Footer $(if ($periodProblem -and $sel.Items -gt 0) { $periodProblem } else { Format-MbtGuiSelectionFooter $sel $s.Signed }) -Label 'Continue to destination' -Enabled ($s.Signed -and $sel.Items -gt 0 -and -not $periodProblem) -OnClick { Move-MbtGuiStep 1 }
+    $copy = ($s.Task -eq 'mailcopy')
+    $problem = if ($periodProblem) { $periodProblem } elseif ($copy) { Get-MbtGuiCopySourceProblem $sel }
+    Set-MbtGuiActions -Footer $(if ($problem -and $sel.Items -gt 0) { $problem } else { Format-MbtGuiSelectionFooter $sel $s.Signed }) -Label $(if ($copy) { 'Continue to the mailbox that receives' } else { 'Continue to destination' }) -Enabled ($s.Signed -and $sel.Items -gt 0 -and -not $problem) -OnClick { Move-MbtGuiStep 1 }
     return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
@@ -591,7 +606,7 @@ function Get-MbtGuiCountedSizes {
     <# The size the service counted for each folder of the plan (by the path of the folder in its mailbox); a folder counted twice under one path, or counted without a complete size, is left out. #>
     $g = $script:Gui
     $sizes = @{}
-    if ($g.S.Task -ne 'export' -or $g.S.PlanState -ne 'ok' -or -not $g.ContainsKey('PlanRun') -or -not $g.PlanRun) { return $sizes }
+    if ($g.S.Task -notin 'export', 'mailcopy' -or $g.S.PlanState -ne 'ok' -or -not $g.ContainsKey('PlanRun') -or -not $g.PlanRun) { return $sizes }
     $planned = @($g.PlanRun.Objects | Where-Object { $_.Step -eq 'plan' -and $_.State -ne 'refused' -and $_.Key -ne '(folders)' })
     foreach ($group in ($planned | Group-Object { $_.Key })) {
         if (@($group.Group).Count -eq 1 -and $group.Group[0].Bytes -ge 0) { $sizes[$group.Name] = [long]$group.Group[0].Bytes }
@@ -710,7 +725,7 @@ function Get-MbtGuiCommandLine {
         The command line(s) of the task as an operator would type them (ConvertTo-MbtGuiCommandLine): the parameters that are a choice, no plumbing of the
         console, no value that is the default. With -Job: the job that ran; without: the one the Start button would begin.
     #>
-    param([Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'copy')][string]$Task, $Job)
+    param([Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'copy', 'mailcopy')][string]$Task, $Job)
     $s = $script:Gui.S
     $stub = if ($Job) { $Job } else { New-MbtGuiPreviewJob -Task $Task }
     try { $commands = @(Get-MbtGuiCommand -Task $Task -S $s -Job $stub) } catch { return '' }
@@ -728,7 +743,7 @@ function New-MbtGuiCommandLineCard {
     $state = @{ Text = $text }
     $copy = New-GuiButton -Text 'Copy' -Small -Icon clip -OnClick { param($b, $e) if ($state.Text -and (Set-MbtGuiClipboard $state.Text)) { $b.Content = 'Copied' } }.GetNewClosure()
     $copy.Margin = [Windows.Thickness]::new(0)
-    $hint = $(if ($Task -in 'export', 'copy' -or ($Task -eq 'import' -and $script:Gui.S.ImSrc -ne 'store')) { 'Run it in PowerShell 7 from the tool folder. The files it names are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
+    $hint = $(if ($Task -in 'export', 'copy', 'mailcopy' -or ($Task -eq 'import' -and $script:Gui.S.ImSrc -ne 'store')) { 'Run it in PowerShell 7 from the tool folder. The files it names are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
     return (New-GuiCard -Title 'The same from the command line' -Info $hint -Right $copy -Content @($box))
 }
 

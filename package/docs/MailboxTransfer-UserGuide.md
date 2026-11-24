@@ -47,9 +47,10 @@ Ask yourself one question. Then read the right column.
 | keep a copy of a mailbox, or of some of its folders, on my disk | **Browse and export** (chapter 4) | No. It only reads. |
 | put the mail of a PST file, an export, or `.eml` files into a mailbox | **Import** (chapter 5) | Yes. It only adds. |
 | Outlook says my PST file is damaged, or will not open it | **Check and repair a PST** (chapter 6) | No. It works on files. |
+| put the mail of one mailbox into another mailbox, in one task | **Copy to another mailbox** (chapter 8) | Yes. It only adds, to the second one. |
 | only look inside a PST file or an export | **Open an export or a PST** (chapter 7) | No. |
 
-![The four task cards of the window: Browse and export, Import, Check and repair a PST, Open an export or a PST](images/readme-tasks-light.png)
+![The five task cards of the window: Browse and export, Import, Copy to another mailbox, Check and repair a PST, Open an export or a PST](images/readme-tasks-light.png)
 
 ### The path
 
@@ -76,7 +77,7 @@ The window always looks the same. Learn these four places and you will never be 
 | **The big area in the middle** | The page itself: one question, with safe answers already chosen. The answer marked **recommended** is the safe one. | To answer the question. |
 | **Bottom of the window, the strip with two buttons** | **Back** on the left (on the Run page, **Stop and keep progress**). The main button on the right (**Choose a task**, **Continue**, **Start**…). A short sentence between them says what the page wants. | To move on. If the main button is grey, the sentence says what is missing. |
 
-![The second page of the window. 1: the five circles (the stepper). 2: the four task cards. 3: the list of jobs you can continue. 4: what will happen](images/console-task-light.png)
+![The second page of the window. 1: the five circles (the stepper). 2: the five task cards. 3: the list of jobs you can continue. 4: what will happen](images/console-task-light.png)
 
 > [!TIP]
 > **Every run is also an ordinary command.** The Verify page and the Next steps page show **The same from the command line**: the exact command of what you are about to run or just ran. **Copy** puts it on the clipboard, for a script or for your administrator. You never have to type it.
@@ -109,7 +110,7 @@ The pictures and the commands use one example. Replace the names in the right co
 
 If one box stays empty, stop and ask.
 
-- [ ] I have a quiet hour for a small job, or a night for a big one. A 50 GB import takes more than half a day because Microsoft limits the speed (chapter 8).
+- [ ] I have a quiet hour for a small job, or a night for a big one. A 50 GB import takes more than half a day because Microsoft limits the speed (chapter 9).
 - [ ] The PC is plugged in. Windows follows your company's power settings: if the PC goes to sleep, the job stops, and **Continue** does what is left. The box **Keep this PC awake while it runs** (**Expert mode** of the **Verify** page) asks Windows not to sleep by itself. It cannot stop a closed lid or a restart.
 - [ ] There is free disk space: about **twice the size of what you copy** (the store plus the PST files). The console says how much is needed before you start.
 - [ ] I know the address of the mailbox, for example `adele.vance@contoso.com`.
@@ -354,7 +355,7 @@ Click **Continue to Verify**.
 **If not:** an amber line is a warning to read, not a stop. A red line means something does not fit: go **Back**. If the plan check says *Microsoft did not answer correctly (a temporary problem)*, click **Check again**: it is a hiccup of the service, not a problem with your choice.
 
 > [!NOTE]
-> **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 8.
+> **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 9.
 
 > [!NOTE]
 > **With a period, the numbers are "at most".** Microsoft cannot say how many items of a folder arrived in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31`). The period is applied while the items are listed; the exact numbers come at the end of the job.
@@ -391,9 +392,9 @@ What the steps mean:
 |---|---|---|
 | A **crimson** triangle | This step is running. | Wait. |
 | An **amber** triangle, text *Not ready* | Microsoft is still moving this folder. | Nothing now. Press **Continue** later. |
-| *Microsoft slowed us down 7 times* | Normal. See chapter 9, topic 1. | Wait. |
+| *Microsoft slowed us down 7 times* | Normal. See chapter 10, topic 1. | Wait. |
 | *Resumed after sleep* | The PC slept. | Nothing. It carries on. |
-| A **red** message | A real problem. | Read it, chapter 9. |
+| A **red** message | A real problem. | Read it, chapter 10. |
 
 To stop on purpose, click **Stop and keep progress** (bottom left), or the small **Pause** button on the running step: both ask you to confirm, and nothing is lost. After a stop, the same small button reads **Resume** and carries on where it stopped, as **Continue** does. See chapter 8.
 
@@ -427,12 +428,12 @@ Under the result, **What to do next** offers buttons for the logical next step: 
 
 **You should see:** the folders of the mailbox, with their mail. There is also a **manifest** file, `adele.manifest.json`. It lists what is in each part. Keep it with the parts.
 
-**If not:** see chapter 9, topics 15 and 16.
+**If not:** see chapter 10, topics 15 and 16.
 
 <!-- icon: upload -->
 ## 5. B · Import
 
-You put mail from a PST file, an export store or `.eml` files **into a mailbox**. Items are **added**. Nothing is deleted. Nothing is overwritten. A **long job**: the guide says it again in chapter 8. **Ask first:** the write rights in the table "What to ask your administrator" of chapter 2.
+You put mail from a PST file, an export store or `.eml` files **into a mailbox**. Items are **added**. Nothing is deleted. Nothing is overwritten. A **long job**: the guide says it again in chapter 9. **Ask first:** the write rights in the table "What to ask your administrator" of chapter 2.
 
 > [!CAUTION]
 > **An import writes to a real mailbox.** Do the first one into a **test mailbox**. An import cannot be undone by this tool: it never deletes. To remove what was added you have to delete it yourself in the mailbox.
@@ -447,7 +448,7 @@ You put mail from a PST file, an export store or `.eml` files **into a mailbox**
 
 **Some folders only.** Tick the folders to import in the tree (a PST or a folder of `.eml` files); nothing ticked means everything. The plan counts only what you ticked.
 
-**If not:** an amber line *the file has errors*: the file is damaged. Go to chapter 6, **Check and repair**, first. Or import anyway: the items that cannot be read are listed and skipped. See chapter 9, topic 13.
+**If not:** an amber line *the file has errors*: the file is damaged. Go to chapter 6, **Check and repair**, first. Or import anyway: the items that cannot be read are listed and skipped. See chapter 10, topic 13.
 
 ### 5.2 Task · To: sign in, pick the mailbox and the folder
 
@@ -586,7 +587,7 @@ The **level** is **Automatic**: the tool starts at the level the check recommend
 
 **Do:** open the new file in Outlook, as in 4.9. Check the folders you care about. Keep the original until you are sure.
 
-**If not:** see chapter 9, topic 14.
+**If not:** see chapter 10, topic 14.
 
 <!-- icon: folder -->
 ## 7. D · Open an export or a PST
@@ -599,8 +600,94 @@ You only want to look. Nothing is written. Nothing to ask your administrator.
 
 ![Opening a PST: the browser on a file](images/console-open-light.png)
 
+<!-- icon: mail -->
+## 8. E · Copy to another mailbox
+
+You copy a mailbox, or some of its folders, or only the mail of some days, **into another mailbox**, in **one task**. The mailbox you copy from is **only read**. The other one only **gets new items**: nothing is deleted, nothing is overwritten. **Ask first:** the write rights in the table "What to ask your administrator" of chapter 2.
+
+> [!CAUTION]
+> **A copy writes to a real mailbox.** Do the first one into a **test mailbox**. The tool cannot undo it: it never deletes. To remove what was added you have to delete it yourself in the mailbox.
+
+**How it works.** The task is two jobs that the tool chains for you. First the items are **read from the mailbox and saved in a store on this PC** (the same store as an export). Then the **store is added to the other mailbox** (the same way as an import). There is no direct copy from one mailbox to the other: the store in the middle is what lets you **stop and continue**, and it stays on the PC afterwards as **the proof** of what was read. The first part is quick; the second is the slow one (Microsoft accepts about 4 GiB per hour into one mailbox, chapter 9).
+
+**Who may write where.** With **Me** (delegated), you write into **your own mailbox only**: Microsoft refuses a write into another person's mailbox or into a shared mailbox, even with Full Access. You may **read** any mailbox you can open (your own, a colleague's, a shared one). So the usual cases are: *a shared mailbox into my own mailbox*, *my primary mailbox into my archive*, and *my archive into my primary mailbox*. To write into **someone else's** mailbox, choose **The application** in Setup (chapter 2, step C): then you type the mailbox that receives the copy, and the application must be allowed to use it.
+
+### 8.1 Task · What and From: pick what to copy
+
+**Do:** on the Setup page click **Choose a task**, click the card **Copy to another mailbox**, **Continue**. On the **From** page sign in and tick, exactly as in 4.2 to 4.4: the mailbox, the places to look in, the folders and the messages. Tick the folders and messages of **one place only**. The line **Period** under the browser keeps only the mail that arrived on some days (4.4).
+
+**You should see:** the same browser as for an export, with a blue note: *Tick what to copy, in one place*. Click **Continue to the mailbox that receives**.
+
+![Copy to another mailbox: what to copy. 1: the mailbox you copy from. 2: the places you can look in. 3: the browser, with the folders and messages ticked. 4: the period](images/console-copy-from-light.png)
+
+**If not:** if you ticked in two places (for instance the primary mailbox **and** the archive), the button stays grey and the line at the bottom says *Your ticks are in more than one place*: untick one place, and copy the other in a second task. An **auxiliary archive** cannot be copied on its own: tick the folders of the **Archive**, its auxiliary archives follow it.
+
+### 8.2 Task · To: pick the mailbox that receives, and the folder
+
+**Do:** with **Me**, the page says that the copy goes into your own mailbox. Pick **Primary mailbox** or **Archive**. Then choose where the folders go: **a new folder** (recommended, named for you, such as *Copy of projects 2026-11-12*), or **the same folder names**. With **The application**, type the **address of the mailbox that receives the copy** first. Click **Continue to Verify**.
+
+**You should see:** *Where to copy*, with the mailbox you copy from and its place at the top right.
+
+![Copy to another mailbox: where to put it. 1: what you ticked. 2: the mailbox that receives, here your own. 3: the part of the mailbox. 4: the new folder and its name](images/console-copy-to-light.png)
+
+**If not:** a grey button with *This is the mailbox you copy from*: a copy writes into **another place**. Pick the other part (Primary or Archive), or another mailbox with **The application**. A folder name the tool cannot use (empty, starting with a dash, two slashes in a row) is said in an amber line.
+
+> [!WARNING]
+> **Two copies into "the same folder names" can create duplicates.** The tool adds items; it does not compare with what is already there. Use **a new folder** each time. The copy itself never adds the same item twice, even if you run it again.
+
+### 8.3 Verify: read the checks, tick the box
+
+**Do:** read the page. Under the big address of the mailbox, tick the box that names **what, from where, into where**. Then click **Start the copy into** that mailbox.
+
+**You should see:** on the left the **Checks** (the plan checked with the service, the sign-in, *A different place*, *You write into your own mailbox*, the disk space for the store), then **What will be done** in six numbered steps (both parts), the **store** that will stay on the PC, the number of items and the size, and **the time**, mostly the second part. On the right **Before anything is written**: the target in big letters, the number of items, an amber line *Adds only*, and a box with an empty square and one sentence, for example *I checked: copy 1,208 items from projects@contoso.com · Primary into adele.vance@contoso.com · Primary · new folder Copy of projects 2026-11-12*.
+
+![The copy, before you tick. 1: the checks. 2: the two parts as numbered steps and the store that stays. 3: the target, in big letters. 4: the box that names what, from where and into where. 5: Start, grey until you tick](images/console-verify-copy-light.png)
+
+Tick the box: the line at the bottom says *Ready. Nothing is written before you press Start.* and **Start** turns crimson.
+
+![The copy, after you ticked the box: Start is ready](images/console-verify-copy-ticked-light.png)
+
+**If not:** if you go **Back** and change the mailbox, the folder, the period or anything the plan depends on, the tick **clears** and you tick again. **The same from the command line** shows the exact command (one `-Mode Copy` command); **Expert mode** holds the numbers you do not need.
+
+### 8.4 Run: wait
+
+**Do:** nothing. The nine steps of the two parts are in one list: *Read the folder tree*, *List the items you chose*, *Download the items*, *Check the downloads*, then, once the store is complete, *Verify the export store*, *Create the folders*, *Send the items*, *Check the uncertain items*, *Final check*. The folders of the part that runs are on the right.
+
+**You should see:** the first part, then the second part with the line *Why is it slow?* The time left is measured again when the second part starts.
+
+![The first part of a copy: the items are read into the store](images/console-run-copy-reading-light.png)
+
+![The second part of a copy: the items are added to the mailbox. The steps of the first part are done](images/console-run-copy-light.png)
+
+To stop on purpose, click **Stop and keep progress**, or the small **Pause** button on the running step: it works in both parts. **Continue** starts only what is left: a part that is finished is not done again, and no item is added twice.
+
+### 8.5 Next steps: look in Outlook, keep or delete the store
+
+**Do:** read the page, then open the mailbox that received the copy in Outlook, or Outlook on the web, and find the new folder (for example *Copy of projects 2026-11-12*).
+
+**You should see:** the **items read** and the **items in the mailbox**, the folders created, and the **store** that was kept. The **received date** of the messages is the original one; the creation and last-modified dates are the time of the copy (Exchange sets them).
+
+![The end of a copy: complete](images/console-done-copy-complete-light.png)
+
+The **store stays** on the PC: it is the proof of what was read, and the point where a stopped copy goes on. **Open the store** looks inside it like a mailbox. When you no longer need it, delete its folder (its path is on the page). Running the same copy again does **not** read the mailbox again and adds nothing: the tool sees that the first part is complete and that every item is done. To take what arrived since, run it again from the command line with `-Force`.
+
+![A copy that is not finished: nothing is lost, the button says Continue](images/console-done-copy-partial-light.png)
+
+**If not:** if some items **could not be read** (a folder that is not ready at Microsoft, an item that failed), the tool does not wait for them: it adds what was read, ends *not finished*, and the next run does only what is left. If some items are **uncertain** (Microsoft did not answer), see 5.7: the same decision card.
+
+### From the command line
+
+The same task is one command, `-Mode Copy`. You can look at the plan first, then run it:
+
+```powershell
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -TargetRoot 'Copy of projects' -WhatIf
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -Folder Inbox/Projects -TargetRoot 'Copy of projects' -ArrivedFrom 2026-01-01
+```
+
+`-WhatIf` prints **one plan for both parts**: what is read, the store, where it goes and how long it takes. The same command again continues where it stopped. The reference guide, chapter 7.7, lists every parameter and rule.
+
 <!-- icon: clock -->
-## 8. Long jobs: what to expect
+## 9. Long jobs: what to expect
 
 ### The honest time
 
@@ -738,6 +825,49 @@ The whole file is checked **before anything starts**, and every problem is print
 
 > [!NOTE]
 > **Limits.** At most 4 lines at a time. One kind of source for a batch (`Import`, `ImportPst` or `ImportEml`). The folders of the source to take or to leave out (`-IncludeFolder`...) are not available for a list: use one import for that. The plan of a list does not count folders and items; to see them for one line, run that import alone with `-WhatIf`.
+### Copying many mailboxes
+
+If you have to copy 40 mailboxes into 40 others (a migration to a new tenant name, shared mailboxes into the mailboxes of their owners), you write the list in a **CSV file**, one copy on each line, and start **one command**. The tool makes an ordinary **copy job** for each line (chapter 8: read into a store, then added to the target), up to 4 at a time, and keeps one **batch** that remembers where it is. The list checked first, one sign-in, *the same command again continues*, the report of the batch and the exit codes are the same as for the other two batches. This is for the **command line**; the console shows a batch of copies read only, as it shows the others.
+
+**1. The list.** A text file, saved as UTF-8. The first line names the columns (capitals or not), the delimiter is a comma or a semicolon:
+
+| Column | Needed | What it says |
+|---|---|---|
+| `SourceAddress` | yes | The address of the mailbox the items are **read** from. |
+| `SourceLocation` | no | `Primary` or `Archive`: which mailbox of that address is read. Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
+| `TargetAddress` | yes | The address of the mailbox the items are **added** to. |
+| `TargetLocation` | no | `Primary` or `Archive`. Empty: `-TargetMailbox` of the command, `Primary` unless you say otherwise. |
+| `TargetRoot` | no | The folder the items are created **below** (for instance `Copied/2026`). Empty: `-TargetRoot` of the command. Empty everywhere: the folder names of the source are kept. |
+| `SelectionFile` | no | What to copy, written by the browse view or by the console, **in one place** (a Primary mailbox or an Archive). It names the folders; `SourceLocation` is then not used. A relative path starts from the folder of the CSV file. |
+| `Notes` | no | Anything you want. It is ignored. Any **other** column is a mistake: it is reported. |
+
+```text
+SourceAddress;SourceLocation;TargetAddress;TargetLocation;TargetRoot;Notes
+projects@contoso.com;Primary;adele.vance@contoso.com;Primary;From the projects mailbox;
+adele.vance@contoso.com;Archive;adele.vance@contoso.com;Primary;Back from the archive;same person, other places
+alex.wilber@contoso.com;;adele.vance@contoso.com;Archive;From Alex;
+```
+
+The whole file is checked **before anything starts**, and every problem is printed together, each with its line: an address that is empty or wrong, a `Location` that is not `Primary` or `Archive`, a selection that is missing or of several places, **a source that is the target** (the same address and the same place), the same copy twice, a `TargetRoot` that is not a folder path, a column the tool does not know. With a **delegated** sign-in, a line whose target is not the signed-in account is refused (see 3), and so is the **archive** of a mailbox that is not the signed-in account's. Nothing starts while one problem is left.
+
+**2. The command.** Run it with `-WhatIf` first: it checks the file, prints every line, and writes nothing.
+
+```powershell
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxCsv D:\Batch\copies.csv -TargetRoot Copied -WhatIf
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxCsv D:\Batch\copies.csv -BatchName Move1 -ParallelMailboxes 2 -AppOnly
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -ResumeBatch Move1
+```
+
+`-Mailbox`, `-TargetMailbox` and `-TargetRoot` are the defaults of the lines that leave the column empty. The options that choose what to read (`-Folder`, `-ArrivedFrom`, `-ArrivedTo`, `-IncludeRecoverableItems`) and the usual ones (`-MappingFile`, `-Force`, `-Concurrency`, `-MaxAttempts`...) apply to every line. What belongs to one copy (`-SelectionFile`, `-MailboxId`, `-TargetMailboxId`, `-StorePath` of one store, `-JobName`) is refused: it is in the list. `-StorePath` is here the **folder that holds the stores** of the batch.
+
+**Lines that share a mailbox wait for each other.** Two lines that write into **the same target mailbox location** never run together, whatever `-ParallelMailboxes` says. Two lines that **read the same source location** do not either: a source copied into two targets is read **once** (one store, kept for the second line), and Microsoft slows down a mailbox that is read by two jobs at a time. Different mailboxes run side by side. The plan says how many lines wait.
+
+**3. Writing into mailboxes: the same rules as one copy.** A copy only **adds**. To write into **another person's mailbox or a shared mailbox**, sign in as **the application** (`-AppOnly`): the lines are then accepted for any target. With a **delegated** sign-in (you), only the lines whose `TargetAddress` is **your own address** are accepted, and they may read any mailbox you can open (its **primary** mailbox, or your own archive). Any other line is reported when the file is checked, before anything is read.
+
+**4. Never twice, and the stores.** Every line is an ordinary copy: it keeps its store (named after the source, the place and what is read) and its import journal (named after the target, the store and the folder, whatever the capitals). Running the same line again, in this batch or another, does **not** read the source again and adds **only what is not there yet**. The stores stay on the disk, in the folder of the batch stores: they are the proof of what was read.
+
+**5. Continue, the report and the exit codes.** As for the other batches: the same command again, or `-ResumeBatch Move1`. `<work folder>\batches\<name>\report.html` lists the jobs of the batch; its title line says how many items were **read**, **copied**, **failed** and **uncertain**. Exit code **0**: every line is complete. **2**: not complete (stopped, a sign-in needed, items left, uncertain items); nothing is lost. **1**: the file has problems (nothing started), or a line failed.
+
 ### Many jobs: one page for all of them
 
 After a few dozen jobs the question is no longer "what did this job do" but "which of my jobs need me". The tool answers it with one page, **overview.html**, in the folder `jobs` of your work folder. It has one row for each job: when it started, the task, the mailbox or the source, the destination, the result, the items done (and failed), the data, the duration, and a link to the report of the job. The tiles at the top give the totals.
@@ -759,7 +889,7 @@ To change the delay, set `Jobs.RetentionDays` in `config\MailboxTransfer.config.
 ```
 
 <!-- icon: lifebuoy -->
-## 9. When something goes wrong
+## 10. When something goes wrong
 
 > [!WARNING]
 > **Stop and ask** if the table does not help. A photo of the screen, plus the **technical message** (under the red message, click to open it), is what your administrator needs.
@@ -789,7 +919,7 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 | 19 | A red light on the **Setup** page, or an error before the window opens | Windows blocked the files, or PowerShell is too old. | Unblock (top of this guide). PowerShell **7.6** or later is needed (`winget upgrade Microsoft.PowerShell`). Then **Check again**. |
 | 20 | Duplicates after **the same folder names** | An import adds items, it does not compare. | Use **a new folder** next time. Delete the extras yourself in the mailbox. |
 | 21 | Imported items show the **import date** as created date | Exchange sets it. The original received date is kept. | Nothing. |
-| 22 | Slow even on a fast PC | It is Microsoft's limit per mailbox. | Chapter 8. Only several target mailboxes at once go faster. |
+| 22 | Slow even on a fast PC | It is Microsoft's limit per mailbox. | Chapter 9. Only several target mailboxes at once go faster. |
 | 23 | A folder *Restored deleted items* appears after an import | The export held deleted items. Exchange does not accept an import there, so they are put in a normal folder. | Nothing. They are ordinary items now. See 5.2. |
 | 24 | *The mailbox … cannot be reached by the mailbox import-export API* | The mailbox is **soft-deleted** (its user was deleted less than 30 days ago) or **inactive** (kept on hold after its user was deleted). Microsoft gives no way to read such a mailbox with this tool. | Ask your administrator to restore the user within 30 days, or to recover the inactive mailbox into an active one (reference guide, 13.1). Then run the export again. |
 | 25 | *Microsoft does not accept the sign-in window for this application yet... redirect URI...* (error AADSTS50011) | The registration of the application lacks the redirect address of the Windows sign-in window. | Send the address shown in the message (`ms-appx-web://microsoft.aad.brokerplugin/<application id>`) to your administrator (step A of chapter 2). Meanwhile use **Use a code instead**. |
@@ -800,7 +930,7 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 | 29 | On the **From** page, **Continue to destination** is grey and the bottom line says *Sign in first.* | You are not signed in yet. | Sign in on the **From** page (4.2). To change *Me* or *The application*, go **Back** to **Setup**. |
 
 <!-- icon: book -->
-## 10. Picture dictionary and words
+## 11. Picture dictionary and words
 
 ![Eight words in pictures: mailbox, archive, export store, PST file, plan, throttling, uncertain item, job](images/guide-dictionary-light.png)
 

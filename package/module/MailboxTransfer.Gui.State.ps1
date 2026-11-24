@@ -17,13 +17,14 @@ Set-StrictMode -Version Latest
 $script:Flows = @{
     export = @('setup', 'start', 'exFrom', 'exTo', 'exPlan', 'run', 'done')
     import = @('setup', 'start', 'imFrom', 'imTo', 'imPlan', 'run', 'done')
+    mailcopy = @('setup', 'start', 'exFrom', 'mcTo', 'mcPlan', 'run', 'done')
     repair = @('setup', 'start', 'rpFrom', 'rpTo', 'rpPlan', 'run', 'done')
     open   = @('setup', 'start', 'opFrom')
     copy   = @('setup', 'start', 'opFrom', 'cpTo', 'cpPlan', 'run', 'done')
 }
 # The five steps of the stepper, and the sub-steps shown under Task.
-$script:StepGroups = @{ setup = 'Setup'; start = 'Task'; exFrom = 'Task'; imFrom = 'Task'; rpFrom = 'Task'; opFrom = 'Task'; exTo = 'Task'; imTo = 'Task'; rpTo = 'Task'; cpTo = 'Task'; exPlan = 'Verify'; imPlan = 'Verify'; rpPlan = 'Verify'; cpPlan = 'Verify'; run = 'Run'; done = 'Next steps' }
-$script:SubStepLabels = @{ start = 'What'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To' }
+$script:StepGroups = @{ setup = 'Setup'; start = 'Task'; exFrom = 'Task'; imFrom = 'Task'; rpFrom = 'Task'; opFrom = 'Task'; exTo = 'Task'; imTo = 'Task'; rpTo = 'Task'; cpTo = 'Task'; mcTo = 'Task'; exPlan = 'Verify'; imPlan = 'Verify'; rpPlan = 'Verify'; cpPlan = 'Verify'; mcPlan = 'Verify'; run = 'Run'; done = 'Next steps' }
+$script:SubStepLabels = @{ start = 'What'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To'; mcTo = 'To' }
 $script:Tasks = [ordered]@{
     export = @{ Title = 'Browse and export'; Eyebrow = 'BROWSE ' + [char]0x00B7 + ' EXPORT'; Icon = 'down'; Context = 'Browse and export'
         Text = 'Look inside a mailbox, tick what to keep, and save it on this computer as PST files or as an export store. Nothing is changed in the mailbox.'
@@ -33,6 +34,10 @@ $script:Tasks = [ordered]@{
         Text = 'Put a PST file or an export into a mailbox. Items are added. Nothing is deleted and nothing is overwritten.'
         Will = @('Pick the PST file or the export.', 'Pick the mailbox (and where in it).', 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
         Safe = 'This task adds items to a mailbox. It never deletes or overwrites.' }
+    mailcopy = @{ Title = 'Copy to another mailbox'; Eyebrow = 'COPY ' + [char]0x00B7 + ' MAILBOX'; Icon = 'send'; Context = 'Copy to another mailbox'
+        Text = 'Read a mailbox, or part of it, into a store on this PC, then add it to another mailbox. One task, and you can stop and continue. Items are added, nothing is deleted.'
+        Will = @('Sign in and pick the mailbox to copy from, then tick what to copy (and the days, if you want only some).', 'Pick the mailbox that receives the copy, and the folder.', 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. The two parts run one after the other; the second is slow (Microsoft limits it). You can stop and continue.')
+        Safe = 'The first mailbox is only read. The second one only gets new items. The store stays on this PC as proof.' }
     repair = @{ Title = 'Check and repair a PST'; Eyebrow = 'PST'; Icon = 'wrench'; Context = 'Check and repair a PST'
         Text = 'Test a PST file for damage. If it is damaged, write a repaired copy. Your original file is never changed.'
         Will = @('Pick the PST file. The check starts at once and only reads.', 'Read the result in plain words.', 'If needed, choose to write a repaired copy.', 'Compare before and after.')
@@ -56,7 +61,7 @@ function New-MbtGuiState {
         Period = 'all'; ArrFrom = ''; ArrTo = ''; PeriodOpen = $false
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
         Conc = 4; Retry = 2; Tries = 3; Reconcile = 5; Awake = $false; WorkFolder = $WorkFolder; Changed = @{}
-        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirmed = $false; ConfirmKey = ''
+        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; McTarget = ''; McFromKind = ''; Confirmed = $false; ConfirmKey = ''
         SetupReturn = -1; AuthEdit = $false; ConfigPath = ''
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
@@ -231,7 +236,7 @@ function Update-MbtGuiStepper {
         $panel.Children.Add($cell) | Out-Null
     }
     $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } elseif ($screen -eq 'setup') { 'Setup' } else { 'Choose a task' }
-    if ($s.Task -in 'export', 'import' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
+    if ($s.Task -in 'export', 'import', 'mailcopy' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
     $g.C.StepperContext.Text = $ctx
 }
 

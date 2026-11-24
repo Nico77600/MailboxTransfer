@@ -33,7 +33,7 @@ Describe 'Console click-through (headless WPF, fake engine)' {
     }
     It 'walked every scenario and used every kind of control' {
         $scenarios = ($script:Runs | ForEach-Object { $_.Result.Scenarios } | Measure-Object -Sum).Sum
-        $scenarios | Should -BeGreaterThan 50
+        $scenarios | Should -BeGreaterThan 70
         $controls = ($script:Runs | ForEach-Object { $_.Result.Controls } | Measure-Object -Sum).Sum
         $controls | Should -BeGreaterThan 800
         $kinds = @($script:Runs | ForEach-Object { $_.Result.Invoked.PSObject.Properties.Name } | Sort-Object -Unique)
@@ -44,9 +44,13 @@ Describe 'Console click-through (headless WPF, fake engine)' {
     It 'walked the states with exactly one of something, or none (one folder ticked alone, one message, one location, one finding, one step, one refused item, one incomplete message, one job)' {
         $edge = @($script:Runs | ForEach-Object { @($_.Result.Edge) } | Where-Object { $_ } | Sort-Object -Unique)
         $walked = @($script:Runs | ForEach-Object { @($_.Result.Walked) } | Where-Object { $_ })
-        $edge.Count | Should -BeGreaterThan 12
+        $edge.Count | Should -BeGreaterThan 18
         foreach ($name in $edge) { $walked | Should -Contain $name }
-        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob', 'ImportFromManyFolders') { $edge | Should -Contain $name }
+        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob', 'ImportFromManyFolders', 'CopyMailboxFromSeveralPlaces', 'CopyMailboxToApplication', 'CopyMailboxToSame', 'DoneCopyMailboxError', 'DoneCopyMailboxDecision') { $edge | Should -Contain $name }
+    }
+    It 'walked every page of the copy to another mailbox: From, To (own mailbox, the application, the archive), Verify (grey, ticked, checking), Run (reading, writing), Next steps (complete, not finished)' {
+        $walked = @($script:Runs | ForEach-Object { @($_.Result.Walked) } | Where-Object { $_ })
+        foreach ($name in 'CopyMailboxFrom', 'CopyMailboxTo', 'CopyMailboxToApplication', 'CopyMailboxToArchive', 'CopyMailboxPlan', 'CopyMailboxPlanTicked', 'CopyMailboxPlanChecking', 'RunCopyMailboxReading', 'RunCopyMailbox', 'DoneCopyMailbox', 'DoneCopyMailboxPartial') { $walked | Should -Contain $name }
     }
     It 'used the Pause button of the running step (and answered its question) and the Resume button of a stopped job' {
         $pause = ($script:Runs | ForEach-Object { $_.Result.StepControls.RunStepPause } | Measure-Object -Sum).Sum

@@ -87,6 +87,8 @@ $screens = [ordered]@{
     RepairPlan = 'console-verify-repair'; DoneRepair = 'console-repair-done'; Open = 'console-open'
     ExportPlanChecking = 'console-verify-export-checking'; RunExportPreparing = 'console-run-export-preparing'
     ExportFromPeriodOpen = 'console-from-period'; ExportPlanPeriod = 'console-verify-export-period'
+    CopyMailboxFrom = 'console-copy-from'; CopyMailboxTo = 'console-copy-to'; CopyMailboxPlan = 'console-verify-copy'; CopyMailboxPlanTicked = 'console-verify-copy-ticked'
+    RunCopyMailboxReading = 'console-run-copy-reading'; RunCopyMailbox = 'console-run-copy'; DoneCopyMailbox = 'console-done-copy-complete'; DoneCopyMailboxPartial = 'console-done-copy-partial'
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.
 $callouts = @{
@@ -108,6 +110,9 @@ $callouts = @{
     RepairTo = @(,@(1, 16, 226))
     ImportPlan = @(@(1, 16, 190), @(2, 566, 262), @(3, 566, 446), @(4, 1090, 913))
     DoneExportComplete = @(@(1, 16, 190), @(2, 16, 424), @(3, 16, 556))
+    CopyMailboxFrom = @(@(1, 16, 200), @(2, 16, 515), @(3, 460, 198), @(4, 452, 838))
+    CopyMailboxTo = @(@(1, 16, 239), @(2, 460, 282), @(3, 460, 331), @(4, 460, 450))
+    CopyMailboxPlan = @(@(1, 16, 200), @(2, 16, 439), @(3, 566, 240), @(4, 566, 481), @(5, 1090, 913))
     DoneRepair = @(,@(1, 16, 178))
 }
 function Add-Callouts([string]$File, $Points) {
@@ -555,7 +560,7 @@ $hero = [ordered]@{
     Footer   = 'Nicolas Fabert / MIT license'
     Desc     = 'Exchange Online mailbox export and import to a verified store or to PST files, with a guided Windows console and PST check and repair.'
     Stats    = @(
-        @{ N = '4'; Label = 'Tasks in one console'; Sub = 'Export, import, check PST, open' }
+        @{ N = '5'; Label = 'Tasks in one console'; Sub = 'Export, import, copy, PST, open' }
         @{ N = '50'; Label = 'GB per PST part'; Sub = 'Each part checked when written' }
         @{ N = '0'; Label = 'Items deleted'; Sub = 'Import adds, export only reads' }
     )

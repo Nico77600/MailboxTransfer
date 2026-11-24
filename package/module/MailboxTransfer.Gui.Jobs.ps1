@@ -141,7 +141,7 @@ function Get-MbtGuiPeriod {
         From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("arrived between 2026-03-01 and 2026-03-31", "all dates").
     #>
     param([hashtable]$S)
-    $chosen = ((Get-MbtGuiProp $S 'Task' '') -eq 'export') -and ((Get-MbtGuiProp $S 'Period' 'all') -ieq 'between')
+    $chosen = ((Get-MbtGuiProp $S 'Task' '') -in 'export', 'mailcopy') -and ((Get-MbtGuiProp $S 'Period' 'all') -ieq 'between')
     $from = [string](Get-MbtGuiProp $S 'ArrFrom' ''); $to = [string](Get-MbtGuiProp $S 'ArrTo' '')
     $problem = $null
     if ($chosen) {
@@ -179,7 +179,7 @@ function Get-MbtGuiCommand {
         several locations is one command: the selection file holds one selection per location, and the PST files are written by the same command.
     #>
     param(
-        [Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'check', 'copy')][string]$Task,
+        [Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'check', 'copy', 'mailcopy')][string]$Task,
         [Parameter(Mandatory)][hashtable]$S, [Parameter(Mandatory)][hashtable]$Job, [switch]$Plan
     )
     $common = Get-MbtGuiCommonArguments -S $S -Job $Job -WhatIf:$Plan
@@ -244,6 +244,28 @@ function Get-MbtGuiCommand {
             $a.AddRange([string[]]$common)
             $out.Add([pscustomobject]@{ Title = 'Import'; Arguments = $a.ToArray() })
         }
+        'mailcopy' {
+            # a mailbox into another in one job: the engine reads it into the store, then imports the store; one command, so that Pause and Continue work across the two parts
+            $a = [Collections.Generic.List[string]]::new()
+            $a.AddRange([string[]]@('-Mode', 'Copy', '-UserPrincipalName', $S.Mailbox))
+            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $period = Get-MbtGuiPeriod $S
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
+            $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc))
+            # the application has no mailbox of its own: it names the one that receives; a delegated sign-in writes into its own
+            if ($S.AuthMode -eq 'app' -and $S.McTarget) { $a.AddRange([string[]]@('-TargetMailboxId', $S.McTarget.Trim())) }
+            if ($S.TgtMode -eq 'new' -and $S.TgtName) {
+                $problem = Test-MbtGuiFolderName $S.TgtName
+                if ($problem) { throw "The target folder name is refused: $problem" }
+                $a.AddRange([string[]]@('-TargetRoot', $S.TgtName))
+            }
+            if ($S.Mapping) { $a.AddRange([string[]]@('-MappingFile', $S.Mapping)) }
+            $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt', '-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
+            $a.AddRange([string[]]$tuning)
+            $a.AddRange([string[]]$common)
+            $out.Add([pscustomobject]@{ Title = 'Copy'; Arguments = $a.ToArray() })
+        }
         'copy' {
             # the ticks of an open PST written into new PST files: -Mode ExportPst reads a PST instead of a store
             $a = [Collections.Generic.List[string]]::new()
@@ -276,7 +298,7 @@ function Get-MbtGuiCommand {
 # What the console passes for its own sake: not an operator's choice, so not in the line that is shown.
 $script:MbtGuiInternalParameter = @('NoPrompt', 'EventsFile', 'StopFile', 'JobId', 'TempPath', 'ConfigPath', 'LogFolder', 'DevelopmentMode')
 # The value a parameter of Invoke-MailboxTransfer.ps1 has when it is not given (the tests compare this table with the parameter block of the script).
-$script:MbtGuiCliDefault = @{ Mailbox = 'Primary'; Concurrency = '4'; MaxAttempts = '3'; ReconcileDelaySeconds = '300'; ReconcileRounds = '3'; PstMaxSizeGB = '50'; Level = 'Automatic'; RepairLevel = 'Rebuild' }
+$script:MbtGuiCliDefault = @{ Mailbox = 'Primary'; TargetMailbox = 'Primary'; Concurrency = '4'; MaxAttempts = '3'; ReconcileDelaySeconds = '300'; ReconcileRounds = '3'; PstMaxSizeGB = '50'; Level = 'Automatic'; RepairLevel = 'Rebuild' }
 
 function Split-MbtGuiArgument {
     <# The flat arguments of a command as pairs: Name (without the dash), Value ($null for a switch). #>

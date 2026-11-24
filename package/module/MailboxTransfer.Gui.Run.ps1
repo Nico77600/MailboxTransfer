@@ -39,7 +39,7 @@ function New-MbtGuiRun {
         Rates = [Collections.Generic.List[hashtable]]::new()
         Samples = [Collections.Generic.List[hashtable]]::new()
         Started = $null; LastEvent = $null; EpochStart = $null
-        Done = 0L; Total = 0L; Bytes = 0L; BytesTotal = 0L
+        Done = 0L; Total = 0L; Bytes = 0L; BytesTotal = 0L; ImportHalf = $false
         Sleep = $null; Error = $null; Result = $null; StopRequested = $false; Dirty = $true; EventCount = 0
     }
 }
@@ -128,6 +128,8 @@ function Add-MbtGuiEvent {
             $s = Find-MbtGuiStep $Run $id
             if (-not $s) { $s = @{ Id = $id; Title = $id; State = 'waiting'; Done = 0L; Total = 0L; Bytes = 0L; BytesTotal = 0L; Msg = ''; Started = $null; Finished = $null }; $Run.Steps.Add($s) }
             $state = [string](Get-MbtGuiProp $Event 'state' 'running')
+            # a copy: the second part (the import) starts here; the rates of the first one say nothing about it, so the time left is measured again
+            if ($Run.Task -eq 'mailcopy' -and $id -eq 'check' -and -not $Run.ImportHalf) { $Run.ImportHalf = $true; $Run.Rates.Clear(); $Run.EpochStart = $at }
             if ($state -eq 'running' -and -not $s.Started) { $s.Started = $at }
             if ($state -in 'done', 'failed') { $s.Finished = $at; if (-not $s.Started) { $s.Started = $at } }
             $s.State = $state

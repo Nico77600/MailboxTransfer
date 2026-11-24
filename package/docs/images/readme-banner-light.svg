@@ -30,8 +30,8 @@
       <rect x="1080" y="195" width="455" height="100" rx="22"/>
       <rect x="1080" y="315" width="455" height="100" rx="22"/>
     </g>
-    <g fill="#b71c50" font-weight="700" font-size="32"><text x="1110" y="136">4</text><text x="1110" y="256">50</text><text x="1110" y="376">0</text></g>
+    <g fill="#b71c50" font-weight="700" font-size="32"><text x="1110" y="136">5</text><text x="1110" y="256">50</text><text x="1110" y="376">0</text></g>
     <g fill="#242424" font-size="21" font-weight="600"><text x="1200" y="119">Tasks in one console</text><text x="1200" y="239">GB per PST part</text><text x="1200" y="359">Items deleted</text></g>
-    <g fill="#535353" font-size="19"><text x="1200" y="150">Export, import, check PST, open</text><text x="1200" y="270">Each part checked when written</text><text x="1200" y="390">Import adds, export only reads</text></g>
+    <g fill="#535353" font-size="19"><text x="1200" y="150">Export, import, copy, PST, open</text><text x="1200" y="270">Each part checked when written</text><text x="1200" y="390">Import adds, export only reads</text></g>
   </g>
 </svg>

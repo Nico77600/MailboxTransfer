@@ -599,6 +599,60 @@ foreach ($theme in 'Light', 'Dark') {
         $c = -not $g.S.Confirmed -and -not $g.C.Primary.IsEnabled
         $a -and $b -and $c }
     Check 'import: the default destination is a new folder' { (New-MbtGuiState -WorkFolder $Work).TgtMode -eq 'new' }
+    Check 'copy to another mailbox: the task card is on the Task page between Import and Check and repair, and leads to the From page of the browser' {
+        Reset-State; $g.S.Step = 1; $g.S.Sel = 'mailcopy'; Show-MbtGuiPage; Measure-Window $window
+        $seen = Find-Text $g.C.Page.Content 'Copy to another mailbox'
+        $names = @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })
+        & $g.PrimaryAction
+        $seen -and ($names -join ',') -eq 'export,import,mailcopy,repair,open' -and $g.S.Task -eq 'mailcopy' -and (Get-MbtGuiScreen) -eq 'exFrom' }
+    Check 'copy to another mailbox: the task of the PST copy is not confused with it: hidden, its own flow and its own name' {
+        ($script:Flows.copy -join ',') -eq 'setup,start,opFrom,cpTo,cpPlan,run,done' -and $script:Tasks.copy.Hidden -and $script:Tasks.copy.Title -eq 'Copy part of a PST' -and $script:Tasks.mailcopy.Title -eq 'Copy to another mailbox' -and ($script:Flows.mailcopy -join ',') -eq 'setup,start,exFrom,mcTo,mcPlan,run,done' }
+    Check 'copy to another mailbox (From): ticks in one place go on; ticks in an auxiliary archive or in several places say so and keep Continue grey' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFromSeveralPlaces'; Measure-Window $window
+        $several = -not $g.C.Primary.IsEnabled -and $g.C.Footer.Tag -match 'auxiliary archive cannot be copied|more than one place'
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFrom'; Measure-Window $window
+        $one = $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'Copy to another mailbox.') -and $g.C.PrimaryLabel.Text -eq 'Continue to the mailbox that receives' -and (Find-Text $g.C.Page.Content 'Period:')
+        $several -and $one }
+    Check 'copy to another mailbox (To): the own mailbox and the folder are named, the mailbox it copies from is refused, the five steps of the stepper are there' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxTo'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'Where to copy') -and (Find-Text $g.C.Page.Content 'The copy goes into your own mailbox') -and (Find-Text $g.C.Page.Content 'A new folder (recommended)') -and $g.C.Primary.IsEnabled
+        $st = Get-StepperState; $b = [bool](($st | Where-Object { $_.Label -eq 'To' }) -and ($st | Where-Object { $_.Label -match 'Verify$' }) -and ($st | Where-Object { $_.Label -match 'Next steps$' }))
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToSame'; Measure-Window $window
+        $c = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'This is the mailbox you copy from')
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (To): the application types the mailbox that receives, and Continue waits for a good address' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToApplication'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'Mailbox that receives the copy') -and $g.C.Primary.IsEnabled
+        $g.S.McTarget = 'nope'; Show-MbtGuiPage; $b = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'Type the address of the mailbox')
+        $g.S.McTarget = ''; Show-MbtGuiPage; $c = -not $g.C.Primary.IsEnabled
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (Verify): Start stays grey until the box that says what, from where and into where is ticked; the command line is one -Mode Copy command, without plumbing' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxPlan'; Measure-Window $window
+        $off = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'I checked: copy') -and (Find-Text $g.C.Page.Content 'Adds only.') -and $g.C.Footer.Tag -match 'Tick the box to unlock Start'
+        $t = Get-CommandLineText
+        $line = $t -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Copy -UserPrincipalName adele\.vance@contoso\.com -SelectionFile \S+selections\\mailcopy-[0-9a-f]{8}\.json -TargetRoot ''Copy of projects 2026-11-12'' -StorePath \S+stores\\copy-projects@contoso\.com-[0-9a-f]{8}$' -and $t.Split("`n").Count -eq 1 -and $t -notmatch '-NoPrompt|-EventsFile|-StopFile|-JobId|-TempPath|-WhatIf'
+        $g.S.Confirmed = $true; $g.S.ConfirmKey = Get-MbtGuiPlanKey; Show-MbtGuiPage
+        $off -and $line -and $g.C.Primary.IsEnabled -and $g.C.PrimaryLabel.Text -eq 'Start the copy into adele.vance@contoso.com' }
+    Check 'copy to another mailbox (Verify): the tick is not cleared by a change of case, and is cleared by a real change of the plan' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxPlanTicked'; Measure-Window $window
+        $a = $g.S.Confirmed -and $g.C.Primary.IsEnabled
+        $g.S.Mailbox = 'ADELE.VANCE@CONTOSO.COM'; $g.S.TgtName = $g.S.TgtName.ToUpper(); Show-MbtGuiPage; Measure-Window $window
+        $b = $g.S.Confirmed -and $g.C.Primary.IsEnabled
+        $g.S.TgtLoc = 'Archive'; Show-MbtGuiPage; Measure-Window $window
+        $c = -not $g.S.Confirmed -and -not $g.C.Primary.IsEnabled
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (Run): the two parts are the steps of one list, the second part says why it is slow, and the first part does not' {
+        Reset-State; Set-MbtGuiScenario 'RunCopyMailbox'; Measure-Window $window
+        $second = (Find-Text $g.C.Page.Content 'Verify the export store') -and (Find-Text $g.C.Page.Content 'Create the folders') -and (Find-Text $g.C.Page.Content 'Download the items') -and (Find-Text $g.C.Page.Content 'Why is it slow?') -and $g.Run.ImportHalf
+        Reset-State; Set-MbtGuiScenario 'RunCopyMailboxReading'; Measure-Window $window
+        $first = -not (Find-Text $g.C.Page.Content 'Why is it slow?') -and -not $g.Run.ImportHalf -and $g.C.Primary.Visibility -ne 'Visible'
+        $second -and $first }
+    Check 'copy to another mailbox (Next steps): both parts are in the result, the store is named, and the next step says where to look' {
+        Reset-State; Set-MbtGuiScenario 'DoneCopyMailbox'; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'items read') -and (Find-Text $g.C.Page.Content 'in the mailbox') -and (Find-Text $g.C.Page.Content 'Open the store') -and (Find-Text $g.C.Page.Content 'Copy of projects 2026-11-12') -and (Get-CommandLineText) -match '-Mode Copy' }
+    Check 'copy to another mailbox (Next steps): not finished says that a part that is finished is not done again, and offers Continue' {
+        Reset-State; Set-MbtGuiScenario 'DoneCopyMailboxPartial'; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'not done again') -and (Find-Text $g.C.Page.Content 'Continue') }
     Check 'repair: a damaged file offers a repair, a clean one does not' { Reset-State; Set-MbtGuiScenario 'RepairFromDamaged'; $a = $g.C.PrimaryLabel.Text; Reset-State; Set-MbtGuiScenario 'RepairFromClean'; $b = $g.C.PrimaryLabel.Text; $a -eq 'Repair into a new file' -and $b -eq 'Start a new task' }
     Check 'repair: the destination is never the original and never AUX' { (Test-MbtGuiRepairDestination @{ RpDest = 'D:\a.pst'; RpPath = 'D:\a.pst' }) -match 'original' -and (Test-MbtGuiRepairDestination @{ RpDest = 'D:\aux.pst'; RpPath = 'D:\a.pst' }) -match 'AUX' }
     Check 'closing without a job is allowed' { $e = [ComponentModel.CancelEventArgs]::new(); $g.Job = $null; Invoke-MbtGuiClosing $e; -not $e.Cancel }

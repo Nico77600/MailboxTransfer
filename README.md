@@ -40,7 +40,7 @@
 
 ## Why
 
-Mailbox Transfer exports Exchange Online mailboxes (**primary, archive and auxiliary archives**) to a verified local store or to **PST files**, imports PST files, stores and `.eml` files into a mailbox, and **checks and repairs PST files**. A guided Windows console for the person who does not want to type commands, a PowerShell 7 command line for the rest.
+Mailbox Transfer exports Exchange Online mailboxes (**primary, archive and auxiliary archives**) to a verified local store or to **PST files**, imports PST files, stores and `.eml` files into a mailbox, copies a mailbox into another, and **checks and repairs PST files**. A guided Windows console for the person who does not want to type commands, a PowerShell 7 command line for the rest.
 
 Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC sleeps. A PST export hides the archive that grew into several archives. A copy that dies at 80 % leaves you guessing what arrived. Mailbox Transfer is made for the big, boring, long job.
 
@@ -64,7 +64,7 @@ Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC slee
   <img alt="The guided path. Get ready once: 1 get your rights, 2 put the tool on the PC, 3 write your two numbers, 4 open the console. Then task A, browse and export: 5 sign in and pick the mailbox, 6 tick, choose where to save, read the checks and the plan, 7 read the result. Or task B, import: 5 pick the file and the mailbox, 6 read the checks and tick the box that names the target, 7 read the result. Or task C, check and repair a PST: 5 pick the file, 6 check then repair into a new file, 7 read before and after" src="package/docs/images/readme-start-light.png">
 </picture>
 
-One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. A fourth task, *Open an export or a PST*, reads a file like a mailbox and needs no step of its own. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
+One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. Two more tasks need no step of their own: *Copy to another mailbox* (a mailbox into another in one task, user guide chapter 8) and *Open an export or a PST*, which reads a file like a mailbox. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
 
 ### Set up once · 1 to 4
 
@@ -91,7 +91,7 @@ cd C:\Tools\MailboxTransfer
 <table>
   <tr>
     <td width="50%" valign="top"><a href="package/docs/images/console-setup-light.png"><img alt="The Setup page of the console: the stepper Setup, Task, Verify, Run, Next steps; 1 the box This computer with its lights, 2 the box Sign-in with Me or The application and the values read from the configuration file, 3 the box Files and folders, 4 the button Choose a task" src="package/docs/images/console-setup-light.png"></a><br><sub><b>Setup</b> &middot; the lights of this computer, the sign-in and the configuration file</sub></td>
-    <td width="50%" valign="top"><a href="package/docs/images/console-task-light.png"><img alt="The Task page of the console: the stepper with What, From and To under Task; the four task cards Browse and export, Import, Check and repair a PST, Open an export or a PST; the jobs you can continue; what will happen" src="package/docs/images/console-task-light.png"></a><br><sub><b>Task</b> &middot; the four tasks and the jobs to continue</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-task-light.png"><img alt="The Task page of the console: the stepper with What, From and To under Task; the five task cards Browse and export, Import, Copy to another mailbox, Check and repair a PST, Open an export or a PST; the jobs you can continue; what will happen" src="package/docs/images/console-task-light.png"></a><br><sub><b>Task</b> &middot; the five tasks and the jobs to continue</sub></td>
   </tr>
 </table>
 </details>
@@ -180,17 +180,18 @@ cd C:\Tools\MailboxTransfer
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-tasks-dark.png">
-  <img alt="The four tasks: Browse and export (reads only), Import (adds to a mailbox), Check and repair a PST (local files only), Open an export or a PST (reads only)" src="package/docs/images/readme-tasks-light.png">
+  <img alt="The five tasks: Browse and export (reads only), Import (adds to a mailbox), Copy to another mailbox (reads one, adds to the other), Check and repair a PST (local files only), Open an export or a PST (reads only)" src="package/docs/images/readme-tasks-light.png">
 </picture>
 
 | Task | What it does | Writes to a mailbox? |
 |---|---|---|
 | **Browse and export** | Sign in (or open a shared mailbox by its address), look inside a mailbox, tick folders or messages, save them as PST files, EML files or an export store | No |
 | **Import** | Put an export store, a PST file or a folder of EML files into a mailbox: items are added, nothing is deleted or overwritten | Yes, adds only |
+| **Copy to another mailbox** | Read a mailbox, or some of its folders, or one period, into a store on this PC, then add it to another mailbox: one task, resumable, nothing created twice; the store stays as proof | Yes, adds only |
 | **Check and repair a PST** | Test a PST, write a repaired copy; the original is never changed | No |
 | **Open an export or a PST** | Read it like a mailbox | No |
 
-Every task goes through the same five pages: **Setup, Task (What, From, To), Verify, Run, Next steps**. One question per page, the safe choice is the default and says *recommended*, and the checks and the plan are read before anything starts. An import also asks you to tick a box that names the target: the mailbox, the folder and the number of items. The console shows the same job as one command line that you can copy. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
+Every task goes through the same five pages: **Setup, Task (What, From, To), Verify, Run, Next steps**. One question per page, the safe choice is the default and says *recommended*, and the checks and the plan are read before anything starts. An import, and a copy into another mailbox, also ask you to tick a box that names the target: the mailbox, the folder and the number of items. The console shows the same job as one command line that you can copy. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-path-dark.png">

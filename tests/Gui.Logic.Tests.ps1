@@ -974,3 +974,74 @@ Describe 'The pause and resume buttons of the running step' {
         Get-MbtGuiRunStepControl $r | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Copy to another mailbox: one command for both parts, the period, the store, the time left of the second part' {
+    BeforeAll {
+        $script:Entry = Join-Path $script:Package 'Invoke-MailboxTransfer.ps1'
+        $script:Cs = @{ Task = 'mailcopy'; Mailbox = 'adele@contoso.com'; Shared = 'projects@contoso.com'; AuthMode = 'user'; McTarget = ''; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'Copy of projects'; Mapping = ''; Conc = 4; Tries = 3; Reconcile = 5; Awake = $false
+            Changed = @{}; Period = 'all'; ArrFrom = ''; ArrTo = ''; TenantId = ''; ClientId = ''; AppTenant = ''; AppClient = ''; AppThumb = '' }
+        $script:Cj = @{ Id = 'mailcopy-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; StorePath = 'D:\Store'; SelectionFiles = @('D:\J\selection-1.json'); JobName = '' }
+    }
+    It 'is ONE command, so that Pause, Stop and Continue work across the two parts: -Mode Copy, the selection, the target, the folder, the store, the delay of the reconciliation' {
+        $c = @(Get-MbtGuiCommand -Task mailcopy -S $script:Cs -Job $script:Cj)
+        $c.Count | Should -Be 1
+        $a = $c[0].Arguments
+        $a[($a.IndexOf('-Mode') + 1)] | Should -Be 'Copy'
+        $a[($a.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'adele@contoso.com'
+        $a[($a.IndexOf('-SelectionFile') + 1)] | Should -Be 'D:\J\selection-1.json'
+        $a[($a.IndexOf('-TargetMailbox') + 1)] | Should -Be 'Primary'
+        $a[($a.IndexOf('-TargetRoot') + 1)] | Should -Be 'Copy of projects'
+        $a[($a.IndexOf('-StorePath') + 1)] | Should -Be 'D:\Store'
+        $a[($a.IndexOf('-ReconcileDelaySeconds') + 1)] | Should -Be '300'
+        $a | Should -Contain '-NoPrompt'; $a | Should -Contain '-EventsFile'; $a | Should -Contain '-StopFile'
+        $a | Should -Not -Contain '-TargetMailboxId' -Because 'a delegated sign-in writes into its own mailbox'
+        $a | Should -Not -Contain '-WhatIf'
+        (Get-MbtGuiCommand -Task mailcopy -S $script:Cs -Job $script:Cj -Plan)[0].Arguments | Should -Contain '-WhatIf'
+    }
+    It 'the application names the mailbox that receives; the same folder names and a mapping file are said as they are' {
+        $s = $script:Cs.Clone(); $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 'contoso.onmicrosoft.com'; $s.AppClient = '11111111-2222-3333-4444-555555555555'; $s.McTarget = ' adele.vance@contoso.com '; $s.TgtMode = 'same'; $s.TgtLoc = 'Archive'; $s.Mapping = 'D:\map.psd1'
+        $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments
+        $a[($a.IndexOf('-TargetMailboxId') + 1)] | Should -Be 'adele.vance@contoso.com'
+        $a[($a.IndexOf('-TargetMailbox') + 1)] | Should -Be 'Archive'
+        $a[($a.IndexOf('-MappingFile') + 1)] | Should -Be 'D:\map.psd1'
+        $a | Should -Not -Contain '-TargetRoot'
+        $a[($a.IndexOf('-CertificateThumbprint') + 1)] | Should -Be ('AB' * 20)
+    }
+    It 'a period is given to the copy as to an export, and the store has its own name for it' {
+        $s = $script:Cs.Clone(); $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'
+        $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments
+        $a[($a.IndexOf('-ArrivedFrom') + 1)] | Should -Be '2026-01-01'
+        $a[($a.IndexOf('-ArrivedTo') + 1)] | Should -Be '2026-03-31'
+        (Get-MbtGuiPeriod $s).Active | Should -BeTrue
+        (Get-MbtGuiPeriodStoreSuffix $s) | Should -Be '-arrived-2026-01-01_2026-03-31'
+        $other = $script:Cs.Clone(); $other.Task = 'import'; $other.Period = 'between'; $other.ArrFrom = '2026-01-01'
+        (Get-MbtGuiPeriod $other).Active | Should -BeFalse -Because 'only an export and a copy read a live mailbox'
+    }
+    It 'refuses a folder name the engine would take for a parameter' {
+        $s = $script:Cs.Clone(); $s.TgtName = '-Force'
+        { Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj } | Should -Throw '*cannot start with a dash*'
+    }
+    It 'every parameter of the command is a parameter of the entry script' {
+        $declared = (Get-Command $script:Entry).Parameters.Keys
+        $s = $script:Cs.Clone(); $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = 'adele@contoso.com'; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.Mapping = 'D:\m.psd1'; $s.Awake = $true; $s.Changed['Retry'] = $true; $s.Retry = 4
+        foreach ($t in (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because $t } }
+    }
+    It 'the second part starts when the export store is verified: the rates of the first part say nothing about the speed of the second' {
+        $r = New-MbtGuiRun -Task mailcopy
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'download'; title = 'Download' }, [pscustomobject]@{ id = 'check'; title = 'Verify the export store' }, [pscustomobject]@{ id = 'send'; title = 'Send' }) }
+        Add-Evt $r rate -Fields @{ window = '5m'; gibPerHour = 80 }
+        Add-Evt $r rate -Fields @{ window = '5m'; gibPerHour = 90 }
+        $r.Rates.Count | Should -Be 2
+        $r.ImportHalf | Should -BeFalse
+        Add-Evt $r step -Fields @{ id = 'check'; state = 'done'; msg = 'The export store is open.' }
+        $r.ImportHalf | Should -BeTrue
+        $r.Rates.Count | Should -Be 0
+        Add-Evt $r rate -Fields @{ window = '5m'; gibPerHour = 3.8 }
+        Add-Evt $r step -Fields @{ id = 'send'; state = 'running'; done = 1; total = 10 }
+        $r.Rates.Count | Should -Be 1 -Because 'the rates of the second part are kept'
+        $other = New-MbtGuiRun -Task import
+        Add-Evt $other rate -Fields @{ window = '5m'; gibPerHour = 3.9 }
+        Add-Evt $other step -Fields @{ id = 'check'; state = 'done' }
+        $other.Rates.Count | Should -Be 1 -Because 'an import is one part'
+    }
+}

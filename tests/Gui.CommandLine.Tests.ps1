@@ -46,7 +46,7 @@ BeforeAll {
 
 Describe 'The command line of a task' {
     It 'shows nothing of the plumbing of the console: no silent sign-in, events, stop file, job id, temporary folder, and no path inside the folder of the job' {
-        foreach ($task in 'export', 'import', 'repair', 'copy') {
+        foreach ($task in 'export', 'import', 'repair', 'copy', 'mailcopy') {
             $s = New-TestState; $s.Task = $task
             $line = ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task $task -S $s -Job (New-TestJob)) -S $s
             foreach ($internal in '-NoPrompt', '-EventsFile', '-StopFile', '-JobId', '-TempPath', '-ConfigPath', '-LogFolder', '-DevelopmentMode', '-WhatIf') { $line | Should -Not -Match ([regex]::Escape($internal) + '(\s|$)') -Because "${task}: $internal is the console's own" }
@@ -147,7 +147,7 @@ Describe 'The command line of a task' {
     }
     Context 'the shown line and the run' {
         BeforeAll {
-            $script:Cases = foreach ($name in 'export-pst', 'export-store', 'export-eml', 'import-pst', 'import-store', 'import-eml-archive', 'repair', 'copy', 'app') {
+            $script:Cases = foreach ($name in 'export-pst', 'export-store', 'export-eml', 'import-pst', 'import-store', 'import-eml-archive', 'repair', 'copy', 'mailcopy', 'mailcopy-app', 'app') {
                 $s = New-TestState; $j = New-TestJob
                 switch ($name) {
                     'export-pst' { $s.Conc = 2; $s.Tries = 6; $s.SplitGB = 10; $s.CheckEach = $false; $s.SepAux = $true; $s.Awake = $true; $s.Changed['Retry'] = $true; $s.Retry = 7 }
@@ -158,20 +158,22 @@ Describe 'The command line of a task' {
                     'import-eml-archive' { $s.Task = 'import'; $s.ImSrc = 'eml'; $s.ImPath = 'D:\eml'; $s.TgtLoc = 'Archive' }
                     'repair' { $s.Task = 'repair'; $s.RpLevel = 'Salvage'; $s.RpKeep = $true }
                     'copy' { $s.Task = 'copy'; $s.CheckEach = $false; $s.SplitGB = 5; $j.FolderFile = 'D:\MailboxTransfer\selections\copy-1a2b3c4d.folders.txt'; $j.ItemsFile = 'D:\MailboxTransfer\selections\copy-1a2b3c4d.items.txt' }
+                    'mailcopy' { $s.Task = 'mailcopy'; $s.TgtLoc = 'Archive'; $s.TgtName = 'Copy of projects'; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Mapping = 'D:\map.psd1'; $s.Reconcile = 10 }
+                    'mailcopy-app' { $s.Task = 'mailcopy'; $s.AuthMode = 'app'; $s.AppThumb = ('EF' * 20); $s.AppClient = '44444444-2222-3333-4444-555555555555'; $s.McTarget = 'adele.vance@contoso.com'; $s.Mailbox = 'projects@contoso.com'; $s.TgtMode = 'same' }
                     'app' { $s.AuthMode = 'app'; $s.AppThumb = ('CD' * 20); $s.AppClient = '33333333-2222-3333-4444-555555555555' }
                 }
                 @{ Name = $name; S = $s; Job = $j; Task = $s.Task }
             }
             $script:Parameters = (Get-Command $script:Entry).Parameters
         }
-        It 'every parameter of the line is a parameter of the script: <Name>' -ForEach @(@{ Name = 'export-pst' }, @{ Name = 'export-store' }, @{ Name = 'export-eml' }, @{ Name = 'import-pst' }, @{ Name = 'import-store' }, @{ Name = 'import-eml-archive' }, @{ Name = 'repair' }, @{ Name = 'copy' }, @{ Name = 'app' }) {
+        It 'every parameter of the line is a parameter of the script: <Name>' -ForEach @(@{ Name = 'export-pst' }, @{ Name = 'export-store' }, @{ Name = 'export-eml' }, @{ Name = 'import-pst' }, @{ Name = 'import-store' }, @{ Name = 'import-eml-archive' }, @{ Name = 'repair' }, @{ Name = 'copy' }, @{ Name = 'mailcopy' }, @{ Name = 'mailcopy-app' }, @{ Name = 'app' }) {
             $case = $script:Cases | Where-Object Name -EQ $Name
             $commands = @(Get-MbtGuiCommand -Task $case.Task -S $case.S -Job $case.Job)
             foreach ($line in (ConvertTo-MbtGuiCommandLine -Command $commands -S $case.S).Split("`n")) {
                 foreach ($parameter in (ConvertTo-ParameterMap $line).Keys) { $script:Parameters.ContainsKey($parameter) | Should -BeTrue -Because "-$parameter is a parameter of Invoke-MailboxTransfer.ps1" }
             }
         }
-        It 'the line read back gives the same parameters and values as the run, minus the plumbing and what is the default: <Name>' -ForEach @(@{ Name = 'export-pst' }, @{ Name = 'export-store' }, @{ Name = 'export-eml' }, @{ Name = 'import-pst' }, @{ Name = 'import-store' }, @{ Name = 'import-eml-archive' }, @{ Name = 'repair' }, @{ Name = 'copy' }, @{ Name = 'app' }) {
+        It 'the line read back gives the same parameters and values as the run, minus the plumbing and what is the default: <Name>' -ForEach @(@{ Name = 'export-pst' }, @{ Name = 'export-store' }, @{ Name = 'export-eml' }, @{ Name = 'import-pst' }, @{ Name = 'import-store' }, @{ Name = 'import-eml-archive' }, @{ Name = 'repair' }, @{ Name = 'copy' }, @{ Name = 'mailcopy' }, @{ Name = 'mailcopy-app' }, @{ Name = 'app' }) {
             $case = $script:Cases | Where-Object Name -EQ $Name
             $commands = @(Get-MbtGuiCommand -Task $case.Task -S $case.S -Job $case.Job)
             $lines = @((ConvertTo-MbtGuiCommandLine -Command $commands -S $case.S).Split("`n"))
@@ -184,11 +186,11 @@ Describe 'The command line of a task' {
                     if ($null -ne $p.Value -and (Test-MbtGuiDefaultValue $p.Key $p.Value)) { continue }
                     $expected[$p.Key] = $p.Value
                 }
-                if ($case.Name -eq 'app') {
+                if ($case.Name -in 'app', 'mailcopy-app') {
                     # the application of the file: the tenant and the thumbprint come from the configuration, the changed values are on the line
-                    $expected.Remove('TenantId'); $expected['CertificateThumbprint'] | Should -Be ('CD' * 20)
+                    $expected.Remove('TenantId'); $expected['CertificateThumbprint'] | Should -Be $(if ($case.Name -eq 'app') { 'CD' * 20 } else { 'EF' * 20 })
                 }
-                if ($case.Name -in 'app') { $expected.Keys | Should -Contain 'ClientId' }
+                if ($case.Name -in 'app', 'mailcopy-app') { $expected.Keys | Should -Contain 'ClientId' }
                 @($shown.Keys | Sort-Object) | Should -Be @($expected.Keys | Sort-Object) -Because "$($case.Name): $($lines[$i])"
                 foreach ($key in $expected.Keys) { $shown[$key] | Should -Be $expected[$key] -Because "-$key of $($case.Name)" }
             }

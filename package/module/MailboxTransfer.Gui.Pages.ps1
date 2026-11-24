@@ -20,6 +20,8 @@ $script:PageBuilders = @{
     exFrom = { Build-MbtGuiExportFromPage }
     exTo = { Build-MbtGuiExportToPage }
     exPlan = { Build-MbtGuiExportPlanPage }
+    mcTo = { Build-MbtGuiMailCopyToPage }
+    mcPlan = { Build-MbtGuiMailCopyPlanPage }
     imFrom = { Build-MbtGuiImportFromPage }
     imTo = { Build-MbtGuiImportToPage }
     imPlan = { Build-MbtGuiImportPlanPage }
@@ -298,7 +300,7 @@ function Build-MbtGuiSetupPage {
 function Build-MbtGuiStartPage {
     $g = $script:Gui; $s = $g.S; $engine = $g.Engine
     $sel = $s.Sel
-    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = 4
+    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') }).Count
     foreach ($k in @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })) {
         $card = New-MbtGuiTaskCard -Key $k -Selected ($sel -eq $k)
         $card.Margin = [Windows.Thickness]::new(0, 0, $(if ($k -eq 'open') { 0 } else { 12 }), 0)
@@ -319,7 +321,7 @@ function Build-MbtGuiStartPage {
     Set-MbtGuiActions -Footer $footer -Label 'Continue' -Enabled ([bool]$sel) -OnClick {
         $s = $script:Gui.S
         $s.Task = $s.Sel
-        $s.Step = $script:Flows[$s.Task].IndexOf($(switch ($s.Task) { 'export' { 'exFrom' } 'import' { 'imFrom' } 'repair' { 'rpFrom' } default { 'opFrom' } }))
+        $s.Step = $script:Flows[$s.Task].IndexOf($(switch ($s.Task) { 'export' { 'exFrom' } 'import' { 'imFrom' } 'repair' { 'rpFrom' } 'mailcopy' { 'exFrom' } default { 'opFrom' } }))
         Initialize-MbtGuiTask
         Show-MbtGuiPage
     }
