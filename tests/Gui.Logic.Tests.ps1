@@ -862,3 +862,28 @@ Describe 'The All jobs button' {
         $run | Should -Match '(?s)function Open-MbtGuiBatchReport.*?\$g\.Engine\.BatchReport \$g\.S\.WorkFolder'
     }
 }
+
+Describe 'The pause and resume buttons of the running step' {
+    BeforeAll { . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') }
+    It 'a running job offers Pause, in the same cases as the Stop button of the action bar' {
+        foreach ($state in 'running', 'sleep', 'decision') {
+            Get-MbtGuiRunStepControl @{ State = $state; StopRequested = $false; Result = $null } | Should -Be 'pause' -Because $state
+        }
+    }
+    It 'a stopped job offers Resume' {
+        Get-MbtGuiRunStepControl @{ State = 'stopped'; StopRequested = $true; Result = @{ Exit = 2 } } | Should -Be 'resume'
+    }
+    It 'offers nothing while the stop is being done, nor on a job that is finished' {
+        Get-MbtGuiRunStepControl @{ State = 'running'; StopRequested = $true; Result = $null } | Should -BeNullOrEmpty
+        foreach ($state in 'complete', 'partial', 'error', 'finishing') {
+            Get-MbtGuiRunStepControl @{ State = $state; StopRequested = $false; Result = @{ Exit = 0 } } | Should -BeNullOrEmpty -Because $state
+        }
+        Get-MbtGuiRunStepControl @{ State = 'running'; StopRequested = $false; Result = @{ Exit = 0 } } | Should -BeNullOrEmpty
+    }
+    It 'the model of a run gives the states the function reads' {
+        $r = New-MbtGuiRun -Task import
+        Get-MbtGuiRunStepControl $r | Should -Be 'pause'
+        $r.StopRequested = $true
+        Get-MbtGuiRunStepControl $r | Should -BeNullOrEmpty
+    }
+}

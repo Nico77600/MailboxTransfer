@@ -46,7 +46,13 @@ Describe 'Console click-through (headless WPF, fake engine)' {
         $walked = @($script:Runs | ForEach-Object { @($_.Result.Walked) } | Where-Object { $_ })
         $edge.Count | Should -BeGreaterThan 12
         foreach ($name in $edge) { $walked | Should -Contain $name }
-        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob') { $edge | Should -Contain $name }
+        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob', 'ImportFromManyFolders') { $edge | Should -Contain $name }
+    }
+    It 'used the Pause button of the running step (and answered its question) and the Resume button of a stopped job' {
+        $pause = ($script:Runs | ForEach-Object { $_.Result.StepControls.RunStepPause } | Measure-Object -Sum).Sum
+        $resume = ($script:Runs | ForEach-Object { $_.Result.StepControls.RunStepResume } | Measure-Object -Sum).Sum
+        $pause | Should -BeGreaterThan 0
+        $resume | Should -BeGreaterThan 0
     }
     It 'no handler raised an exception, and the tick of the console raised nothing' {
         $errors = @($script:Runs | ForEach-Object { @($_.Result.Errors) } | Where-Object { $_ })

@@ -22,6 +22,7 @@ $script:ctInvoked = @{}
 $script:ctScenarios = 0; $script:ctControls = 0; $script:ctDialogs = 0
 $script:ctWalked = [Collections.Generic.List[string]]::new()
 $script:ctChromeSeen = @{}
+$script:ctStepControls = @{}
 
 # nothing is opened, picked or started outside the window
 function Start-Process { param($FilePath, $ArgumentList) $script:ctOpened = $FilePath }
@@ -161,6 +162,8 @@ function Invoke-CtScenario([string]$ctName, [scriptblock]$ctExtra) {
             if ($script:ctChromeSeen.ContainsKey($ctKey) -and -not $ctG.DialogOpen) { continue }
             $script:ctChromeSeen[$ctKey] = $true
         }
+        $ctId = [Windows.Automation.AutomationProperties]::GetAutomationId($ctControl)
+        if ($ctId -like "RunStep*") { $script:ctStepControls[$ctId] = 1 + [int]$script:ctStepControls[$ctId] }
         $ctPage = $ctG.C.Page.Content
         $script:ctControls++
         try { Invoke-CtControl $ctControl } catch { $script:ctErrors.Add("$ctLabel : $(Format-CtError $_)") }
@@ -229,4 +232,4 @@ $script:ctDriver.Add_Tick({
     })
 $script:ctWindow.Add_ContentRendered({ $script:ctDriver.Start() })
 [void]$script:ctWindow.ShowDialog()
-[pscustomobject]@{ Errors = @($script:ctErrors); Invoked = $script:ctInvoked; Scenarios = $script:ctScenarios; Controls = $script:ctControls; Dialogs = $script:ctDialogs; Walked = @($script:ctWalked); Edge = @(Get-MbtGuiEdgeScenarioName) } | ConvertTo-Json -Depth 4 -Compress
+[pscustomobject]@{ Errors = @($script:ctErrors); Invoked = $script:ctInvoked; Scenarios = $script:ctScenarios; Controls = $script:ctControls; Dialogs = $script:ctDialogs; StepControls = $script:ctStepControls; Walked = @($script:ctWalked); Edge = @(Get-MbtGuiEdgeScenarioName) } | ConvertTo-Json -Depth 4 -Compress

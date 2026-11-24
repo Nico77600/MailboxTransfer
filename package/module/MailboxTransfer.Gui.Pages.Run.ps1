@@ -340,6 +340,31 @@ function Get-MbtGuiStepTone {
     }
 }
 
+function Get-MbtGuiRunStepControl {
+    <# The button the icon of the running step becomes: 'pause' while the job runs (when the Stop button of the action bar is shown), 'resume' once it is stopped (when Continue is shown), $null otherwise. #>
+    param($Run)
+    if ($Run.State -eq 'stopped') { return 'resume' }
+    if ($Run.State -in 'running', 'sleep', 'decision' -and -not $Run.StopRequested -and -not $Run.Result) { return 'pause' }
+    return $null
+}
+
+function New-MbtGuiStepControlButton {
+    <# The pause or resume button in the place of the icon of the running step: a small icon button, reachable with the keyboard. Pause opens the dialog of Stop and keep progress; Resume does what Continue does. #>
+    param([ValidateSet('pause', 'resume')][string]$Kind, [string]$Brush)
+    $btn = [Windows.Controls.Button]::new()
+    $btn.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtIconButton')
+    $text = if ($Kind -eq 'pause') { 'Pause (stop and keep progress)' } else { 'Resume (continue where it stopped)' }
+    $btn.Content = New-GuiIcon $(if ($Kind -eq 'pause') { 'pause' } else { 'play' }) 13 $Brush
+    $btn.ToolTip = $text
+    $btn.VerticalAlignment = 'Top'; $btn.HorizontalAlignment = 'Left'
+    $btn.Margin = [Windows.Thickness]::new(-4, -3, 0, 0)
+    [Windows.Automation.AutomationProperties]::SetName($btn, $text)
+    [Windows.Automation.AutomationProperties]::SetAutomationId($btn, $(if ($Kind -eq 'pause') { 'RunStepPause' } else { 'RunStepResume' }))
+    if ($Kind -eq 'pause') { Add-MbtGuiHandler $btn 'Click' { Show-MbtGuiStopDialog } }
+    else { Add-MbtGuiHandler $btn 'Click' { Invoke-MbtGuiContinue } }
+    return $btn
+}
+
 function Get-MbtGuiStepSub {
     param($Step)
     if ($Step.State -eq 'waiting') { return $Step.Msg }
@@ -449,6 +474,7 @@ function New-MbtGuiStepsColumn {
     $g = $script:Gui; $run = $g.Run; $s = $g.S
     $sel = Get-MbtGuiSelectedStep $run $s
     $stack = [Windows.Controls.StackPanel]::new()
+    $g.RunStepControl = $null
     $i = 0
     if (-not $run.Steps.Count -and -not $run.Result) {
         $first = New-GuiStack @((New-GuiIcon play 13 'MbtBrandText'), (New-GuiText 'Starting the task...' 'Body')) -Orientation Horizontal
@@ -463,7 +489,9 @@ function New-MbtGuiStepsColumn {
         foreach ($w in 26, '*', 'Auto') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } elseif ($w -eq 'Auto') { [Windows.GridLength]::Auto } else { [Windows.GridLength]::new($w) }; $grid.ColumnDefinitions.Add($cd) }
         foreach ($r in 1..3) { $grid.RowDefinitions.Add([Windows.Controls.RowDefinition]::new()) }
         $brush = switch ($tone[0]) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } 'bad' { 'MbtCritical' } 'run' { 'MbtBrandText' } default { 'TextFillColorTertiaryBrush' } }
-        $ic = New-GuiIcon $tone[1] 13 $brush; $ic.VerticalAlignment = 'Top'; $ic.Margin = [Windows.Thickness]::new(0, 2, 0, 0)
+        $control = if ($step.State -eq 'running' -and -not $g.RunStepControl) { Get-MbtGuiRunStepControl $run } else { $null }
+        if ($control) { $ic = New-MbtGuiStepControlButton -Kind $control -Brush $brush; $g.RunStepControl = $ic }
+        else { $ic = New-GuiIcon $tone[1] 13 $brush; $ic.VerticalAlignment = 'Top'; $ic.Margin = [Windows.Thickness]::new(0, 2, 0, 0) }
         [Windows.Controls.Grid]::SetRowSpan($ic, 2)
         $tt = New-GuiText ("$($i + 1). $($step.Title)") 'Body'; $tt.FontSize = 13; $tt.FontWeight = [Windows.FontWeights]::SemiBold; [Windows.Controls.Grid]::SetColumn($tt, 1)
         $tm = ''
@@ -598,11 +626,18 @@ function Sync-MbtGuiRunPage {
     if ((Get-MbtGuiScreen) -ne 'run' -or -not $g.Run -or -not $g.ContainsKey('RunHeadHolder')) { return }
     $now = [datetime]::UtcNow
     if (-not $Force -and ($now - $g.LastEtaPaint).TotalMilliseconds -lt 400) { return }
+    # a press of the mouse button is not interrupted by building the buttons again
+    if (-not $Force -and [Windows.Input.Mouse]::LeftButton -eq 'Pressed') { return }
     $g.LastEtaPaint = $now
     $run = $g.Run
+    $controlHadFocus = [bool]($g.ContainsKey('RunStepControl') -and $g.RunStepControl -and $g.RunStepControl.IsKeyboardFocused)
     $g.RunHeadHolder.Content = New-MbtGuiRunHead
     $g.RunDecisionHolder.Content = New-MbtGuiDecisionPanel
     $g.RunStepsHolder.Content = New-MbtGuiStepsColumn
+    if ($controlHadFocus -and $g.RunStepControl) {
+        $control = $g.RunStepControl
+        [void]$control.Dispatcher.BeginInvoke([Windows.Threading.DispatcherPriority]::Input, [Action] { [void]$control.Focus() }.GetNewClosure())
+    }
     $g.RunMidHolder.Content = New-MbtGuiStepDetailsColumn
     $g.RunDetailHolder.Content = New-MbtGuiObjectDetailsColumn
     $run.Dirty = $false

@@ -23,6 +23,28 @@ function Wait-Dispatcher {
     [Windows.Threading.Dispatcher]::PushFrame($frame)
 }
 function Measure-Window($w) { $r = $w.Content; $r.Measure([Windows.Size]::new(1480, 940)); $r.Arrange([Windows.Rect]::new(0, 0, 1480, 940)); $r.UpdateLayout(); Wait-Dispatcher }
+function Measure-WindowAt($w, [double]$Width, [double]$Height) { $r = $w.Content; $r.Measure([Windows.Size]::new($Width, $Height)); $r.Arrange([Windows.Rect]::new(0, 0, $Width, $Height)); $r.UpdateLayout(); Wait-Dispatcher; $r.UpdateLayout() }
+function Find-Visual($root, [type]$Type) {
+    # the first element of the visual tree below $root that is a $Type
+    if ($root -isnot [Windows.DependencyObject]) { return $null }
+    for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($root); $i++) {
+        $c = [Windows.Media.VisualTreeHelper]::GetChild($root, $i)
+        if ($Type.IsInstanceOfType($c)) { return $c }
+        $r = Find-Visual $c $Type
+        if ($r) { return $r }
+    }
+    return $null
+}
+function Get-BrowserLayout([string]$Use) {
+    # where the card of the browser is in the page area, and how much the page and the tree could scroll
+    $g = $script:Gui; $b = $g.Browsers[$Use]; $ps = $g.C.PageScroll
+    $inner = Find-Visual $b.C.FolderTree ([Windows.Controls.ScrollViewer])
+    [pscustomobject]@{
+        Viewport = $ps.ViewportHeight; Extent = $ps.ExtentHeight; Card = $b.Root.ActualHeight
+        Top = $b.Root.TransformToAncestor($ps).Transform([Windows.Point]::new(0, 0)).Y
+        Tree = $b.C.FolderTree.ActualHeight; TreeExtent = $(if ($inner) { $inner.ExtentHeight } else { 0 })
+    }
+}
 function Reset-State { $g = $script:Gui; $g.S = New-MbtGuiState -WorkFolder $Work; $g.Run = $null; $g.Job = $null; foreach ($b in $g.Browsers.Values) { Set-MbtGuiBrowserRoots -Browser $b -Roots @() } }
 function Find-Text($root, [string]$Text) {
     $script:hit = $false
@@ -73,6 +95,18 @@ function Get-CommandLineText {
     }
     & $walk $script:Gui.C.Page.Content
     return ($found -join "`n")
+}
+function Find-ByAutomationId($root, [string]$Id) {
+    # the elements of the logical tree of the page whose automation id is $Id
+    $found = [Collections.Generic.List[object]]::new()
+    $walk = {
+        param($o)
+        if ($o -isnot [Windows.DependencyObject]) { return }
+        if ([Windows.Automation.AutomationProperties]::GetAutomationId($o) -eq $Id) { $found.Add($o) }
+        foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c }
+    }
+    & $walk $root
+    return $found.ToArray()
 }
 function Get-StepperState {
     $out = [Collections.Generic.List[object]]::new()
@@ -245,6 +279,63 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'run: stopped result stays on the run page with Continue' {
         Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'continue'; reason = 'stopped'; counts = @{ done = 100; pending = 900 } }; Pump $script:job $window
         $g.Run.State -eq 'stopped' -and $g.C.Primary.Visibility -eq 'Visible' -and $g.C.PrimaryLabel.Text -eq 'Continue' }
+    Check 'run: the icon of the running step is a Pause button (named, with its tooltip, reachable with the keyboard); the Stop button of the action bar stays' {
+        Start-Fake 'import'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'check'; title = 'Check the PST file' }, @{ id = 'send'; title = 'Send the items' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'check'; state = 'done' }
+        Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'running'; done = 100; total = 1000 }
+        Pump $script:job $window
+        $pause = @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause')
+        $none = @(Find-ByAutomationId $g.C.Page.Content 'RunStepResume')
+        $stop = Find-Text $g.C.ActionsLeft 'Stop and keep progress'
+        $pause.Count -eq 1 -and $none.Count -eq 0 -and $stop -and $pause[0] -is [Windows.Controls.Button] -and $pause[0].Visibility -eq 'Visible' -and $pause[0].Focusable -and $pause[0].IsTabStop -and $pause[0].IsEnabled -and
+        [Windows.Automation.AutomationProperties]::GetName($pause[0]) -eq 'Pause (stop and keep progress)' -and $pause[0].ToolTip -eq 'Pause (stop and keep progress)' -and $pause[0].Content.Text -eq (Get-MbtGlyph 'pause') }
+    Check 'run: the Pause button asks the same question as Stop and keep progress, and writes the stop request when it is confirmed' {
+        $pause = @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause')[0]
+        $pause.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $pause))
+        $asked = $g.DialogOpen -and $g.C.DialogTitle.Text -eq 'Stop this job?' -and @($g.C.DialogButtons.Children | ForEach-Object Content) -join '|' -eq 'Keep running|Stop and keep progress'
+        $writtenBefore = Test-Path -LiteralPath $script:job.StopPath
+        $answer = $g.C.DialogButtons.Children[1]
+        $answer.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $answer))
+        Measure-Window $window
+        $asked -and -not $writtenBefore -and -not $g.DialogOpen -and (Test-Path -LiteralPath $script:job.StopPath) -and $g.Run.StopRequested -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 0 }
+    Check 'run: Keep running in that question writes nothing and leaves the Pause button' {
+        Start-Fake 'import'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'running'; done = 1; total = 10 }
+        Pump $script:job $window
+        $pause = @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause')[0]
+        $pause.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $pause))
+        $keep = $g.C.DialogButtons.Children[0]
+        $keep.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $keep))
+        Measure-Window $window
+        -not $g.DialogOpen -and -not (Test-Path -LiteralPath $script:job.StopPath) -and -not $g.Run.StopRequested -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 1 }
+    Check 'run: once stopped, the icon of the step is a Resume button that does what Continue does, and the Pause button is gone' {
+        Start-Fake 'repair'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'write'; title = 'Write the new file' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'write'; state = 'running'; done = 3; total = 10 }
+        Pump $script:job $window
+        Request-MbtGuiStop -Job $script:job; $g.Run.StopRequested = $true
+        Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'continue'; reason = 'stopped'; counts = @{ done = 3; pending = 7 } }
+        Pump $script:job $window
+        $resume = @(Find-ByAutomationId $g.C.Page.Content 'RunStepResume')
+        $shown = $resume.Count -eq 1 -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 0 -and $g.Run.State -eq 'stopped' -and (Find-Text $g.C.Page.Content 'Stopped') -and $g.C.PrimaryLabel.Text -eq 'Continue' -and
+        [Windows.Automation.AutomationProperties]::GetName($resume[0]) -eq 'Resume (continue where it stopped)' -and $resume[0].ToolTip -eq 'Resume (continue where it stopped)' -and $resume[0].Focusable -and $resume[0].IsTabStop -and $resume[0].Content.Text -eq (Get-MbtGlyph 'play')
+        $script:started = 0
+        $saved = (Get-Item Function:\Start-MbtGuiProcess).ScriptBlock
+        Set-Item Function:\Start-MbtGuiProcess { param($Job) $script:started++; $Job.Queue.Clear(); return $true }
+        try {
+            $resume[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $resume[0]))
+            Measure-Window $window
+        } finally { Set-Item Function:\Start-MbtGuiProcess $saved }
+        $shown -and $script:started -eq 1 -and -not (Test-Path -LiteralPath $script:job.StopPath) -and $g.Run.State -ne 'stopped' -and -not $g.Run.StopRequested -and (Get-MbtGuiScreen) -eq 'run' }
+    Check 'run: a finished job has neither a Pause nor a Resume button' {
+        Start-Fake 'import'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'done'; done = 10; total = 10 }
+        Add-Line $script:job @{ e = 'result'; exit = 0; complete = $true; counts = @{ done = 10 } }
+        Pump $script:job $window
+        $g.Run.State -eq 'complete' -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 0 -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepResume').Count -eq 0 }
     Check 'run: a complete result opens the done page' {
         Start-Fake 'import'
         Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }; Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'done'; done = 10; total = 10 }
@@ -356,6 +447,25 @@ foreach ($theme in 'Light', 'Dark') {
         $ok = (Find-Text $g.C.Page.Content 'A PST file') -and -not (Find-Text $g.C.Page.Content 'A PST file (coming') -and (Find-Text $g.C.Page.Content 'A folder of EML files') -and -not (Find-Text $g.C.Page.Content 'EML files (coming')
         $g.Engine.Capability.PstImport = $false; $g.Engine.Capability.EmlImport = $false; $g.Engine.Capability.SharedMailbox = $false; Show-MbtGuiPage; $ok }
     Check 'import: an EML source is shown disabled when the engine lacks it' { Find-Text $g.C.Page.Content 'A folder of EML files (coming in this version)' }
+    foreach ($size in @(@(1480, 940), @(1080, 640))) {
+        foreach ($case in @(@('import', 'ImportFromManyFolders', $true), @('export', 'ExportFrom', $false), @('open', 'Open', $false))) {
+            Check "browser page ($($case[0])) at $($size[0]) x $($size[1]): the card fills the page area, the page does not scroll, and a long tree scrolls inside the card" {
+                Reset-State
+                Set-MbtGuiScenario -Name $case[1]
+                $b = $g.Browsers[$case[0]]
+                foreach ($root in $b.Roots) { foreach ($n in $root.Descendants()) { $n.IsExpanded = $true } }
+                Measure-WindowAt $window $size[0] $size[1]
+                $l = Get-BrowserLayout $case[0]
+                $page = $g.C.Page.Content
+                [Math]::Abs($l.Extent - $l.Viewport) -lt 1 -and $l.Card -le ($l.Viewport + 0.5) -and $l.Card -ge 339 -and $l.Top -ge -0.5 -and ($l.Top + $l.Card) -le ($l.Viewport + 0.5) -and (-not $case[2] -or $l.Tree -lt $l.TreeExtent) -and $page.Tag -eq 'MbtFill' }
+        }
+    }
+    Check 'browser page: the left column scrolls by itself and the page of another kind keeps the height of its content' {
+        Reset-State; Set-MbtGuiScenario -Name 'ImportFromManyFolders'; Measure-WindowAt $window 1080 640
+        $left = Find-Visual $g.C.Page.Content ([Windows.Controls.ScrollViewer])
+        $scrolls = [bool]($left -and $left.VerticalScrollBarVisibility -eq 'Auto' -and $left.HorizontalScrollBarVisibility -eq 'Disabled')
+        Reset-State; Set-MbtGuiScenario -Name 'ExportPlan'; Measure-WindowAt $window 1080 640
+        $scrolls -and $g.C.Page.Tag -ne 'MbtFill' -and $g.C.Page.ReadLocalValue([Windows.FrameworkElement]::HeightProperty) -eq [Windows.DependencyProperty]::UnsetValue -and $g.C.PageScroll.ExtentHeight -gt $g.C.PageScroll.ViewportHeight }
     Check 'import: a store source opens and enables Continue' { $g.S.ImSrc = 'store'; $g.S.ImPath = 'D:\Exports\adele'; Open-MbtGuiSource -Use import; Measure-Window $window; $g.C.Primary.IsEnabled }
     Check 'import: an export that holds Recoverable Items says it goes to a normal folder, never back into Recoverable Items' {
         $saved = $g.S.ImInfo

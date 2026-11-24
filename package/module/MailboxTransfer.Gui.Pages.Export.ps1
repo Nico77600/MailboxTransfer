@@ -366,7 +366,7 @@ function Build-MbtGuiExportFromPage {
     }
     $g.OnSelectionChanged = { Update-MbtGuiExportFromFooter }
     Set-MbtGuiActions -Footer (Format-MbtGuiSelectionFooter $sel $s.Signed) -Label 'Continue to destination' -Enabled ($s.Signed -and $sel.Items -gt 0) -OnClick { Move-MbtGuiStep 1 }
-    return (New-GuiTwoColumns -Left $left -Right $right)
+    return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
 #endregion

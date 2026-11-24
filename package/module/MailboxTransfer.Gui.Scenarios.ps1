@@ -24,7 +24,7 @@ function Get-MbtGuiScenarioName {
 function Get-MbtGuiEdgeScenarioName {
     <# The states with exactly one of something (one folder, one message, one finding, one step...) or with none, and a plan check that failed: the lists of the pages are built from loops that run once or not at all. Walked by the tests, not drawn for the documentation. #>
     @('StartOneJob', 'StartNoJob', 'ExportFromOneLocation', 'ExportFromNoLocation', 'ExportFromOneMessage', 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ImportToOneLocation', 'ImportPlanOneFolder',
-        'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused', 'ExportPlanFailed')
+        'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused', 'ExportPlanFailed', 'ImportFromManyFolders')
 }
 
 function New-MbtGuiEvt {
@@ -233,6 +233,7 @@ function Set-MbtGuiScenario {
     $g = $script:Gui; $s = $g.S
     $s.WorkFolder = 'D:\MailboxTransfer'
     $script:FakeJobCount = $null
+    $script:FakePstExtraFolders = 0
     switch ($Name) {
         'Start' { $s.Step = 1; Show-MbtGuiPage }
         'StartImport' { $s.Step = 1; $s.Sel = 'import'; Show-MbtGuiPage }
@@ -253,6 +254,7 @@ function Set-MbtGuiScenario {
         'DoneExportPartial' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export partial) }
         'DoneExportError' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export error) }
         'ImportFrom' { $s.Task = 'import'; $s.Sel = 'import'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imFrom'); $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; Open-MbtGuiSource -Use import }
+        'ImportFromManyFolders' { $script:FakePstExtraFolders = 400; $s.Task = 'import'; $s.Sel = 'import'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imFrom'); $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; Open-MbtGuiSource -Use import }
         'ImportTo' { Set-MbtGuiScenario 'ImportFrom'; Initialize-MbtGuiScenarioSignIn; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imTo'); $s.TgtLoc = 'Archive'; $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiPage }
         'ImportPlan' { Set-MbtGuiScenario 'ImportTo'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imPlan'); Show-MbtGuiPage }
         'DoneImportComplete' { $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; $s.TgtLoc = 'Archive'; $s.TgtMode = 'new'; $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioDone import complete) }

@@ -168,6 +168,12 @@ function Show-MbtGuiPage {
     $g.PageName = $screen
     $page = & $fn
     $g.C.Page.Content = $page
+    # a fill page is exactly as tall as the visible page area (and never shorter than its panes need); any other page takes the height of its content
+    if ($page -is [Windows.FrameworkElement] -and $page.Tag -eq 'MbtFill') {
+        $binding = [Windows.Data.Binding]::new('ViewportHeight'); $binding.Source = $g.C.PageScroll; $binding.Mode = 'OneWay'
+        [void]$g.C.Page.SetBinding([Windows.FrameworkElement]::HeightProperty, $binding)
+        $g.C.Page.MinHeight = 392
+    } else { $g.C.Page.ClearValue([Windows.FrameworkElement]::HeightProperty); $g.C.Page.ClearValue([Windows.FrameworkElement]::MinHeightProperty) }
     Update-MbtGuiStepper
     $g.C.PageScroll.ScrollToTop()
     if ($g.Timer -and -not $g.Timer.IsEnabled) { $g.Timer.Start() }

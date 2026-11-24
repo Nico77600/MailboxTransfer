@@ -16,6 +16,8 @@ Set-StrictMode -Version Latest
 $script:FakePstState = 'damaged'
 # How many of the jobs of the Continue list the fake engine gives (all of them when it is $null): the scenarios with one job, or none.
 $script:FakeJobCount = $null
+# The number of extra folders of the fake PST (0: the short tree of the documentation).
+$script:FakePstExtraFolders = 0
 
 function New-MbtGuiFakeRandom {
     <# A small deterministic generator, so the screenshots are the same every time. #>
@@ -60,11 +62,25 @@ function Get-MbtGuiFakeTree {
 
 function Get-MbtGuiFakePstTree {
     $f = { param($id, $name, $glyph, $count, $gib, $kids = @()) New-MbtGuiFakeNode -Id $id -Name $name -Glyph $glyph -Count $count -SizeGiB $gib -Kids $kids }
-    $root = New-MbtGuiFakeNode -Id 'r-o' -Name 'archive-2019.pst' -Glyph pst -Count 0 -SizeGiB 0 -Root -Kind pst -Sub '4 parts - 47.3 GiB - read only' -Kids @(
-        (& $f 'o-in' 'Inbox' mail 1180 6.2)
-        (& $f 'o-proj' 'Projects' folder 0 0 @((& $f 'o-p1' 'Contoso Rollout' folder 4300 21), (& $f 'o-p2' 'Fabrikam Pilot' folder 780 4.1)))
-        (& $f 'o-old' 'Old Mail' folder 0 0 @((& $f 'o-19' '2019' folder 3120 12)))
-        (& $f 'o-fin' 'Finance' folder 0 0 @((& $f 'o-bud' 'Budgets' folder 480 4))))
+    # extra folders in groups of 20 (every fifth folder of a group has two folders below it), up to the number asked
+    $extra = @()
+    $made = 0; $group = 0
+    while ($made -lt $script:FakePstExtraFolders) {
+        $group++; $made++
+        $kids = @()
+        for ($i = 1; $i -le 19 -and $made -lt $script:FakePstExtraFolders; $i++) {
+            $made++
+            $sub = @()
+            if ($i % 5 -eq 0) { for ($j = 1; $j -le 2 -and $made -lt $script:FakePstExtraFolders; $j++) { $made++; $sub += (& $f "o-x$group-$i-$j" ('Case {0:00}.{1:00}.{2}' -f $group, $i, $j) folder 12 0.01) } }
+            $kids += (& $f "o-x$group-$i" ('Project {0:00}.{1:00}' -f $group, $i) folder 40 0.05 $sub)
+        }
+        $extra += (& $f "o-x$group" ('Archive {0:00}' -f $group) folder 0 0 $kids)
+    }
+    $root = New-MbtGuiFakeNode -Id 'r-o' -Name 'archive-2019.pst' -Glyph pst -Count 0 -SizeGiB 0 -Root -Kind pst -Sub '4 parts - 47.3 GiB - read only' -Kids (@(
+            (& $f 'o-in' 'Inbox' mail 1180 6.2)
+            (& $f 'o-proj' 'Projects' folder 0 0 @((& $f 'o-p1' 'Contoso Rollout' folder 4300 21), (& $f 'o-p2' 'Fabrikam Pilot' folder 780 4.1)))
+            (& $f 'o-old' 'Old Mail' folder 0 0 @((& $f 'o-19' '2019' folder 3120 12)))
+            (& $f 'o-fin' 'Finance' folder 0 0 @((& $f 'o-bud' 'Budgets' folder 480 4)))) + $extra)
     # a PST gives no folder size before the import, and the engine takes folders by their path below the top folder (-IncludeFolder)
     $walk = $null
     $walk = { param($node, $path) foreach ($k in @($node.Children)) { if ($k.Id -eq "`0placeholder") { continue }; $p = if ($path) { "$path/$($k.Name)" } else { $k.Name }; $k.Tag.FolderPath = $p; $k.Tag.Nid = [uint32]0x8000; $k.SizeBytes = -1; & $walk $k $p } }

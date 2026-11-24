@@ -107,7 +107,7 @@ function Build-MbtGuiImportFromPage {
     }
     $ok = [bool]($s.ImInfo -and $s.ImInfo.Ok)
     Set-MbtGuiActions -Footer 'Pick what to import. The file is checked first.' -Label 'Continue to the mailbox' -Enabled $ok -OnClick { Move-MbtGuiStep 1 }
-    $stack = New-GuiStack @((New-GuiText 'What do you want to import?' 'H2'), (New-GuiTwoColumns -Left $left -Right $right))
+    $stack = New-GuiFillPage -Title 'What do you want to import?' -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill)
     return $stack
 }
 
@@ -416,7 +416,7 @@ function Build-MbtGuiOpenPage {
         $s.Task = 'import'; $s.Sel = 'import'; $s.Step = $script:Flows.import.IndexOf('imFrom')
         Show-MbtGuiPage
     }
-    return (New-GuiTwoColumns -Left $left -Right $right)
+    return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
 #endregion

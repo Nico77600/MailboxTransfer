@@ -546,15 +546,39 @@ function New-GuiTile {
 }
 
 function New-GuiTwoColumns {
-    <# The house window: left column (410 px at most), right area. #>
-    param([Parameter(Mandatory)]$Left, [Parameter(Mandatory)]$Right, [double]$LeftWidth = 410, [string]$RightWidth = '*')
+    <# The house window: left column (410 px at most), right area. -Fill: the two columns take the height they are given (the page is a fill page, see New-GuiFillPage); the left column scrolls by itself when it is taller. #>
+    param([Parameter(Mandatory)]$Left, [Parameter(Mandatory)]$Right, [double]$LeftWidth = 410, [string]$RightWidth = '*', [switch]$Fill)
     $g = [Windows.Controls.Grid]::new()
     $c1 = [Windows.Controls.ColumnDefinition]::new(); $c1.Width = [Windows.GridLength]::new($LeftWidth)
     $c2 = [Windows.Controls.ColumnDefinition]::new(); $c2.Width = [Windows.GridLength]::new(16)
     $c3 = [Windows.Controls.ColumnDefinition]::new(); $c3.Width = [Windows.GridLength]::new(1, 'Star')
     $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2); $g.ColumnDefinitions.Add($c3)
+    if ($Fill) {
+        $scroll = [Windows.Controls.ScrollViewer]::new()
+        $scroll.VerticalScrollBarVisibility = 'Auto'; $scroll.HorizontalScrollBarVisibility = 'Disabled'
+        $scroll.Focusable = $false
+        # the font size of the window, set on the scroll viewer so that the buttons and fields in it use it
+        $scroll.FontSize = 14
+        $scroll.Content = $Left
+        $Left = $scroll
+        if ($Right -is [Windows.Controls.Border]) { $Right.VerticalAlignment = 'Top' }
+    }
     [Windows.Controls.Grid]::SetColumn($Right, 2)
     [void]$g.Children.Add($Left); [void]$g.Children.Add($Right)
+    return $g
+}
+
+function New-GuiFillPage {
+    <# A page that takes the height of the window (a title, then the columns): the console gives it at least the visible height of the page area, so the panes of its columns scroll by themselves and the page does not. #>
+    param([string]$Title, [Parameter(Mandatory)]$Columns)
+    $g = [Windows.Controls.Grid]::new()
+    $g.Tag = 'MbtFill'
+    $r1 = [Windows.Controls.RowDefinition]::new(); $r1.Height = [Windows.GridLength]::Auto
+    $r2 = [Windows.Controls.RowDefinition]::new(); $r2.Height = [Windows.GridLength]::new(1, 'Star')
+    $g.RowDefinitions.Add($r1); $g.RowDefinitions.Add($r2)
+    if ($Title) { [void]$g.Children.Add((New-GuiText $Title 'H2')) }
+    [Windows.Controls.Grid]::SetRow($Columns, 1)
+    [void]$g.Children.Add($Columns)
     return $g
 }
 
