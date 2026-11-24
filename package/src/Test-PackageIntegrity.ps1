@@ -28,7 +28,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.2.0
+    Version : 1.3.0
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Root, [switch]$Distribution, [switch]$DevelopmentMode)

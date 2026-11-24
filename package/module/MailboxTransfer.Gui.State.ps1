@@ -98,7 +98,7 @@ function New-MbtGuiWindow {
         -Engine: the adapter (real or fake). -Theme: System (like Windows), Light, Dark.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.2.0')
+    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.3.0')
 
     $look = Initialize-MbtGuiTheme -Theme $Theme
     $xaml = Get-Content -LiteralPath (Join-Path $script:GuiRoot 'module\MailboxTransfer.Gui.xaml') -Raw

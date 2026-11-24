@@ -21,10 +21,10 @@
 </p>
 
 **Author:** Nicolas Fabert  
-**Version:** 1.2.0 ([changelog](CHANGELOG.md))
+**Version:** 1.3.0 ([changelog](CHANGELOG.md))
 
 > [!TIP]
-> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.2.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
+> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.3.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
 
 > [!IMPORTANT]
 > Windows marks files downloaded from the Internet. After you extract the ZIP, check the publisher first (right-click a `.ps1`, for example `Invoke-MailboxTransfer.ps1`, Properties, Digital Signatures: `Nicolas Fabert`), then unblock the extracted folder once:
@@ -73,7 +73,7 @@ One path for everyone. Set the tool up once (**1 to 4**), then take task **A** t
 #     Checking and repairing a PST needs no right at all.
 
 # 2 · On the PC, in PowerShell 7.5+: put the tool in its folder and unblock it.
-#     Download MailboxTransfer-1.2.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
+#     Download MailboxTransfer-1.3.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
 Get-ChildItem C:\Tools\MailboxTransfer -Recurse -File -Force | Unblock-File
 
 # 3 · Write your two numbers: tenant id and application id, in a file you create (the user guide, chapter 3, shows how)

@@ -86,6 +86,7 @@ $screens = [ordered]@{
     RepairFromDamaged = 'console-repair-from-damaged'; RepairFromClean = 'console-repair-from-clean'; RepairTo = 'console-repair-to'
     RepairPlan = 'console-verify-repair'; DoneRepair = 'console-repair-done'; Open = 'console-open'
     ExportPlanChecking = 'console-verify-export-checking'; RunExportPreparing = 'console-run-export-preparing'
+    ExportFromPeriodOpen = 'console-from-period'; ExportPlanPeriod = 'console-verify-export-period'
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.
 $callouts = @{
@@ -94,10 +95,12 @@ $callouts = @{
     TaskWhat = @(@(1, 50, 116), @(2, 16, 214), @(3, 16, 372), @(4, 866, 372))
     ExportFromSignedOut = @(@(1, 16, 190), @(2, 30, 263), @(3, 30, 415))
     ExportFromCode = @(@(1, 16, 190), @(2, 16, 330))
-    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 224), @(4, 1116, 224), @(5, 16, 617))
+    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 224), @(4, 1194, 224), @(5, 16, 617), @(6, 452, 838))
+    ExportFromPeriodOpen = @(@(1, 452, 762), @(2, 1080, 799), @(3, 452, 835))
+    ExportPlanPeriod = @(@(1, 16, 190), @(2, 30, 561), @(3, 566, 449), @(4, 30, 776), @(5, 1252, 913))
     ExportTo = @(@(1, 16, 190), @(2, 460, 190), @(3, 1252, 913))
     ExportPlan = @(@(1, 16, 190), @(2, 16, 386), @(3, 562, 182), @(4, 16, 643), @(5, 1252, 913))
-    RunExport = @(@(1, 16, 178), @(2, 16, 334), @(3, 290, 334), @(4, 1146, 334), @(5, 16, 913))
+    RunExport = @(@(1, 16, 178), @(2, 16, 334), @(3, 290, 334), @(4, 1146, 334), @(5, 16, 913), @(6, 30, 487))
     RunImportDecision = @(@(1, 16, 330), @(2, 30, 381), @(3, 16, 913))
     RepairFromDamaged = @(@(1, 16, 239), @(2, 460, 239), @(3, 1252, 913))
     ImportFrom = @(@(1, 16, 215), @(2, 440, 215))

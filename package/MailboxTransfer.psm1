@@ -29,7 +29,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.2.0
+    Version : 1.3.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -40,7 +40,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ToolVersion = '1.2.0'
+$script:ToolVersion = '1.3.0'
 $script:ToolRoot = $PSScriptRoot
 function Get-PathReparseTag {
     <#

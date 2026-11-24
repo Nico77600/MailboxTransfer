@@ -406,6 +406,8 @@ function New-GuiDatePicker {
     $d = [Windows.Controls.DatePicker]::new()
     # the day is written in full ("1 April 2026"): a short date means two days in two languages
     $d.SelectedDateFormat = [Windows.Controls.DatePickerFormat]::Long
+    # wide enough for the longest day, "Wednesday, September 30, 2026"
+    $d.MinWidth = 260
     $parsed = [datetime]::MinValue
     if ($Value -and [datetime]::TryParseExact($Value, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { $d.SelectedDate = $parsed }
     if ($Automation) { [Windows.Automation.AutomationProperties]::SetName($d, $Automation) }

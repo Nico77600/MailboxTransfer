@@ -1,9 +1,9 @@
 ---
 title: Mailbox Transfer
 subtitle: Reference guide
-version: 1.2.0
+version: 1.3.0
 author: Nicolas Fabert
-updated: 2026-11-12
+updated: 2026-11-24
 runtime: PowerShell 7.5+ (engine and window), 7.4 for the command line
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
@@ -50,7 +50,7 @@ The console is a window that builds the command line for you. It never does anyt
 | **Setup** | The lights of the computer (PowerShell 7.5 or later, the sign-in component, the work folder with its free space, the network, the unblocked files). The configuration file in use (**Reload**, **Open**). The work folder. **Sign in as**: **Me (delegated)** or **The application (certificate)**, with the values read from the configuration: `Tenant` (`TenantId`, `ClientId`) for **Me**, `Auth` (`AppTenantId`, `AppClientId`, `CertificateThumbprint`) for **The application**. **Change for this run** replaces a value for the current window only. | Reads the configuration file (chapter 12) and nothing else. Nothing on this page is ever written to a file. |
 | **Task** | **What**: four cards (Browse and export, Import, Check and repair a PST, Open an export or a PST) and the list of jobs that can be continued. **From** and **To** depend on the task (table below). | Sign-in, browsing (`-Mode Browse`), the read-only check of a PST, the folder tree of a PST or a store. Reads only. |
 | **Verify** | **Checks** (one line per check, green, amber or red), **What will be done**, **What is in it** (export) or **Before anything is written** (import), **The same from the command line**, **Expert mode** (the four run settings, and **Keep this PC awake while it runs**, off by default, which adds `-KeepAwake` to the command line). | The plan: the read-only run (`-WhatIf`) of the same request. The command line is the command the **Start** button runs, with the values that equal the default of the entry script left out (for instance `-Concurrency 4`, `-MaxAttempts 3`, `-PstMaxSizeGB 50`). **Copy** puts it on the clipboard. |
-| **Run** | The summary and the bar, the **steps** (all known before the start), the folders with their counts, the details of the step or folder clicked, **Stop and keep progress**. | Reads `events.jsonl` and `status.json` of the job and stops it with the stop file (chapter 9). |
+| **Run** | The summary and the bar, the **steps** (all known before the start), the folders with their counts, the details of the step or folder clicked, **Stop and keep progress** (also the small **Pause** button of the running step, which becomes **Resume** after a stop). | Reads `events.jsonl` and `status.json` of the job and stops it with the stop file (chapter 9). |
 | **Next steps** | The result by exit code (chapter 10), **What to do next** (buttons: **Import into a mailbox**, **How to open the PST in Outlook**, **Continue**, **Try again**), **The same from the command line** (the commands that were run), **Reports and log**. | Nothing: it reads the job folder. |
 
 The pages of a task:

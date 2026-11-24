@@ -399,7 +399,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.2.0
+    Version : 1.3.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.

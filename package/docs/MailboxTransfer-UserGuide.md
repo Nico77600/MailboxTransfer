@@ -1,9 +1,9 @@
 ---
 title: Mailbox Transfer
 subtitle: User guide
-version: 1.2.0
+version: 1.3.0
 author: Nicolas Fabert
-updated: 2026-11-12
+updated: 2026-11-24
 runtime: PowerShell 7.5+ (engine and window)
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
@@ -178,7 +178,7 @@ This section is for the administrator. It is done **once for the whole company**
 **Do:** download the tool, then put it on the PC.
 
 1. Open **https://github.com/Nico77600/MailboxTransfer/releases/latest** in your browser.
-2. Under **Assets**, click **`MailboxTransfer-1.2.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
+2. Under **Assets**, click **`MailboxTransfer-1.3.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
 3. Extract the ZIP into a folder such as `C:\Tools\MailboxTransfer` (right-click, *Extract All*). Write the files directly in that folder: `Start-MailboxTransferConsole.cmd` must be inside it, not one level deeper.
 4. Unblock the folder (one command, once):
 
@@ -395,7 +395,7 @@ What the steps mean:
 | *Resumed after sleep* | The PC slept. | Nothing. It carries on. |
 | A **red** message | A real problem. | Read it, chapter 9. |
 
-To stop on purpose, click **Stop and keep progress** (bottom left). A question asks you to confirm. Nothing is lost. See chapter 8.
+To stop on purpose, click **Stop and keep progress** (bottom left), or the small **Pause** button on the running step: both ask you to confirm, and nothing is lost. After a stop, the same small button reads **Resume** and carries on where it stopped, as **Continue** does. See chapter 8.
 
 ### 4.8 Next steps: read the end
 
@@ -779,7 +779,7 @@ Every word below is a word you see on the screen or in this guide, explained wit
 | **Plan** | The list of what will be done, with the time. Nothing starts before you press Start. | The **Verify** page. |
 | **Job** | One run: an export, an import, a check. | **Continue a job** on the **Task** page. |
 | **Continue** | Run the same job again. Only what is left is done. | The **Task** page, and the **Next steps** page. |
-| **Stop and keep progress** | Ask the job to stop cleanly. Nothing is lost. | Bottom left of the Run page. |
+| **Stop and keep progress** | Ask the job to stop cleanly. Nothing is lost. | Bottom left of the Run page, or the small **Pause** button on the running step. |
 | **Throttling** | Microsoft makes us wait because we ask too much, too fast. Normal. | *Microsoft slowed us down N times* on the Run page. |
 | **Uncertain item** | An item sent for which no answer came. It may be in the mailbox or not. The tool looks for it, or asks you. | The step *Check the uncertain items*, and the amber box *1 item needs your decision*. |
 | **Refused item** | An item the mailbox would not accept. It is listed with the reason and skipped. | The **Next steps** page. |
