@@ -256,10 +256,10 @@ function Get-MbtGuiPlanTotals {
 }
 
 function Format-MbtGuiPlanTotals {
-    <# "The service counted 1,208 items in 12 folders, 6.2 GiB." with the honest words when a size is not given. #>
-    param([Parameter(Mandatory)]$Totals)
+    <# "The service counted 1,208 items in 12 folders, 6.2 GiB." with the honest words when a size is not given. -AtMost: "at most 1,208 items" (an export with a period takes at most the items of its folders). #>
+    param([Parameter(Mandatory)]$Totals, [switch]$AtMost)
     $size = if ($Totals.UnknownSize -le 0) { Format-MbtGuiBytes $Totals.Bytes } elseif ($Totals.Bytes -le 0) { 'size not known' } else { '{0} + {1} of unknown size' -f (Format-MbtGuiBytes $Totals.Bytes), (Format-MbtGuiQuantity $Totals.UnknownSize 'folder') }
-    return ('{0} in {1}, {2}' -f (Format-MbtGuiQuantity $Totals.Items 'item'), (Format-MbtGuiQuantity $Totals.Folders 'folder'), $size)
+    return ('{0}{1} in {2}, {3}' -f $(if ($AtMost) { 'at most ' }), (Format-MbtGuiQuantity $Totals.Items 'item'), (Format-MbtGuiQuantity $Totals.Folders 'folder'), $size)
 }
 
 function Format-MbtGuiRefusedSummary {

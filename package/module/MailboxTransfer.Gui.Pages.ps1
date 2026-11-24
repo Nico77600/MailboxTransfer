@@ -94,9 +94,10 @@ function Format-MbtGuiSelectionFooter {
 }
 
 function New-MbtGuiSelectionCard {
-    param($Selection)
+    param($Selection, $Period)
     if ($Selection.Items -gt 0) {
-        $body = New-GuiFacts @(@('Items', (Format-MbtGuiSelectionItems $Selection)), @('Size', (Format-MbtGuiSelectionSize $Selection)), @('Folders', [string]$Selection.Folders))
+        $atMost = [bool]($Period -and $Period.Active)
+        $body = New-GuiFacts @(@('Items', (Format-MbtGuiSelectionItems $Selection -AtMost:$atMost)), @('Size', ($(if ($atMost) { 'at most ' } else { '' }) + (Format-MbtGuiSelectionSize $Selection))), @('Folders', [string]$Selection.Folders))
     } else { $body = New-GuiText 'Tick a folder or some messages in the browser.' 'Hint' }
     return (New-GuiCard -Title 'Your selection' -Content @($body))
 }

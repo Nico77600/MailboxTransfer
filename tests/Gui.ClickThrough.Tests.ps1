@@ -61,9 +61,9 @@ Describe 'Console click-through (headless WPF, fake engine)' {
 }
 
 Describe 'Console handlers: how they are subscribed' {
-    It 'a handler written in the function that builds a page is subscribed only through Add-MbtGuiHandler, New-GuiButton, New-GuiLink, New-GuiTextBox or New-GuiOption' {
+    It 'a handler written in the function that builds a page is subscribed only through Add-MbtGuiHandler, New-GuiButton, New-GuiLink, New-GuiTextBox, New-GuiOption or New-GuiDatePicker' {
         $allowed = @{
-            'MailboxTransfer.Gui.Core.ps1' = @('New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption')
+            'MailboxTransfer.Gui.Core.ps1' = @('New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption', 'New-GuiDatePicker')
             'MailboxTransfer.Gui.Browse.ps1' = @('Initialize-MbtGuiBrowseEvents')
         }
         $found = [Collections.Generic.List[string]]::new()
@@ -80,7 +80,7 @@ Describe 'Console handlers: how they are subscribed' {
     }
     It 'the functions that subscribe a block to a control by themselves hand it to ConvertTo-MbtGuiHandler' {
         $core = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Core.ps1') -Raw
-        foreach ($function in 'New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption') {
+        foreach ($function in 'New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption', 'New-GuiDatePicker') {
             $body = [regex]::Match($core, "(?s)function $function \{.*?\r?\n\}").Value
             $body | Should -Match 'ConvertTo-MbtGuiHandler' -Because "$function subscribes a handler"
         }

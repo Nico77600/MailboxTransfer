@@ -247,6 +247,93 @@ Describe 'Commands of a job' {
     }
 }
 
+Describe 'The period of an export' {
+    BeforeAll {
+        function New-PeriodState([hashtable]$Extra = @{}) {
+            $s = @{ Task = 'export'; Mailbox = 'adele.vance@contoso.com'; Shared = ''; Dest = 'store'; OutFolder = 'D:\Exports\adele'; OutName = 'adele.pst'; SplitGB = 50; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 3; Awake = $false; Changed = @{}; AuthMode = 'user'; TenantId = ''; ClientId = ''; AppTenant = ''; AppClient = ''; AppThumb = ''
+                Period = 'all'; ArrFrom = ''; ArrTo = '' }
+            foreach ($k in $Extra.Keys) { $s[$k] = $Extra[$k] }
+            return $s
+        }
+        function New-PeriodJob { @{ Id = 'job-1'; Folder = 'D:\w\jobs\j'; EventsPath = 'D:\w\jobs\j\events.jsonl'; StopPath = 'D:\w\jobs\j\stop.request'; StorePath = 'D:\w\stores\adele'; SelectionFiles = @('D:\w\selections\export-7b843299.json'); JobName = 'import-ab12' } }
+        $script:GuiBeforePeriod = Get-Variable -Name Gui -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $script:Gui = @{ Engine = [pscustomobject]@{ } }
+    }
+    AfterAll { if ($null -ne $script:GuiBeforePeriod) { $script:Gui = $script:GuiBeforePeriod } else { Remove-Variable -Name Gui -Scope Script -ErrorAction SilentlyContinue } }
+    It 'is every date by default, and the second choice is a period with a first day, a last day or both' {
+        $all = Get-MbtGuiPeriod (New-PeriodState)
+        $all.Active | Should -BeFalse; $all.Chosen | Should -BeFalse; $all.Problem | Should -BeNullOrEmpty; $all.Text | Should -Be 'all dates'
+        $both = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })
+        $both.Active | Should -BeTrue; $both.Text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'; $both.From | Should -Be '2026-03-01'; $both.To | Should -Be '2026-03-31'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })).Text | Should -Be 'arrived from 2026-03-01'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' })).Text | Should -Be 'arrived until 2026-03-31'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'BETWEEN'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'the case of a value does not matter'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-31'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'one day is a period'
+    }
+    It 'refuses a first day after the last one, and a period with no day, in plain words' {
+        $swapped = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })
+        $swapped.Active | Should -BeFalse; $swapped.Chosen | Should -BeTrue; $swapped.Problem | Should -Be 'The first date is after the last date. Swap them, or pick other dates.'
+        $none = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between' })
+        $none.Active | Should -BeFalse; $none.Problem | Should -Be 'Pick at least one date, or choose All dates.'
+    }
+    It 'is the period of an export only, and a state without the keys is every date' {
+        (Get-MbtGuiPeriod (New-PeriodState @{ Task = 'import'; Period = 'between'; ArrFrom = '2026-03-01' })).Active | Should -BeFalse
+        (Get-MbtGuiPeriod @{ Task = 'export' }).Active | Should -BeFalse
+    }
+    It 'puts -ArrivedFrom and -ArrivedTo in the command, as ISO days, and nothing for every date, an open side or a wrong period' {
+        $line = { param($s) $c = @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)); ConvertTo-MbtGuiCommandLine -Command $c -S $s }
+        (& $line (New-PeriodState)) | Should -Not -Match 'Arrived'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })) | Should -Match '-SelectionFile \S+ -ArrivedFrom 2026-03-01 -ArrivedTo 2026-03-31 -StorePath '
+        $open = & $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })
+        $open | Should -Match '-ArrivedFrom 2026-03-01 -StorePath'; $open | Should -Not -Match 'ArrivedTo'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })) | Should -Not -Match 'Arrived' -Because 'the page does not let a wrong period go on'
+    }
+    It 'the same period is the same command under a French culture' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            $s = New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-09'; ArrTo = '2026-03-31' }
+            (ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)) -S $s) | Should -Match '-ArrivedFrom 2026-03-09 -ArrivedTo 2026-03-31'
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
+    }
+    It 'every parameter of the period exists in the entry script' {
+        $declared = (Get-Command (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1')).Parameters.Keys
+        $declared | Should -Contain 'ArrivedFrom'; $declared | Should -Contain 'ArrivedTo'
+    }
+    It 'gives an export with a period a store of its own, named after it' {
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState) | Should -Be ''
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-2026-03-01_2026-03-31'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' }) | Should -Be '-arrived-from-2026-03-01'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-until-2026-03-31'
+    }
+    It 'writes the numbers of a plan as "at most" for a period, and as they are otherwise' {
+        $t = [pscustomobject]@{ Items = 1208; Folders = 12; Bytes = [long](2GB); UnknownSize = 0 }
+        Format-MbtGuiPlanTotals $t -AtMost | Should -Be 'at most 1,208 items in 12 folders, 2 GiB'
+        Format-MbtGuiPlanTotals $t | Should -Be '1,208 items in 12 folders, 2 GiB'
+        $sel = [pscustomobject]@{ Items = 1500; SubtreeUnread = $false }
+        Format-MbtGuiSelectionItems $sel -WithNoun -AtMost | Should -Be 'at most 1,500 items'
+        Format-MbtGuiSelectionItems $sel -WithNoun | Should -Be '1,500 items'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 1500; SubtreeUnread = $true }) -AtMost | Should -Be '1,500 or more before the period is applied'
+    }
+    It 'the demonstration job writes the period, the items left out and the counts of an export with a period, and none without' {
+        $demo = Join-Path $script:Package 'module\MailboxTransfer.Gui.DemoJob.ps1'
+        $run = {
+            param($Extra)
+            $events = Join-Path $TestDrive ('events-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.jsonl')
+            $null = & (Get-Process -Id $PID).Path -NoProfile -File $demo -EventsFile $events -Speed 1000 -Mode Export @Extra
+            return @(Get-Content -LiteralPath $events | ForEach-Object { $_ | ConvertFrom-Json })
+        }
+        $with = & $run @('-ArrivedFrom', '2026-01-01', '-ArrivedTo', '2026-03-31')
+        ($with | Where-Object e -EQ 'plan').period.text | Should -Be 'arrived between 2026-01-01 and 2026-03-31'
+        ($with | Where-Object { $_.e -eq 'step' -and $_.id -eq 'list' -and $_.state -eq 'done' }).msg | Should -Match 'outside the period left out'
+        $result = $with | Where-Object e -EQ 'result'
+        $result.counts.outsidePeriod | Should -Be 14; $result.counts.withoutDate | Should -Be 1; $result.counts.kept | Should -BeGreaterThan 0
+        $without = & $run @()
+        ($without | Where-Object e -EQ 'plan').PSObject.Properties.Name | Should -Not -Contain 'period'
+        ($without | Where-Object e -EQ 'result').counts.PSObject.Properties.Name | Should -Not -Contain 'outsidePeriod'
+    }
+}
+
 Describe 'Job folder and the pump' {
     It 'creates the private job folder under jobs\' {
         $d = New-MbtGuiJobFolder -WorkFolder $TestDrive -Task export

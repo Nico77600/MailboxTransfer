@@ -26,6 +26,21 @@ if ($PSBoundParameters.ContainsKey('Rest') -and $Rest) {
     }
 }
 
+# the period of an export (-ArrivedFrom / -ArrivedTo), as the console gives it: yyyy-MM-dd
+$periodFrom = ''; $periodTo = ''
+if ($PSBoundParameters.ContainsKey('Rest') -and $Rest) {
+    for ($i = 0; $i -lt $Rest.Count - 1; $i++) {
+        if ([string]$Rest[$i] -ieq '-ArrivedFrom') { $periodFrom = [string]$Rest[$i + 1] }
+        if ([string]$Rest[$i] -ieq '-ArrivedTo') { $periodTo = [string]$Rest[$i + 1] }
+    }
+}
+$period = $null
+if ($Scenario -eq 'export' -and ($periodFrom -or $periodTo)) {
+    $period = [ordered]@{ text = $(if ($periodFrom -and $periodTo) { "arrived between $periodFrom and $periodTo" } elseif ($periodFrom) { "arrived from $periodFrom" } else { "arrived until $periodTo" }) }
+    if ($periodFrom) { $period.from = $periodFrom }
+    if ($periodTo) { $period.to = $periodTo }
+}
+
 function Write-Evt([hashtable]$e) {
     $e.v = 1; $e.t = [datetime]::UtcNow.ToString('o')
     ($e | ConvertTo-Json -Compress -Depth 6) | Add-Content -LiteralPath $EventsFile -Encoding utf8
@@ -39,7 +54,9 @@ $steps = switch ($Scenario) {
     'repair' { @(@{ id = 'before'; title = 'Check the file (before)' }, @{ id = 'scan'; title = 'Scan and read what can be read' }, @{ id = 'write'; title = 'Write the new file' }, @{ id = 'after'; title = 'Check the new file (after)' }) }
     default { @(@{ id = 'check'; title = 'Check the file' }) }
 }
-Write-Evt @{ e = 'plan'; job = $JobId; task = $Scenario; steps = $steps }
+$planEvent = @{ e = 'plan'; job = $JobId; task = $Scenario; steps = $steps }
+if ($period) { $planEvent.period = $period }
+Write-Evt $planEvent
 $work = switch ($Scenario) { 'import' { 'send' } 'repair' { 'write' } 'check' { 'check' } default { 'download' } }
 $total = 40; $bytesTotal = 4GB
 foreach ($s in $steps) {
@@ -57,12 +74,18 @@ foreach ($s in $steps) {
             Pause-Demo 0.4
         }
     } else { Pause-Demo 0.5 }
-    Write-Evt @{ e = 'step'; id = $s.id; state = 'done' }
+    if ($period -and $s.id -eq 'list') { Write-Evt @{ e = 'step'; id = 'list'; state = 'done'; msg = '14 items outside the period left out; 1 without a date kept' } }
+    else { Write-Evt @{ e = 'step'; id = $s.id; state = 'done' } }
 }
 switch ($Ending) {
     'decision' { Write-Evt @{ e = 'decision'; key = '42'; msg = 'Two items in the folder could be this one. We do not guess.'; candidates = @('A', 'B') }; Write-Evt @{ e = 'result'; exit = 3; complete = $false; next = 'decide'; counts = @{ done = $total - 1; unknown = 1 } }; exit 3 }
     'error' { Write-Evt @{ e = 'error'; code = 'disk-full'; msg = 'The disk is full.'; tech = 'IOException: There is not enough space on the disk.' }; Write-Evt @{ e = 'result'; exit = 1; complete = $false; next = 'retry' }; exit 1 }
-    default { Write-Evt @{ e = 'result'; exit = 0; complete = $true; next = 'done'; counts = @{ done = $total; failed = 0; bytes = [long]$bytesTotal; recovered = $total; partial = 0; lost = 0; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 } } }; exit 0 }
+    default {
+        $counts = @{ done = $total; failed = 0; bytes = [long]$bytesTotal; recovered = $total; partial = 0; lost = 0; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 } }
+        if ($period) { $counts.kept = $total + 1; $counts.outsidePeriod = 14; $counts.withoutDate = 1 }
+        Write-Evt @{ e = 'result'; exit = 0; complete = $true; next = 'done'; counts = $counts }
+        exit 0
+    }
 }
 
 # SIG # Begin signature block

@@ -262,6 +262,70 @@ foreach ($theme in 'Light', 'Dark') {
         $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.OutFolder = 'D:\Exports\adele'; $g.S.OutName = 'adele.pst'
         $k1 -eq $k2 }
 
+    function Find-ByAutomationName($root, [string]$Name) {
+        # the elements of the logical tree of the page whose automation name is $Name
+        $found = [Collections.Generic.List[object]]::new()
+        $walk = {
+            param($o)
+            if ($o -isnot [Windows.DependencyObject]) { return }
+            if ([Windows.Automation.AutomationProperties]::GetName($o) -eq $Name) { $found.Add($o) }
+            foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c }
+        }
+        & $walk $root
+        return $found.ToArray()
+    }
+    Check 'period (From): all dates is the default; the second choice shows the two days and says what "arrived" means and what is always exported' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'All dates (recommended)') -and (Find-Text $g.C.Page.Content 'Only items that arrived between') -and $g.S.Period -eq 'all' -and @(Find-ByAutomationName $g.C.Page.Content 'Period from').Count -eq 0 -and $g.C.Primary.IsEnabled
+        $g.S.Period = 'between'; Show-MbtGuiPage; Measure-Window $window
+        $b = @(Find-ByAutomationName $g.C.Page.Content 'Period from').Count -eq 1 -and @(Find-ByAutomationName $g.C.Page.Content 'Period to').Count -eq 1 -and (Find-Text $g.C.Page.Content 'not the original date of the message') -and (Find-Text $g.C.Page.Content 'whatever their date')
+        $a -and $b }
+    Check 'period (From): the first day after the last one says so and greys Continue; a valid pair turns it on; no day at all is refused; one day alone is fine' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodInvalid'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'The first date is after the last date') -and -not $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Problem
+        $from = @(Find-ByAutomationName $g.C.Page.Content 'Period from')[0]; $to = @(Find-ByAutomationName $g.C.Page.Content 'Period to')[0]
+        $from.SelectedDate = [datetime]::new(2026, 2, 1)
+        $b = $g.S.ArrFrom -eq '2026-02-01' -and $g.C.Primary.IsEnabled -and -not (Find-Text $g.C.Page.Content 'The first date is after the last date')
+        $from.SelectedDate = $null; $to.SelectedDate = $null
+        $c = $g.S.ArrFrom -eq '' -and $g.S.ArrTo -eq '' -and (Find-Text $g.C.Page.Content 'Pick at least one date') -and -not $g.C.Primary.IsEnabled
+        $to.SelectedDate = [datetime]::new(2026, 3, 31)
+        $d = $g.S.ArrTo -eq '2026-03-31' -and $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Text -eq 'arrived until 2026-03-31'
+        $a -and $b -and $c -and $d }
+    Check 'period: the days are kept as yyyy-MM-dd whatever the culture of the window, and an end of the period alone or a start alone is an open side' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            ((ConvertTo-MbtGuiPeriodDay ([datetime]::new(2026, 3, 9))) -eq '2026-03-09') -and ((ConvertTo-MbtGuiPeriodDay $null) -eq '')
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was } }
+    Check 'period (Verify): the plan says the period, the folder totals are "at most", and the command line carries the two days; without a period it carries none' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
+        $cmd = Get-CommandLineText
+        $atMost = { @(Get-AllText $g.C.Page.Content | Where-Object { $_ -match '^at most [\d,]+$' }).Count -gt 0 }
+        $a = @(($g.S.PlanState -eq 'ok'), (Find-Text $g.C.Page.Content 'keeping the ones that arrived between 2026-01-01 and 2026-03-31'), (& $atMost), (Find-Text $g.C.Page.Content 'The period is applied while the items are listed'), (Find-Text $g.C.Page.Content 'the most the period leaves'))
+        $b = @(($cmd -match '-SelectionFile \S+ -ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31 '), $g.C.Primary.IsEnabled)
+        $g.S.Period = 'all'; Show-MbtGuiPage; Measure-Window $window
+        $c = @(((Get-CommandLineText) -notmatch 'Arrived'), -not (& $atMost), -not (Find-Text $g.C.Page.Content 'The period is applied'))
+        if (($a + $b + $c) -contains $false) { throw ('a=' + ($a -join ',') + ' b=' + ($b -join ',') + ' c=' + ($c -join ',') + ' cmd=' + $cmd) }
+        $true }
+    Check 'period (Verify): a period or an end of it that changes voids the plan; the store of an export with a period is its own folder' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'
+        $k1 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-04-30'; $k2 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-03-31'; $k3 = Get-MbtGuiPlanKey
+        $store = (New-MbtGuiRequest -Task export).StorePath
+        $g.S.Period = 'all'; $plain = (New-MbtGuiRequest -Task export).StorePath
+        $g.S.Period = 'between'; $g.S.ArrTo = ''; $open = (New-MbtGuiRequest -Task export).StorePath
+        $k1 -ne $k2 -and $k1 -eq $k3 -and $store -match 'adele\.vance@contoso\.com-arrived-2026-01-01_2026-03-31$' -and $plain -match 'adele\.vance@contoso\.com$' -and $open -match 'adele\.vance@contoso\.com-arrived-from-2026-01-01$' }
+    Check 'period (Run): the listing step says how many items it left out' {
+        Reset-State; Set-MbtGuiScenario 'RunExportPeriod'; Measure-Window $window
+        (Find-Text $g.C.Page.Content '4,612 items outside the period left out') }
+    Check 'period (Next steps): the tiles and the sentence give the items kept, the ones outside the period, and the ones without a date that were kept; nothing is called an error' {
+        Reset-State; Set-MbtGuiScenario 'DoneExportPeriod'; Measure-Window $window
+        $t = @(Get-AllText $g.C.Page.Content) -join ' | '
+        $cmd = Get-CommandLineText
+        $t -match 'items that arrived between 2026-01-01 and 2026-03-31' -and $t -match '1,208 items kept' -and $t -match '4,612 outside the period \(skipped, not an error\)' -and $t -match '3 items had no date and were kept' -and $cmd -match '-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31' }
+    Check 'period (Next steps): an export without a period has no sentence about it' {
+        Reset-State; Set-MbtGuiScenario 'DoneExportComplete'; Measure-Window $window
+        -not (Find-Text $g.C.Page.Content 'outside the period') -and -not (Find-Text $g.C.Page.Content 'Period:') }
+
     $script:job = $null
     Check 'run: plan and progress events build the page' {
         Start-Fake 'import'

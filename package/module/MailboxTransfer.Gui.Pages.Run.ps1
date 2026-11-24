@@ -39,6 +39,8 @@ function Get-MbtGuiPlanKey {
     $sb = [Text.StringBuilder]::new()
     # what is typed or picked (addresses, names, paths) does not depend on the case; the ids of the folders ticked are machine ids and stay exact
     [void]$sb.Append("$($s.Task)|$($s.Dest)|$($s.OutFolder)|$($s.OutName)|$($s.SplitGB)|$($s.CheckEach)|$($s.SepAux)|$($s.KeepStore)|$($s.Conc)|$($s.Retry)|$($s.Tries)|$($s.Reconcile)|$($s.ImSrc)|$($s.ImPath)|$($s.TgtLoc)|$($s.TgtMode)|$($s.TgtName)|$($s.Mapping)|$($s.Shared)|$($s.ImShared)|$($s.RecoverableItems)|$($s.RpPath)|$($s.RpDest)|$($s.RpLevel)|$($s.RpKeep)|$($s.OpPath)|$($s.Mailbox)|$($s.AuthMode)|$($s.TenantId)|$($s.ClientId)|$($s.AppTenant)|$($s.AppClient)|$($s.AppThumb)|$($s.Awake)".ToLowerInvariant())
+    $period = Get-MbtGuiPeriod $s
+    [void]$sb.Append("|$($period.Active)|$($period.From)|$($period.To)")
     $sel = Get-MbtGuiTaskSelection
     if ($sel) { foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") } }
     $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
@@ -74,7 +76,8 @@ function New-MbtGuiPlanStateMessage {
             return (New-MbtGuiCheckRow -State wait -Text 'Checking the plan with the service' -Detail (Get-MbtGuiPlanProgressText -Run $run -Started $started))
         }
         'ok' {
-            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
+            $atMost = (Get-MbtGuiPeriod $s).Active
+            $counted = if ($s.PlanTotals) { "counted by the service$(if ($atMost) { ' (the most the period leaves; it is applied while the items are listed)' }): $(Format-MbtGuiPlanTotals $s.PlanTotals -AtMost:$atMost)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
         }
         'error' {
@@ -149,7 +152,7 @@ function New-MbtGuiRequest {
     $g = $script:Gui; $s = $g.S
     $storeRoot = [IO.Path]::Combine($s.WorkFolder, 'stores')
     $store = switch ($Task) {
-        'export' { [IO.Path]::Combine($storeRoot, ($s.Mailbox -replace '[^\w\.\-@]', '_')) }
+        'export' { [IO.Path]::Combine($storeRoot, (($s.Mailbox + (Get-MbtGuiPeriodStoreSuffix $s)) -replace '[^\w\.\-@]', '_')) }
         'import' { if ($s.ImSrc -eq 'store') { $s.ImPath } else { [IO.Path]::Combine($storeRoot, 'import') } }
         default { $null }
     }
@@ -263,7 +266,7 @@ function Write-MbtGuiRequestFile {
     <# request.json: what was asked, no secrets; the Continue list and a resumed job read it. #>
     param([Parameter(Mandatory)][hashtable]$Job)
     $s = $script:Gui.S
-    $keys = 'Task', 'OpSrc', 'OpPath', 'Mailbox', 'Shared', 'ImShared', 'RecoverableItems', 'Dest', 'KeepStore', 'SplitGB', 'CheckEach', 'SepAux', 'OutFolder', 'OutName', 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake', 'ImSrc', 'ImPath', 'TgtLoc', 'TgtMode', 'TgtName', 'Mapping', 'RpPath', 'RpLevel', 'RpDest', 'RpKeep'
+    $keys = 'Task', 'OpSrc', 'OpPath', 'Mailbox', 'Shared', 'ImShared', 'RecoverableItems', 'Period', 'ArrFrom', 'ArrTo', 'Dest', 'KeepStore', 'SplitGB', 'CheckEach', 'SepAux', 'OutFolder', 'OutName', 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake', 'ImSrc', 'ImPath', 'TgtLoc', 'TgtMode', 'TgtName', 'Mapping', 'RpPath', 'RpLevel', 'RpDest', 'RpKeep'
     $req = [ordered]@{ Title = (Get-MbtGuiRunTitle); Created = [datetime]::UtcNow.ToString('o'); JobId = $Job.Id; JobName = $Job.JobName; StorePath = $Job.StorePath; SelectionFiles = @($Job.SelectionFiles); Commands = @($Job.Queue | ForEach-Object { , $_.Arguments }) }
     foreach ($k in $keys) { $req[$k] = $s[$k] }
     $req | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Job.Folder 'request.json') -Encoding utf8
@@ -854,9 +857,25 @@ function New-MbtGuiErrorBlock {
     return @((New-GuiMessage -Kind bad -Icon x -Text $text -After @($tech)))
 }
 
+function New-MbtGuiPeriodNote {
+    <# What the period did, from the result of the job: the items kept, the ones outside it (skipped, not an error), the ones without a date that were kept. $null for an export without a period. #>
+    param($Run)
+    $s = $script:Gui.S
+    $outside = [long](Get-MbtGuiCount $Run 'outsidePeriod' -1)
+    $period = Get-MbtGuiPeriod $s
+    if ($outside -lt 0 -and -not $period.Active) { return $null }
+    $kept = [long](Get-MbtGuiCount $Run 'kept' (Get-MbtGuiCount $Run 'done' 0))
+    $undated = [long](Get-MbtGuiCount $Run 'withoutDate' 0)
+    $text = "**Period: items that $($period.Text).** $(Format-MbtGuiQuantity $kept 'item') kept"
+    if ($outside -ge 0) { $text += ", $(Format-MbtGuiCount $outside) outside the period (skipped, not an error)" }
+    if ($undated -gt 0) { $text += ". $(Format-MbtGuiQuantity $undated 'item') had no date and $(Get-MbtGuiPlural $undated 'was' 'were') kept" }
+    return (New-GuiMessage -Kind info -Icon info -Text ($text + '.'))
+}
+
 function New-MbtGuiExportDone {
     param([string]$Outcome)
     $g = $script:Gui; $s = $g.S; $run = $g.Run
+    $periodNote = New-MbtGuiPeriodNote $run
     $done = Get-MbtGuiCount $run 'done' (Get-MbtGuiCount $run 'exported' $run.Done)
     $failed = Get-MbtGuiCount $run 'failed' 0; $pending = Get-MbtGuiCount $run 'pending' 0
     $pst = $s.Dest -eq 'pst'
@@ -867,7 +886,7 @@ function New-MbtGuiExportDone {
             $size = Format-MbtGuiBytes $real
             $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @($(if ($pst -and $parts) { "$size in $(Format-MbtGuiQuantity $parts 'PST file')" } else { $size }), $(if ($pst) { 'written' } else { 'in the store' }), 'ok'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
             $facts = New-GuiFacts @(@('Saved to', $s.OutFolder), @('Files', $(if ($pst) { "$($s.OutName) and its parts + manifest" } else { 'the export store' })), @('Checked', $(if ($pst -and -not $s.CheckEach) { 'not checked (you turned it off)' } else { 'every file checked: clean' })))
-            return @($t, $facts)
+            return @($t, $periodNote, $facts)
         }
         'partial' {
             $notReady = @($run.Objects | Where-Object { $_.State -in 'notready', 'not-ready' })
@@ -875,7 +894,7 @@ function New-MbtGuiExportDone {
             $msg = if ($notReady.Count) { "**$($notReady[0].Key)** is not ready at Microsoft yet. It was not exported as empty, and it stays on the list." } else { "**$(Format-MbtGuiStillToDo $pending)**" }
             $extra = @()
             if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
-            return @($t, (New-GuiMessage -Kind warn -Icon warn -Text $msg)) + @($extra)
+            return @($t, $periodNote, (New-GuiMessage -Kind warn -Icon warn -Text $msg)) + @($extra)
         }
         'decision' { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @('1', 'needs a decision', 'warn'), @((Format-MbtGuiCount $failed), 'failed', 'ok'))), (New-GuiMessage -Kind warn -Icon warn -Text 'One item could not be read twice. See the list and choose.')) }
         default {

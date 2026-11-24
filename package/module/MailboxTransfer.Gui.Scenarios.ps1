@@ -18,13 +18,13 @@ function Get-MbtGuiScenarioName {
     @('Start', 'StartImport', 'ExportFromSignedOut', 'ExportFromCode', 'ExportFrom', 'ExportTo', 'ExportPlan', 'RunExport', 'RunImport', 'RunImportSleep', 'RunImportDecision', 'RunImportStopped', 'RunRepair',
         'DoneExportComplete', 'DoneExportPartial', 'DoneExportError', 'ImportFrom', 'ImportTo', 'ImportPlan', 'DoneImportComplete', 'DoneImportPartial', 'DoneImportDecision', 'DoneImportError',
         'RepairFromDamaged', 'RepairFromClean', 'RepairTo', 'RepairPlan', 'DoneRepair', 'Open',
-        'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing')
+        'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing', 'ExportFromPeriod', 'ExportPlanPeriod', 'RunExportPeriod', 'DoneExportPeriod')
 }
 
 function Get-MbtGuiEdgeScenarioName {
     <# The states with exactly one of something (one folder, one message, one finding, one step...) or with none, and a plan check that failed: the lists of the pages are built from loops that run once or not at all. Walked by the tests, not drawn for the documentation. #>
     @('StartOneJob', 'StartNoJob', 'ExportFromOneLocation', 'ExportFromNoLocation', 'ExportFromOneMessage', 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ImportToOneLocation', 'ImportPlanOneFolder',
-        'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused', 'ExportPlanFailed', 'ImportFromManyFolders')
+        'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused', 'ExportPlanFailed', 'ImportFromManyFolders', 'ExportFromPeriodInvalid', 'ExportFromPeriodOpenEnd')
 }
 
 function New-MbtGuiEvt {
@@ -35,8 +35,8 @@ function New-MbtGuiEvt {
 }
 
 function New-MbtGuiScenarioRun {
-    <# A run model for a task in a state, built from events. #>
-    param([string]$Task, [string]$State = 'running')
+    <# A run model for a task in a state, built from events. -Period: an export of a period (the listing says how many items it left out). #>
+    param([string]$Task, [string]$State = 'running', [switch]$Period)
     $run = New-MbtGuiRun -Task $Task -Title $(switch ($Task) { 'export' { 'Export ' + [char]0x00B7 + ' adele.vance@contoso.com' } 'import' { 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' adele.vance@contoso.com (Archive)' } 'copy' { 'Copy ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' archive-2019-copy.pst' } default { 'Repair ' + [char]0x00B7 + ' contoso-archive-2019.pst ' + [char]0x2192 + ' contoso-archive-2019.repaired.pst' } })
     $hours = switch ($Task) { 'import' { 6.33 } 'repair' { 0.05 } default { 0.18 } }
     $t0 = [datetime]::UtcNow.AddHours(-$hours)
@@ -51,7 +51,7 @@ function New-MbtGuiScenarioRun {
         'export' {
             & $ev 'plan' 0 @{ steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }, @{ id = 'verify'; title = 'Check the downloads' }, @{ id = 'pst'; title = 'Write the PST files' }, @{ id = 'pstcheck'; title = 'Check every PST file' }) }
             & $ev 'step' 0.2 @{ id = 'tree'; state = 'done'; msg = '4,439 folders' }
-            & $ev 'step' 1.9 @{ id = 'list'; state = 'done'; msg = '1,208 items ' + [char]0x00B7 + ' 6.2 GiB'; total = 1208 }
+            & $ev 'step' 1.9 @{ id = 'list'; state = 'done'; msg = $(if ($Period) { '4,612 items outside the period left out; 3 without a date kept' } else { '1,208 items ' + [char]0x00B7 + ' 6.2 GiB' }); total = 1208 }
             & $ev 'step' 2 @{ id = 'download'; state = 'running'; done = 744; total = 1208; bytes = [long](3.8GB); bytesTotal = [long](6.2GB) }
             & $ev 'object' 3 @{ step = 'download'; key = 'Inbox'; state = 'done'; done = 410; total = 410 }
             & $ev 'object' 5 @{ step = 'download'; key = 'Inbox/Projects/Contoso Rollout'; state = 'running'; done = 260; total = 410 }
@@ -138,9 +138,9 @@ function New-MbtGuiScenarioOneRun {
 }
 
 function New-MbtGuiScenarioDone {
-    <# A run model at its end: Task, Outcome complete / partial / decision / error. #>
-    param([string]$Task, [string]$Outcome)
-    $run = New-MbtGuiScenarioRun -Task $Task
+    <# A run model at its end: Task, Outcome complete / partial / decision / error. -Period: an export of a period (the result counts the items kept, outside the period and without a date). #>
+    param([string]$Task, [string]$Outcome, [switch]$Period)
+    $run = New-MbtGuiScenarioRun -Task $Task -Period:($Period)
     $exit = switch ($Outcome) { 'complete' { 0 } 'partial' { 2 } 'decision' { 3 } default { 1 } }   # refused: finished, some items refused for good (exit 1, reason refused-items)
     $counts = switch ("$Task/$Outcome") {
         'export/complete' { @{ done = 1208; failed = 0; bytes = [long](6.2GB); parts = 3 } }
@@ -155,6 +155,7 @@ function New-MbtGuiScenarioDone {
         'repair/complete' { @{ recovered = 1198; partial = 4; lost = 1; levelUsed = 'Rebuild'; destination = 'D:\PST\contoso-archive-2019.repaired.pst'; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 }; sizeBytes = [long](3.9GB) } }
         default { @{} }
     }
+    if ($Period -and $Task -eq 'export') { $counts = $counts + @{ kept = [long]1208; outsidePeriod = [long]4612; withoutDate = [long]3 } }
     $at = [datetime]::UtcNow
     if ($Outcome -eq 'error') {
         $err = switch ($Task) { 'export' { @{ code = 'disk-full'; msg = 'The disk D: is full. Free some space (about 5 GiB) and press Try again. The 744 items already downloaded are kept.'; tech = 'IOException: There is not enough space on the disk. (store pack-000003.bin)' } } 'import' { @{ code = 'signin-required'; msg = 'Your sign-in has expired. Sign in again to continue. Nothing is lost.'; tech = 'AADSTS50173: The provided grant has expired due to it being revoked.' } } default { @{ code = 'destination-exists'; msg = 'The destination file already exists. Choose another name. The repair never overwrites a file.'; tech = '' } } }
@@ -251,6 +252,12 @@ function Set-MbtGuiScenario {
         'RunImportStopped' { Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioRun -Task import -State stopped) }
         'RunRepair' { Show-MbtGuiRunScenario 'repair' (New-MbtGuiScenarioRun -Task repair) }
         'DoneExportComplete' { Initialize-MbtGuiScenarioExport -Ticks; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exports\adele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete) }
+        'ExportFromPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromPeriodOpenEnd' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2025-07-01'; $s.ArrTo = ''; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromPeriodInvalid' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-04-01'; $s.ArrTo = '2026-03-01'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportPlanPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
+        'RunExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioRun -Task export -Period) }
+        'DoneExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exportsdele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete -Period) }
         'DoneExportPartial' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export partial) }
         'DoneExportError' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export error) }
         'ImportFrom' { $s.Task = 'import'; $s.Sel = 'import'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imFrom'); $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; Open-MbtGuiSource -Use import }

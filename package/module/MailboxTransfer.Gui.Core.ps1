@@ -185,9 +185,11 @@ function Format-MbtGuiSelectionSize {
 }
 
 function Format-MbtGuiSelectionItems {
-    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). -WithNoun: "1 item", "at least 1,500 items". #>
-    param([Parameter(Mandatory)]$Selection, [switch]$WithNoun)
+    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). -WithNoun: "1 item", "at least 1,500 items". -AtMost: an export with a period takes at most the items of the folders ticked ("at most 1,500 items"; with subfolders not read yet: no bound can be given). #>
+    param([Parameter(Mandatory)]$Selection, [switch]$WithNoun, [switch]$AtMost)
     $n = if ($WithNoun) { Format-MbtGuiQuantity $Selection.Items 'item' } else { Format-MbtGuiCount $Selection.Items }
+    if ($AtMost -and $Selection.SubtreeUnread) { return "$n or more before the period is applied" }
+    if ($AtMost) { return "at most $n" }
     if ($Selection.SubtreeUnread) { return "at least $n" }
     return $n
 }
@@ -396,6 +398,17 @@ function New-GuiTextBox {
     if ($Placeholder) { $t.Tag = $Placeholder; try { $t.SetValue([Windows.Controls.TextBox]::TextProperty, $Text) } catch { } }
     if ($OnChange) { $t.Add_TextChanged((ConvertTo-MbtGuiHandler $OnChange)) }
     return $t
+}
+
+function New-GuiDatePicker {
+    <# A day to pick (no time): Value is the day as yyyy-MM-dd text, empty for none. OnChange is called when the day changes, also when it is cleared. #>
+    param([string]$Value = '', [string]$Automation, [scriptblock]$OnChange)
+    $d = [Windows.Controls.DatePicker]::new()
+    $parsed = [datetime]::MinValue
+    if ($Value -and [datetime]::TryParseExact($Value, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { $d.SelectedDate = $parsed }
+    if ($Automation) { [Windows.Automation.AutomationProperties]::SetName($d, $Automation) }
+    if ($OnChange) { $d.Add_SelectedDateChanged((ConvertTo-MbtGuiHandler $OnChange)) }
+    return $d
 }
 
 function New-GuiRow {

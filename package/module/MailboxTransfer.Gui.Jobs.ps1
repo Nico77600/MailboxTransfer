@@ -135,6 +135,33 @@ function Write-MbtGuiFolderFiles {
     if (@($Choice.Nids).Count) { $Job.ItemsFile = "$base.items.txt"; Set-Content -LiteralPath $Job.ItemsFile -Value @($Choice.Nids | ForEach-Object { [string]$_ }) -Encoding utf8 }
 }
 
+function Get-MbtGuiPeriod {
+    <#
+        The period the operator asked for an export, from the state: Chosen (the second choice is on), Active (and it is valid: it holds a date and the first date is not after the last),
+        From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("arrived between 2026-03-01 and 2026-03-31", "all dates").
+    #>
+    param([hashtable]$S)
+    $chosen = ((Get-MbtGuiProp $S 'Task' '') -eq 'export') -and ((Get-MbtGuiProp $S 'Period' 'all') -ieq 'between')
+    $from = [string](Get-MbtGuiProp $S 'ArrFrom' ''); $to = [string](Get-MbtGuiProp $S 'ArrTo' '')
+    $problem = $null
+    if ($chosen) {
+        if (-not $from -and -not $to) { $problem = 'Pick at least one date, or choose All dates.' }
+        elseif ($from -and $to -and [string]::CompareOrdinal($from, $to) -gt 0) { $problem = 'The first date is after the last date. Swap them, or pick other dates.' }
+    }
+    $text = if (-not $chosen -or $problem) { 'all dates' } elseif ($from -and $to) { "arrived between $from and $to" } elseif ($from) { "arrived from $from" } else { "arrived until $to" }
+    [pscustomobject]@{ Chosen = $chosen; Active = ($chosen -and -not $problem); From = $(if ($chosen) { $from } else { '' }); To = $(if ($chosen) { $to } else { '' }); Problem = $problem; Text = $text }
+}
+
+function Get-MbtGuiPeriodStoreSuffix {
+    <# A store keeps one period for a mailbox: an export with a period has its own store, named after it ('' for every date). #>
+    param([hashtable]$S)
+    $p = Get-MbtGuiPeriod $S
+    if (-not $p.Active) { return '' }
+    if ($p.From -and $p.To) { return "-arrived-$($p.From)_$($p.To)" }
+    if ($p.From) { return "-arrived-from-$($p.From)" }
+    return "-arrived-until-$($p.To)"
+}
+
 function Get-MbtGuiCommonArguments {
     param([hashtable]$S, [hashtable]$Job, [switch]$WhatIf)
     $a = [Collections.Generic.List[string]]::new()
@@ -168,6 +195,10 @@ function Get-MbtGuiCommand {
             # the temporary files of the export are in the job folder, not below the folder of the script
             $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox))
             foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            # the period: the days as ISO text (the same whatever the language of Windows); a day left empty is no limit on that side
+            $period = Get-MbtGuiPeriod $S
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
             $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
             $a.AddRange([string[]]$tuning)
             if ($pst) {
@@ -508,6 +539,15 @@ function Write-MbtGuiRunReport {
     foreach ($s in $Run.Steps) { $rows.Add([pscustomobject]@{ Kind = 'step'; Step = $s.Id; Key = $s.Title; State = $s.State; Done = $s.Done; Total = $s.Total; Message = $s.Msg }) }
     foreach ($o in $Run.Objects) { $rows.Add([pscustomobject]@{ Kind = 'folder'; Step = $o.Step; Key = $o.Key; State = $o.State; Done = $o.Done; Total = $o.Total; Message = $o.Msg }) }
     foreach ($i in $Run.Items) { $rows.Add([pscustomobject]@{ Kind = 'item'; Step = $i.Step; Key = $i.Key; State = $i.State; Done = ''; Total = $i.Total; Message = (($i.Msg, $i.Detail | Where-Object { $_ }) -join ' - ') }) }
+    # an export with a period: the items it left out, said once in the CSV (skipped is not a failure)
+    $periodCounts = if ($Run.Result) { $Run.Result.Counts } else { $null }
+    $outside = Get-MbtGuiProp $periodCounts 'outsidePeriod' $null
+    if ($null -ne $outside) {
+        $text = '{0} items kept; {1} items outside the period were skipped (not an error)' -f (Get-MbtGuiProp $periodCounts 'kept' 0), $outside
+        $undated = [long](Get-MbtGuiProp $periodCounts 'withoutDate' 0)
+        if ($undated -gt 0) { $text += "; $undated items without a date were kept" }
+        $rows.Add([pscustomobject]@{ Kind = 'period'; Step = 'list'; Key = 'items outside the period'; State = 'skipped'; Done = $outside; Total = ''; Message = $text })
+    }
     foreach ($w in $Run.Warnings) { $rows.Add([pscustomobject]@{ Kind = 'warning'; Step = $w.Step; Key = $w.Key; State = $w.Code; Done = ''; Total = ''; Message = $w.Msg }) }
     foreach ($d in $Run.Decisions) { $rows.Add([pscustomobject]@{ Kind = 'decision'; Step = ''; Key = $d.Key; State = 'needs a decision'; Done = ''; Total = ''; Message = $d.Msg }) }
     if ($Run.Error) { $rows.Add([pscustomobject]@{ Kind = 'error'; Step = ''; Key = $Run.Error.Code; State = 'error'; Done = ''; Total = ''; Message = $Run.Error.Msg }) }

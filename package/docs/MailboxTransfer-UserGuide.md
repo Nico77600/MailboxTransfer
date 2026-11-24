@@ -312,6 +312,13 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 > [!NOTE]
 > **This is read only.** Browsing never changes the mailbox. Deleted items you ticked are exported like any folder, but saved **apart**, under a folder named *Recoverable Items*, never mixed with your normal folders.
 
+**Only some dates (optional).** Under **Your selection**, the box **Period** says which items of the folders you ticked are exported. **All dates (recommended)** takes everything. **Only items that arrived between** shows two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The same period applies to everything you ticked, in every place you looked in. If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
+
+> [!NOTE]
+> **What "arrived" means.** It is the date the item was created in the mailbox, the one Microsoft gives when it lists the items. For mail that was **migrated or imported** into the mailbox, it is the date of that import, not the original date of the message. A day is a whole day of the time zone of this PC. An item that has no date at all is **kept**, and counted.
+>
+> **Messages you tick one by one are always exported**, whatever their date: the period applies to the items listed from the folders you ticked. The items left out are **skipped, not an error**: they do not make the job "Not finished", and the end of the job says how many there were.
+
 When you are ready, click **Continue to destination**.
 
 ### 4.5 Task · To: choose where to save
@@ -348,6 +355,9 @@ Click **Continue to Verify**.
 
 > [!NOTE]
 > **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 8.
+
+> [!NOTE]
+> **With a period, the numbers are "at most".** Microsoft cannot say how many items of a folder arrived in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31`). The period is applied while the items are listed; the exact numbers come at the end of the job.
 
 > [!NOTE]
 > **Expert mode** holds four numbers for this run only (how many requests in parallel, how long to wait before a retry, how many tries per item, how long to wait before checking an uncertain item) and the box **Keep this PC awake while it runs**. You do not need it, and nothing in it is saved.
@@ -400,6 +410,8 @@ To stop on purpose, click **Stop and keep progress** (bottom left). A question a
 | **Not finished** | amber | Something is left, for instance a folder that was not ready. Nothing is lost. Press **Continue** later. |
 | **Needs a decision** | amber | An item needs your choice (chapter 5, step 7). |
 | **Error** | red | The job stopped. Read the message. Your files are kept. |
+
+With a period, the page also says it: *Period: items that arrived between 2026-01-01 and 2026-03-31. 1,208 items kept, 4,612 outside the period (skipped, not an error)*, and, if there were some, how many items had no date and were kept. The same numbers are in the report of the job (the tiles **Items kept**, **Outside the period**, **Kept without a date**) and in the page of all the jobs.
 
 Under the result, **What to do next** offers buttons for the logical next step: after a finished export, **Import into a mailbox** and **How to open the PST in Outlook**; after a stopped one, **Continue**. **The same from the command line** shows the commands that were run, with **Copy**. **Reports and log** opens the report, the log or the folder. The report is a page for your browser, **report.html**, written at the end of every job: the result, the numbers, every step with its start, end and duration, what happened in time order (waits for Microsoft, sleeps of the PC, warnings, errors), one row for each folder, and what to do next. It needs no network and can be sent as it is. **report.csv** stays next to it for a spreadsheet; a job made by an older version has only the CSV. **Start another task** (bottom right) goes back to the Task page.
 
@@ -617,6 +629,9 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 
 ### Exporting many mailboxes
 
+> [!NOTE]
+> On the command line, `-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31` keeps only the items that arrived between two days (the same as the **Period** box of the console, section 4.4). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps **one period for a mailbox**: running the same export again with another period is refused (use another `-StorePath`); the console gives an export with a period a folder of its own, so it never meets another one.
+
 If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a **CSV file** (one mailbox on each line) and start **one command**. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one **batch** that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the **command line**: the console shows a batch, read only, but does not start one. Only **export** works this way; a batch of imports is not part of this version.
 
 **1. The list.** A text file, saved as UTF-8 (Excel: *CSV UTF-8*). The first line names the columns, the names can be in capitals or not, and the delimiter is a comma or a semicolon:
@@ -760,6 +775,7 @@ Every word below is a word you see on the screen or in this guide, explained wit
 | **Export store** | A folder with what this tool downloaded, checked. | The **To** page, *Export store only*. |
 | **PST file** | A file Outlook opens that holds a mailbox. | The **To** page, *PST files*. |
 | **Selection** | What you ticked. | **Your selection**, on the **From** page. |
+| **Period** | The days between which an item must have arrived in the mailbox to be exported. *All dates* is the default. | The box **Period**, on the **From** page. |
 | **Plan** | The list of what will be done, with the time. Nothing starts before you press Start. | The **Verify** page. |
 | **Job** | One run: an export, an import, a check. | **Continue a job** on the **Task** page. |
 | **Continue** | Run the same job again. Only what is left is done. | The **Task** page, and the **Next steps** page. |
