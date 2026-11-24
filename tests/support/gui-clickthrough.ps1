@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     Click-through of the console. The real window is built on the fake engine, shown without being visible, and run by ShowDialog like the real console; a timer
     of the dispatcher then walks every page of every scenario and, one control at a time, clicks every button, ticks and unticks every check box and radio button,

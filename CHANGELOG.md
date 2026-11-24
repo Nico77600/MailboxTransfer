@@ -8,6 +8,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 - **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` keep the items that arrived in the mailbox between two days (the console: the **Period** line under the browser of the From page). One period for the whole export, a list of mailboxes included. Messages you tick one by one are always exported; an item with no date is kept. The items left out are skipped, not an error; the summary, the report and the page of all the jobs say how many.
 
 ### Changed
+- **PowerShell 7.6 or later is the minimum**, for the console and for the command line (it was 7.5 and 7.4). Install it with `winget install Microsoft.PowerShell`, or update it with `winget upgrade Microsoft.PowerShell`.
 - **Runs from a OneDrive-synced folder**: the package check judges a link by its type, not by the link attribute. Symbolic links, junctions and unknown types are still refused; OneDrive, deduplicated and CompactOS files are accepted and still hashed, and a OneDrive file that cannot be downloaded offline is named with the way out.
 - **The browser fits the window**: the folder tree and the list of messages are no longer cut off when the window is small.
 - **Pause and Resume on the running step**: a small button in the place of its icon pauses the job (stop and keep progress) and resumes it where it stopped.

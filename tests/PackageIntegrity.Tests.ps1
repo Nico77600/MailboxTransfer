@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     Package integrity: the contract of the release package (signed PowerShell files, hash manifest, byte-exact Git attributes) and the
     logic of the verifier on a controlled copy of the package.

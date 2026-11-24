@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Phase 0 (lab): proves on the real tenant that the mailbox import and export API of Microsoft Graph does what the

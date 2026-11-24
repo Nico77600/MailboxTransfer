@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - regression tests of the findings of the independent review (probes in the review folder, one Describe per finding).

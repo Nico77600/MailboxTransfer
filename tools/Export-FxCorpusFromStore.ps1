@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Copies the FastTransfer streams of an export store into a folder of .fxs files (one file per item) for

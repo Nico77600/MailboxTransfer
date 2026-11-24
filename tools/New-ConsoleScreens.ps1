@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Renders the pages of the console from the real WPF window (synthetic data, fake engine) into PNG files, light and dark.

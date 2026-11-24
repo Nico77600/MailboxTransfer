@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the export of a store to PST files (Engine.PstExport.cs, Export-MbtPst, Invoke-MailboxTransfer.ps1 -Mode ExportPst /

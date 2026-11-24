@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Writes package\PackageIntegrity.psd1: the SHA256 of every file of the package, to be signed by the owner.

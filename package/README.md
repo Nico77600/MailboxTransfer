@@ -16,7 +16,7 @@ This folder contains everything needed to run the tool: the command line (`Invok
 ## Requirements
 
 - Windows 10 or 11 (x64 or arm64).
-- PowerShell 7.5 or later (7.6 works) (`pwsh.exe`) for the console, 7.4 for the command line. Windows PowerShell 5.1 is refused. PowerShell 7 is not part of this folder: `winget install Microsoft.PowerShell`.
+- PowerShell 7.6 or later (`pwsh.exe`), for the console and for the command line. Windows PowerShell 5.1 and older PowerShell 7 releases are refused. PowerShell 7 is not part of this folder: `winget install Microsoft.PowerShell`.
 - The module `Microsoft.Graph.Authentication` (the tool borrows its MSAL library to sign you in): `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`.
 - For a mailbox: one app registration for your company with the minimum permission of each task, listed in the [user guide, chapter 2](docs/MailboxTransfer-UserGuide.html). Checking and repairing a PST, and opening an export, need no right.
 - Free disk: about twice the size of the data.

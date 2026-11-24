@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 # Console: the REAL adapters of Gui.Engine.ps1 (sign-in, locations, folders, messages, preview, selection file, jobs, PST, store and .eml sources, the check of a PST)
 # on a worker that runs inline, over stubs of the engine calls that reach the cloud, with 0, 1 and several results shaped like the real ones. The fake engine of the

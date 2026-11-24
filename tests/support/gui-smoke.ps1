@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     Headless smoke test of the console: builds the real window (not shown), walks the state machine on the fake engine, feeds a fake events file
     (running, PC slept and resumed, needs a decision, stopped, complete, error), checks the pages build and that nothing throws.

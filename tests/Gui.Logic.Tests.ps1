@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 # Console: the logic that needs no window (run model, ETA, commands, names, job folder). Nothing contacts the cloud.
 BeforeAll {
     $script:Package = Join-Path (Split-Path $PSScriptRoot -Parent) 'package'

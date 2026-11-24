@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the retention of the job folders (Invoke-MbtJobRetention, the configuration key Jobs.RetentionDays, the command line and the

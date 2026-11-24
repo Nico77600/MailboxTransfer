@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer - the export of a list of mailboxes, a batch (dot-sourced by MailboxTransfer.psm1).

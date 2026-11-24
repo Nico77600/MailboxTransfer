@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - starting a job, the Run page and the Done page (dot-sourced by Start-MailboxTransferConsole.ps1).

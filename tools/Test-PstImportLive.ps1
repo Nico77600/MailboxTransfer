@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Lab tool: does importItem accept a FastTransfer stream WE built from a PST message, and what does Exchange keep of it?

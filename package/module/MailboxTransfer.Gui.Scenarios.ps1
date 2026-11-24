@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - scenarios for the documentation images and the tests (dot-sourced by Start-MailboxTransferConsole.ps1).

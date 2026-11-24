@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the EML export and import (Engine.Mime.cs, Engine.EmlMapi.cs, Engine.Eml.cs, Engine.EmlImport.cs,

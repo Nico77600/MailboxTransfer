@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Regenerates the pictures of the documentation (package\docs\images\*.png), light and dark, from synthetic data only.
@@ -39,7 +39,7 @@
 .NOTES
     Author  : Nicolas Fabert
     Part of : Mailbox Transfer (repository tool, not in the package)
-    Needs   : Windows with WPF, PowerShell 7.4 or later; Segoe UI Variable and Segoe Fluent Icons (Windows 11) for the exact look.
+    Needs   : Windows with WPF, PowerShell 7.6 or later; Segoe UI Variable and Segoe Fluent Icons (Windows 11) for the exact look.
 #>
 [CmdletBinding()]
 param([ValidateSet('All', 'Console', 'Diagrams')][string]$Images = 'All', [string]$OutDir, [string]$Version, [string[]]$Name)
@@ -551,7 +551,7 @@ $hero = [ordered]@{
     Eyebrow  = 'EXCHANGE ONLINE / MAILBOXES AND PST FILES'
     Sub      = 'Export and import Exchange Online mailboxes.'
     Lines    = @('Verified and resumable, with a guided Windows console.', 'Checks and repairs PST files, without Outlook.')
-    Pills    = @("$Version release", 'PowerShell 7.5+', 'No Outlook needed')
+    Pills    = @("$Version release", 'PowerShell 7.6+', 'No Outlook needed')
     Footer   = 'Nicolas Fabert / MIT license'
     Desc     = 'Exchange Online mailbox export and import to a verified store or to PST files, with a guided Windows console and PST check and repair.'
     Stats    = @(

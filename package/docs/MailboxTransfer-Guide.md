@@ -4,7 +4,7 @@ subtitle: Reference guide
 version: 1.3.0
 author: Nicolas Fabert
 updated: 2026-11-24
-runtime: PowerShell 7.5+ (engine and window), 7.4 for the command line
+runtime: PowerShell 7.6+ (engine, window and command line)
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
 
@@ -35,7 +35,7 @@ database | Store | `lib\sqlite`: SQLite for the export store (see THIRD-PARTY-NO
 | Item | Minimum |
 |---|---|
 | Windows | Windows 10 or 11, x64 or arm64 (the SQLite library exists for both) |
-| PowerShell | 7.5 for the console (its Fluent look needs .NET 9), 7.4 for the command line |
+| PowerShell | 7.6 or later, for the console (its Fluent look needs .NET 9) and for the command line |
 | Module | `Microsoft.Graph.Authentication` (its MSAL.NET library signs you in; nothing else of the Graph module is used) |
 | Disk | The store and the PST files together are about twice the size of the data. A repair needs room for one more PST. The Verify page says it before you start. |
 | Network | HTTPS to `graph.microsoft.com` and `outlook.office365.com` (global cloud only). Not needed for the tasks on files. |
@@ -47,7 +47,7 @@ The console is a window that builds the command line for you. It never does anyt
 
 | Page | What it holds | What it does in the engine |
 |---|---|---|
-| **Setup** | The lights of the computer (PowerShell 7.5 or later, the sign-in component, the work folder with its free space, the network, the unblocked files). The configuration file in use (**Reload**, **Open**). The work folder. **Sign in as**: **Me (delegated)** or **The application (certificate)**, with the values read from the configuration: `Tenant` (`TenantId`, `ClientId`) for **Me**, `Auth` (`AppTenantId`, `AppClientId`, `CertificateThumbprint`) for **The application**. **Change for this run** replaces a value for the current window only. | Reads the configuration file (chapter 12) and nothing else. Nothing on this page is ever written to a file. |
+| **Setup** | The lights of the computer (PowerShell 7.6 or later, the sign-in component, the work folder with its free space, the network, the unblocked files). The configuration file in use (**Reload**, **Open**). The work folder. **Sign in as**: **Me (delegated)** or **The application (certificate)**, with the values read from the configuration: `Tenant` (`TenantId`, `ClientId`) for **Me**, `Auth` (`AppTenantId`, `AppClientId`, `CertificateThumbprint`) for **The application**. **Change for this run** replaces a value for the current window only. | Reads the configuration file (chapter 12) and nothing else. Nothing on this page is ever written to a file. |
 | **Task** | **What**: four cards (Browse and export, Import, Check and repair a PST, Open an export or a PST) and the list of jobs that can be continued. **From** and **To** depend on the task (table below). | Sign-in, browsing (`-Mode Browse`), the read-only check of a PST, the folder tree of a PST or a store. Reads only. |
 | **Verify** | **Checks** (one line per check, green, amber or red), **What will be done**, **What is in it** (export) or **Before anything is written** (import), **The same from the command line**, **Expert mode** (the four run settings, and **Keep this PC awake while it runs**, off by default, which adds `-KeepAwake` to the command line). | The plan: the read-only run (`-WhatIf`) of the same request. The command line is the command the **Start** button runs, with the values that equal the default of the entry script left out (for instance `-Concurrency 4`, `-MaxAttempts 3`, `-PstMaxSizeGB 50`). **Copy** puts it on the clipboard. |
 | **Run** | The summary and the bar, the **steps** (all known before the start), the folders with their counts, the details of the step or folder clicked, **Stop and keep progress** (also the small **Pause** button of the running step, which becomes **Resume** after a stop). | Reads `events.jsonl` and `status.json` of the job and stops it with the stop file (chapter 9). |
@@ -238,7 +238,7 @@ The token is requested with `https://graph.microsoft.com/.default`: **what the a
 
 ### 4.1 On the PC (no administrator rights)
 
-Windows 10 or 11, PowerShell 7.5 (7.4 command line), the module `Microsoft.Graph.Authentication`, free disk, write access to the work folder.
+Windows 10 or 11, PowerShell 7.6 or later, the module `Microsoft.Graph.Authentication`, free disk, write access to the work folder.
 
 ### 4.2 In Microsoft Entra ID, once
 

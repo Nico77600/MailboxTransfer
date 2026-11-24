@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 # Console: headless smoke test. The real WPF window is built (not shown) in a single-threaded pwsh of its own, on the fake engine, and walked
 # through the state machine with a fake events file. No sign-in, no cloud.
 BeforeAll {

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Writes the FastTransfer streams of one or more folders into PST files with our own MS-PST writer, reads them back with our own

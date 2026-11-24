@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer - the HTML report of a job (dot-sourced by MailboxTransfer.psm1 and by MailboxTransfer.Gui.Jobs.ps1).

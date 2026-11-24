@@ -3,7 +3,7 @@
 ## Development
 
 - Keep the code simple and readable. Prefer the documented behavior of the Microsoft Graph SDK over defensive rules of our own (for example, `@odata.nextLink` is followed as returned when it is https on graph.microsoft.com).
-- Run the existing validation before promoting a change: `Invoke-Pester -Path .\tests -Output Detailed` (Pester 5 or later, PowerShell 7.4 or later). A source checkout has no `PackageIntegrity.psd1`: the entry scripts need `-DevelopmentMode` (the tests set it; `tests\support\Import-StoreEngine.ps1` also sets `MBT_ICONS=Ascii` and a temporary log folder).
+- Run the existing validation before promoting a change: `Invoke-Pester -Path .\tests -Output Detailed` (Pester 5 or later, PowerShell 7.6 or later). A source checkout has no `PackageIntegrity.psd1`: the entry scripts need `-DevelopmentMode` (the tests set it; `tests\support\Import-StoreEngine.ps1` also sets `MBT_ICONS=Ascii` and a temporary log folder).
 - Keep private configuration, credentials, tenant data, exported mailbox content (`*.fxs`) and manifests out of commits and release packages.
 - Nothing in the automated tests may contact the cloud. Cloud checks are run by the owner with the scripts in `tools\`.
 - Never delete or modify existing mailbox items or folders from the lab scripts: imports create only.

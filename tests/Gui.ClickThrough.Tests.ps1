@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 # Console: every button, check box, radio button, list, text box, fold, folder and message of every page of every scenario is used in a real window (fake engine), and no
 # handler may raise an exception. A handler that uses a variable of the function that built the page fails at the first click (the function is gone when the control
 # raises its event); this is the test that finds such a handler. Also: no handler is subscribed to a control outside the ways that cover it.

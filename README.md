@@ -36,7 +36,7 @@
 > Replace the example path with the folder where you extracted the ZIP.
 
 > [!IMPORTANT]
-> **Mailbox Transfer requires PowerShell 7.5 or later (`pwsh.exe`) for the console, 7.4 for the command line.** Windows PowerShell 5.1 is refused before any code runs. PowerShell 7 is not bundled in the release: install it once with `winget install Microsoft.PowerShell`.
+> **Mailbox Transfer requires PowerShell 7.6 or later (`pwsh.exe`), for the console and for the command line.** Windows PowerShell 5.1 and older PowerShell 7 releases are refused before any code runs. PowerShell 7 is not bundled in the release: install it once with `winget install Microsoft.PowerShell`, or update it with `winget upgrade Microsoft.PowerShell`.
 
 ## Why
 
@@ -72,7 +72,7 @@ One path for everyone. Set the tool up once (**1 to 4**), then take task **A** t
 # 1 · Get your rights. Give your administrator the table "Requirements" below (minimum permission for each task).
 #     Checking and repairing a PST needs no right at all.
 
-# 2 · On the PC, in PowerShell 7.5+: put the tool in its folder and unblock it.
+# 2 · On the PC, in PowerShell 7.6+: put the tool in its folder and unblock it.
 #     Download MailboxTransfer-1.3.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
 Get-ChildItem C:\Tools\MailboxTransfer -Recurse -File -Force | Unblock-File
 
@@ -270,7 +270,7 @@ Every run tells you what happened, in the same words on screen and on disk.
 | | |
 |---|---|
 | Windows | 10 or 11, x64 or arm64 |
-| PowerShell | **7.5** or later (7.6 works) for the console, 7.4 for the command line (`pwsh.exe`, not Windows PowerShell 5.1) |
+| PowerShell | **7.6** or later, for the console and the command line (`pwsh.exe`, not Windows PowerShell 5.1) |
 | Module | `Microsoft.Graph.Authentication` (the tool borrows its MSAL library to sign you in) |
 | Disk | about twice the size of the data |
 | Not needed | Outlook, Exchange Online PowerShell, any third-party PST tool |
@@ -346,7 +346,7 @@ An export store and PST files contain **complete mail**: protect them like the m
 ## Tests
 
 ```powershell
-# PowerShell 7.5+ (pwsh); Pester 5 or later (the CI uses 6.1.0) and PSScriptAnalyzer 1.25.0 installed
+# PowerShell 7.6+ (pwsh); Pester 5 or later (the CI uses 6.1.0) and PSScriptAnalyzer 1.25.0 installed
 Invoke-Pester -Path .\tests -Output Detailed        # no network, no tenant, no mailbox needed
 ```
 

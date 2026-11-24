@@ -5,8 +5,8 @@
   "status": "release",
   "runtimeIdentifier": ["win-x64", "win-arm64"],
   "powerShell": {
-    "minimum": "7.5",
-    "commandLineMinimum": "7.4",
+    "minimum": "7.6",
+    "commandLineMinimum": "7.6",
     "bundled": false
   },
   "sqlite": {

@@ -4,7 +4,7 @@ subtitle: User guide
 version: 1.3.0
 author: Nicolas Fabert
 updated: 2026-11-24
-runtime: PowerShell 7.5+ (engine and window)
+runtime: PowerShell 7.6+ (engine, window and command line)
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
 
@@ -224,7 +224,7 @@ cd C:\Tools\MailboxTransfer
 
 **You should see:** after a few seconds, the window, on its first page, **Setup**. The first start prepares the engine of the tool and takes a few seconds longer. Nothing is installed.
 
-**If not:** a message about the PowerShell version means you need PowerShell 7.5 or later. Ask your administrator to install it. PowerShell 7.6 works with this version of the tool.
+**If not:** a message about the PowerShell version means you need PowerShell 7.6 or later (`winget install Microsoft.PowerShell`, or `winget upgrade Microsoft.PowerShell` if an older one is installed). Ask your administrator to install it. Windows PowerShell 5.1 is not enough.
 
 > [!TIP]
 > To look around without any mailbox, add `-Demo`: `.\Start-MailboxTransferConsole.ps1 -Demo`. The window shows made-up data and touches nothing.
@@ -241,7 +241,7 @@ The Setup page is the first page, each time you open the console. It answers one
 
 | Box | What it says, in plain words |
 |---|---|
-| **This computer** | The **lights**. **Ready** at the top right means that everything the tool needs is in place. The five lights are: **PowerShell 7.5 or later**; **Sign-in component (MSAL)**, the part that talks to Microsoft's sign-in, which also says whether the **Windows sign-in window** is available (if it is not, with the reason, the console signs in with a code); **Work folder**, with its path and its free space (red, with the reason, if the folder cannot be created or written to, or if less than 5 GiB is free); **Network connection**, which says whether Microsoft's sign-in answers; **Files unblocked**, which says whether Windows marked the tool as downloaded. **Check again** looks again. |
+| **This computer** | The **lights**. **Ready** at the top right means that everything the tool needs is in place. The five lights are: **PowerShell 7.6 or later**; **Sign-in component (MSAL)**, the part that talks to Microsoft's sign-in, which also says whether the **Windows sign-in window** is available (if it is not, with the reason, the console signs in with a code); **Work folder**, with its path and its free space (red, with the reason, if the folder cannot be created or written to, or if less than 5 GiB is free); **Network connection**, which says whether Microsoft's sign-in answers; **Files unblocked**, which says whether Windows marked the tool as downloaded. **Check again** looks again. |
 | **Files and folders** | The **configuration file** in use, the one you wrote in step 3. **Reload** reads it again, **Open** shows it in your editor. The **work folder** is where the tool keeps its jobs, its export stores and its logs. **Choose a folder...** picks another one **for this run only**. |
 | **Sign-in** | **Sign in as: Me (delegated, recommended)**: a Microsoft sign-in window opens over the console and you sign in as yourself. Or **The application (certificate)**: no window and no person, for scheduled or bulk jobs and for writing into a shared mailbox. Below, the **values for the sign-in** (the tenant, the application id and, for the certificate, its thumbprint) are **read from the configuration file**. **Change for this run** lets you type other values, **for this run only**: nothing is saved. A value changed this way is marked *modified · this run only*. |
 
@@ -736,7 +736,7 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 | 16 | Outlook says the PST is too big, or asks to repair it | Outlook's own limit, or Outlook rebuilding its own index. | Use the split size. Run our **Check**: if it says clean, let Outlook finish. |
 | 17 | *Resumed after sleep*, *Stopped* | The PC slept or the job was stopped. | **Continue**. Nothing is lost. |
 | 18 | *The export is already open by another process* | Only one job at a time can write to a store. | Wait for the other job, or close it. |
-| 19 | A red light on the **Setup** page, or an error before the window opens | Windows blocked the files, or PowerShell is too old. | Unblock (top of this guide). PowerShell **7.5** or later is needed. Then **Check again**. |
+| 19 | A red light on the **Setup** page, or an error before the window opens | Windows blocked the files, or PowerShell is too old. | Unblock (top of this guide). PowerShell **7.6** or later is needed (`winget upgrade Microsoft.PowerShell`). Then **Check again**. |
 | 20 | Duplicates after **the same folder names** | An import adds items, it does not compare. | Use **a new folder** next time. Delete the extras yourself in the mailbox. |
 | 21 | Imported items show the **import date** as created date | Exchange sets it. The original received date is kept. | Nothing. |
 | 22 | Slow even on a fast PC | It is Microsoft's limit per mailbox. | Chapter 8. Only several target mailboxes at once go faster. |

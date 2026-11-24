@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of our own MS-PST writer and reader (Engine.PstNdb.cs, Engine.PstLtp.cs, Engine.PstFile.cs,

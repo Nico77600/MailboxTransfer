@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - the real engine adapter (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -64,7 +64,7 @@ function New-MbtGuiRealEngine {
     $e.Readiness = { param($Work)
         $lights = [Collections.Generic.List[object]]::new()
         $ps = $PSVersionTable.PSVersion
-        $lights.Add(@{ Name = 'PowerShell 7.5 or later'; Detail = $ps.ToString(); Ok = ($ps -ge [version]'7.5') })
+        $lights.Add(@{ Name = 'PowerShell 7.6 or later'; Detail = $ps.ToString(); Ok = ($ps -ge [version]'7.6') })
         $msal = $null; try { $msal = Find-MbtMsal } catch { $msal = $null }
         $window = $null; if ($msal) { try { $window = Get-MbtWindowsSignIn } catch { $window = $null } }
         $msalDetail = if (-not $msal) { 'not found: see the guide, "Start here"' }

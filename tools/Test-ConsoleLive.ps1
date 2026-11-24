@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Live, READ-ONLY check of the console's real adapter (lab script, run by the owner; nothing in the automated tests contacts the cloud).

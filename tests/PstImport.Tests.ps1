@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the import from PST (Engine.FxImport.cs, Engine.PstImportPlan.cs, Engine.PstImportJob.cs, Engine.FxDiff.cs):

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Copies the files needed to run Mailbox Transfer into a separate folder (and, with -Zip, into the release ZIP).

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     The real adapters of the console (package\module\MailboxTransfer.Gui.Engine.ps1) on a worker that runs inline, over stubs of the engine calls that reach the cloud.
     The fake engine of the other console tests hands the pages ready objects, always several of them, and never calls these adapters; the worker of the console hands

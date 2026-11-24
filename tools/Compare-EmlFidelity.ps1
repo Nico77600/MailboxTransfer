@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Fidelity of the MAPI -> MIME writer against Exchange's own MIME (read only).

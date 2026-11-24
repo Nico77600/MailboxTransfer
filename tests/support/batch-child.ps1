@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     A stand-in for Invoke-MailboxTransfer.ps1 in the tests of a batch: it takes the same arguments, behaves as the local part of the mailbox address says, writes the status.json, the events and the exit code
     of a job, and records what it was given (args.json) and when it ran (run-<n>.txt). Nothing reaches a network.

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Verifies the authenticated Mailbox Transfer package before any of its code runs.

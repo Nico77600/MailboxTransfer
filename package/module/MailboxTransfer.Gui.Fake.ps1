@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - the fake engine (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -150,7 +150,7 @@ function New-MbtGuiFakeEngine {
         State = @{ Signed = $false }
     }
     $engine.Readiness = { $work = $script:Gui.S.WorkFolder; [pscustomobject]@{ Lights = @(
-                @{ Name = 'PowerShell 7.5 or later'; Detail = '7.5.4'; Ok = $true },
+                @{ Name = 'PowerShell 7.6 or later'; Detail = '7.6.10'; Ok = $true },
                 @{ Name = 'Sign-in component (MSAL)'; Detail = 'found in Microsoft.Graph.Authentication 2.41.1; the Windows sign-in window is available'; Ok = $true },
                 @{ Name = 'Work folder'; Detail = "$work - 412 GiB free"; Ok = $true },
                 @{ Name = 'Network connection'; Detail = 'login.microsoftonline.com answers'; Ok = $true },

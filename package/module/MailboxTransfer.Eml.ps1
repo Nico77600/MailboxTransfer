@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     Mailbox Transfer - EML export and import (functions of the module, dot-sourced by MailboxTransfer.psm1).
 
