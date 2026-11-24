@@ -77,7 +77,7 @@ function New-MbtGuiPlanStateMessage {
         }
         'ok' {
             $atMost = (Get-MbtGuiPeriod $s).Active
-            $counted = if ($s.PlanTotals) { "counted by the service$(if ($atMost) { ' (the most the period leaves; it is applied while the items are listed)' }): $(Format-MbtGuiPlanTotals $s.PlanTotals -AtMost:$atMost)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
+            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals -AtMost:$atMost)" + $(if ($atMost) { ' (the period is applied while the items are listed)' }) + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
         }
         'error' {

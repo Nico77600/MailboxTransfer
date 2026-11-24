@@ -404,6 +404,8 @@ function New-GuiDatePicker {
     <# A day to pick (no time): Value is the day as yyyy-MM-dd text, empty for none. OnChange is called when the day changes, also when it is cleared. #>
     param([string]$Value = '', [string]$Automation, [scriptblock]$OnChange)
     $d = [Windows.Controls.DatePicker]::new()
+    # the day is written in full ("1 April 2026"): a short date means two days in two languages
+    $d.SelectedDateFormat = [Windows.Controls.DatePickerFormat]::Long
     $parsed = [datetime]::MinValue
     if ($Value -and [datetime]::TryParseExact($Value, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { $d.SelectedDate = $parsed }
     if ($Automation) { [Windows.Automation.AutomationProperties]::SetName($d, $Automation) }

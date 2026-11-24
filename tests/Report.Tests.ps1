@@ -87,7 +87,7 @@ Describe 'The HTML report of a job' {
 
     It 'says the period of an export, and gives the items kept, the items outside the period and the items without a date as numbers, in the page, the data and the CSV' {
         $dir = New-JobFolder 'period'
-        Write-Status $dir @{ jobId = 'exp-3a2b'; task = 'export'; title = 'Export - adele@contoso.com'; mode = 'Export'; store = 'D:\Storesdele'; state = 'complete'; exitCode = 0; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'arrived between 2026-03-01 and 2026-03-31' } }
+        Write-Status $dir @{ jobId = 'exp-3a2b'; task = 'export'; title = 'Export - adele@contoso.com'; mode = 'Export'; store = 'D:\Stores\adele'; state = 'complete'; exitCode = 0; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'arrived between 2026-03-01 and 2026-03-31' } }
         Write-Events $dir @(
             @{ at = 0; e = 'plan'; job = 'exp-3a2b'; task = 'export'; mode = 'Export'; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'arrived between 2026-03-01 and 2026-03-31' }; steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }) }
             @{ at = 2; e = 'step'; id = 'tree'; state = 'done' }

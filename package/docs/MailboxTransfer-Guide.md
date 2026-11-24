@@ -116,7 +116,7 @@ While Microsoft moves a folder, listing it fails: the folder is **deferred**, ne
 
 ### Period of an export
 
-An export can keep only the items that **arrived in the mailbox** in a period: `-ArrivedFrom` and `-ArrivedTo` (the console: the box **Period** of the From page). One period applies to the whole run: every folder asked, every location of a selection, every mailbox of a batch.
+An export can keep only the items that **arrived in the mailbox** in a period: `-ArrivedFrom` and `-ArrivedTo` (the console: the line **Period** under the browser of the From page). One period applies to the whole run: every folder asked, every location of a selection, every mailbox of a batch.
 
 - **The date.** *Arrived* is `createdDateTime` of the import-export listing, the only date that listing gives besides `lastModifiedDateTime`. What that means for mail that was migrated or imported into the mailbox is said in the [user guide](MailboxTransfer-UserGuide.md#44-task--from-browse-and-tick), section 4.4.
 - **How it is written.** ISO, year first, read the same way whatever the language of Windows: `2026-03-31` is a whole day of the local time zone (the start of it for `-ArrivedFrom`, the last instant of it for `-ArrivedTo`); `2026-03-31T18:30`, with seconds, a fraction, `Z` or `+hh:mm`, is used as it is. Both bounds are included, either may be left out (no limit on that side), the case does not matter. A date written the local way (`03/04/2026`) is refused: it means two dates. A first bound after the last one is refused before anything starts.

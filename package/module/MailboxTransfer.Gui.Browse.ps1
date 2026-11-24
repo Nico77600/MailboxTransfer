@@ -42,7 +42,7 @@ function New-MbtGuiBrowser {
     $xaml = Get-Content -LiteralPath (Join-Path $script:GuiRoot 'module\MailboxTransfer.Gui.Browse.xaml') -Raw
     $root = [Windows.Markup.XamlReader]::Parse($xaml)
     $c = @{}
-    foreach ($n in 'BrowseTitle', 'BrowseInfo', 'BrowseBadge', 'FolderTree', 'ListTitle', 'ListNote', 'ListHeader', 'PickAll', 'MessageList', 'ListMore', 'ListEmpty', 'ReadingHeader', 'ReadSubject', 'ReadFrom', 'ReadDetails', 'ReadAttachment', 'ReadAttachmentText', 'ReadBody', 'ReadEmpty', 'TrayPanel') {
+    foreach ($n in 'BrowseTitle', 'BrowseInfo', 'BrowseBadge', 'FolderTree', 'ListTitle', 'ListNote', 'ListHeader', 'PickAll', 'MessageList', 'ListMore', 'ListEmpty', 'ReadingHeader', 'ReadSubject', 'ReadFrom', 'ReadDetails', 'ReadAttachment', 'ReadAttachmentText', 'ReadBody', 'ReadEmpty', 'TrayPanel', 'PeriodRow', 'PeriodDetail') {
         $c[$n] = $root.FindName($n)
     }
     $c.BrowseTitle.Text = $Title
@@ -270,6 +270,8 @@ function Update-MbtGuiTray {
         $t = New-GuiText $Browser.TrayEmpty 'Muted' -NoWrap; $t.FontSize = 13
         $p.Children.Add($t) | Out-Null
     }
+    # the browser of an export also says the period under the selection
+    if ($Browser.Name -eq 'export') { Update-MbtGuiPeriodRow $Browser }
 }
 
 function Update-MbtGuiBrowseTrays {

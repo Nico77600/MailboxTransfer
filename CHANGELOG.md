@@ -5,7 +5,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 ## Unreleased
 
 ### Added
-- **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` keep the items that arrived in the mailbox between two days (the console: the **Period** box of the From page). One period for the whole export, a list of mailboxes included. Messages you tick one by one are always exported; an item with no date is kept. The items left out are skipped, not an error; the summary, the report and the page of all the jobs say how many.
+- **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` keep the items that arrived in the mailbox between two days (the console: the **Period** line under the browser of the From page). One period for the whole export, a list of mailboxes included. Messages you tick one by one are always exported; an item with no date is kept. The items left out are skipped, not an error; the summary, the report and the page of all the jobs say how many.
 
 ### Changed
 - **The browser fits the window**: the folder tree and the list of messages are no longer cut off when the window is small.

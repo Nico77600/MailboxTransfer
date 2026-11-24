@@ -312,7 +312,7 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 > [!NOTE]
 > **This is read only.** Browsing never changes the mailbox. Deleted items you ticked are exported like any folder, but saved **apart**, under a folder named *Recoverable Items*, never mixed with your normal folders.
 
-**Only some dates (optional).** Under **Your selection**, the box **Period** says which items of the folders you ticked are exported. **All dates (recommended)** takes everything. **Only items that arrived between** shows two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The same period applies to everything you ticked, in every place you looked in. If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
+**Only some dates (optional).** Under the browser, the line under your selection says **Period: all dates (recommended)**. Click **Change** to open two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The line then says *Period: items that arrived between 2026-01-01 and 2026-03-31*; **Done** closes the day boxes and **All dates** puts everything back. The same period applies to everything you ticked, in every place you looked in. If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
 
 > [!NOTE]
 > **What "arrived" means.** It is the date the item was created in the mailbox, the one Microsoft gives when it lists the items. For mail that was **migrated or imported** into the mailbox, it is the date of that import, not the original date of the message. A day is a whole day of the time zone of this PC. An item that has no date at all is **kept**, and counted.
@@ -775,7 +775,7 @@ Every word below is a word you see on the screen or in this guide, explained wit
 | **Export store** | A folder with what this tool downloaded, checked. | The **To** page, *Export store only*. |
 | **PST file** | A file Outlook opens that holds a mailbox. | The **To** page, *PST files*. |
 | **Selection** | What you ticked. | **Your selection**, on the **From** page. |
-| **Period** | The days between which an item must have arrived in the mailbox to be exported. *All dates* is the default. | The box **Period**, on the **From** page. |
+| **Period** | The days between which an item must have arrived in the mailbox to be exported. *All dates* is the default. | The line **Period**, under the browser of the **From** page. |
 | **Plan** | The list of what will be done, with the time. Nothing starts before you press Start. | The **Verify** page. |
 | **Job** | One run: an export, an import, a check. | **Continue a job** on the **Task** page. |
 | **Continue** | Run the same job again. Only what is left is done. | The **Task** page, and the **Next steps** page. |

@@ -18,7 +18,7 @@ function Get-MbtGuiScenarioName {
     @('Start', 'StartImport', 'ExportFromSignedOut', 'ExportFromCode', 'ExportFrom', 'ExportTo', 'ExportPlan', 'RunExport', 'RunImport', 'RunImportSleep', 'RunImportDecision', 'RunImportStopped', 'RunRepair',
         'DoneExportComplete', 'DoneExportPartial', 'DoneExportError', 'ImportFrom', 'ImportTo', 'ImportPlan', 'DoneImportComplete', 'DoneImportPartial', 'DoneImportDecision', 'DoneImportError',
         'RepairFromDamaged', 'RepairFromClean', 'RepairTo', 'RepairPlan', 'DoneRepair', 'Open',
-        'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing', 'ExportFromPeriod', 'ExportPlanPeriod', 'RunExportPeriod', 'DoneExportPeriod')
+        'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing', 'ExportFromPeriod', 'ExportFromPeriodOpen', 'ExportPlanPeriod', 'RunExportPeriod', 'DoneExportPeriod')
 }
 
 function Get-MbtGuiEdgeScenarioName {
@@ -253,11 +253,12 @@ function Set-MbtGuiScenario {
         'RunRepair' { Show-MbtGuiRunScenario 'repair' (New-MbtGuiScenarioRun -Task repair) }
         'DoneExportComplete' { Initialize-MbtGuiScenarioExport -Ticks; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exports\adele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete) }
         'ExportFromPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromPeriodOpen' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.PeriodOpen = $true; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportFromPeriodOpenEnd' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2025-07-01'; $s.ArrTo = ''; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
-        'ExportFromPeriodInvalid' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-04-01'; $s.ArrTo = '2026-03-01'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromPeriodInvalid' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-04-01'; $s.ArrTo = '2026-03-01'; $s.PeriodOpen = $true; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportPlanPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
         'RunExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioRun -Task export -Period) }
-        'DoneExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exportsdele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete -Period) }
+        'DoneExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exports\adele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete -Period) }
         'DoneExportPartial' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export partial) }
         'DoneExportError' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export error) }
         'ImportFrom' { $s.Task = 'import'; $s.Sel = 'import'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imFrom'); $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; Open-MbtGuiSource -Use import }

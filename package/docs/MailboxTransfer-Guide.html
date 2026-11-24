@@ -360,7 +360,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 </li>
 </ul>
 <h3 id="period-of-an-export">Period of an export</h3>
-<p>An export can keep only the items that <strong>arrived in the mailbox</strong> in a period: <code>-ArrivedFrom</code> and <code>-ArrivedTo</code> (the console: the box <strong>Period</strong> of the From page). One period applies to the whole run: every folder asked, every location of a selection, every mailbox of a batch.</p>
+<p>An export can keep only the items that <strong>arrived in the mailbox</strong> in a period: <code>-ArrivedFrom</code> and <code>-ArrivedTo</code> (the console: the line <strong>Period</strong> under the browser of the From page). One period applies to the whole run: every folder asked, every location of a selection, every mailbox of a batch.</p>
 <ul>
 <li><strong>The date.</strong> <em>Arrived</em> is <code>createdDateTime</code> of the import-export listing, the only date that listing gives besides <code>lastModifiedDateTime</code>. What that means for mail that was migrated or imported into the mailbox is said in the <a href="MailboxTransfer-UserGuide.html#task--from-browse-and-tick">user guide</a>, section 4.4.</li>
 <li><strong>How it is written.</strong> ISO, year first, read the same way whatever the language of Windows: <code>2026-03-31</code> is a whole day of the local time zone (the start of it for <code>-ArrivedFrom</code>, the last instant of it for <code>-ArrivedTo</code>); <code>2026-03-31T18:30</code>, with seconds, a fraction, <code>Z</code> or <code>+hh:mm</code>, is used as it is. Both bounds are included, either may be left out (no limit on that side), the case does not matter. A date written the local way (<code>03/04/2026</code>) is refused: it means two dates. A first bound after the last one is refused before anything starts.</li>
@@ -1598,7 +1598,7 @@ D:\store\export.lock           held while the store is open for writing (one pro
 <hr />
 <p><strong>Back to</strong> the <a href="MailboxTransfer-UserGuide.html">user guide</a>.</p>
 </div></section>
-<footer>Mailbox Transfer 1.2.0 · Nicolas Fabert · generated 2026-11-24 18:57 from MailboxTransfer-Guide.md</footer></main>
+<footer>Mailbox Transfer 1.2.0 · Nicolas Fabert · generated 2026-11-24 20:11 from MailboxTransfer-Guide.md</footer></main>
 <button type="button" id="to-top" title="Back to top"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
 <dialog id="zoom"><img alt=""></dialog>
 <script>

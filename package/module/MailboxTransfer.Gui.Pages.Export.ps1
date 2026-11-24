@@ -345,39 +345,86 @@ function ConvertTo-MbtGuiPeriodDay {
 }
 
 function Update-MbtGuiPeriodState {
-    <# A date or the choice changed: the problem line and the button of the From page, without building the page again. #>
+    <# A day or the choice changed: the period of the state follows the days, the line under the browser, the problem line and the button of the From page, without building the page again. #>
     $g = $script:Gui; $s = $g.S
     $p = Get-MbtGuiPeriod $s
     if ($g.ContainsKey('PeriodHolder') -and $g.PeriodHolder) { $g.PeriodHolder.Content = $(if ($p.Problem) { New-GuiMessage -Kind bad -Icon x -Text $p.Problem } else { $null }) }
+    if ($g.Browsers.ContainsKey('export')) { Update-MbtGuiPeriodRow $g.Browsers['export'] }
     if ((Get-MbtGuiScreen) -eq 'exFrom') { Update-MbtGuiExportFromFooter }
 }
 
-function New-MbtGuiPeriodCard {
-    <# The card "Period" of the From page: every date (the choice we recommend), or the items that arrived between two days; one may be left empty. #>
-    $g = $script:Gui; $s = $g.S
-    $between = ($s.Period -ieq 'between')
-    $holder = [Windows.Controls.ContentControl]::new(); $holder.Name = 'PeriodProblem'
-    $g.PeriodHolder = $holder
-    $content = [Collections.Generic.List[object]]::new()
-    $content.Add((New-GuiOption -Type Radio -Group period -Title 'All dates (recommended)' -Hint 'Every item of the folders you ticked, whatever its date.' -Checked (-not $between) -OnChange { $s.Period = 'all'; Show-MbtGuiPage }))
-    $content.Add((New-GuiOption -Type Radio -Group period -Title 'Only items that arrived between' -Hint 'Both days are included. Leave one day empty for no limit on that side.' -Checked $between -OnChange { $s.Period = 'between'; Show-MbtGuiPage }))
-    if ($between) {
-        $first = New-GuiDatePicker -Value ([string]$s.ArrFrom) -Automation 'Period from' -OnChange { param($x, $e) $s.ArrFrom = ConvertTo-MbtGuiPeriodDay $x.SelectedDate; Update-MbtGuiPeriodState }
-        $last = New-GuiDatePicker -Value ([string]$s.ArrTo) -Automation 'Period to' -OnChange { param($x, $e) $s.ArrTo = ConvertTo-MbtGuiPeriodDay $x.SelectedDate; Update-MbtGuiPeriodState }
-        $grid = [Windows.Controls.Grid]::new(); $grid.Margin = [Windows.Thickness]::new(28, 8, 0, 0)
-        foreach ($i in 0, 1) { $col = [Windows.Controls.ColumnDefinition]::new(); $col.Width = [Windows.GridLength]::new(1, 'Star'); $grid.ColumnDefinitions.Add($col) }
-        $left = New-GuiStack @((New-GuiText 'From' 'Label'), $first)
-        $right = New-GuiStack @((New-GuiText 'To' 'Label'), $last); $right.Margin = [Windows.Thickness]::new(12, 0, 0, 0)
-        [Windows.Controls.Grid]::SetColumn($right, 1)
-        [void]$grid.Children.Add($left); [void]$grid.Children.Add($right)
-        $content.Add($grid)
-        $holder.Margin = [Windows.Thickness]::new(28, 8, 0, 0)
+function Update-MbtGuiPeriodRow {
+    <# The line "Period: ..." under the selection of the browser of an export, with its buttons: Change (opens the days, Done closes them) and, once a period is chosen, All dates. #>
+    param($Browser)
+    $g = $script:Gui
+    if (-not $g -or -not $g.ContainsKey('S') -or -not $g.S) { return }
+    $s = $g.S
+    $row = $Browser.C.PeriodRow
+    $row.Children.Clear()
+    if ($s.Task -ne 'export') { $row.Visibility = 'Collapsed'; return }
+    $row.Visibility = 'Visible'
+    $p = Get-MbtGuiPeriod $s
+    $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items that $($p.Text)" } else { '**Period:** all dates (recommended)' }
+    $t = New-GuiText $text 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
+    $row.Children.Add($t) | Out-Null
+    $change = New-GuiButton -Text $(if ($s.PeriodOpen) { 'Done' } else { 'Change' }) -Small -Name 'PeriodChange' -OnClick { Switch-MbtGuiPeriodDetail }
+    [Windows.Automation.AutomationProperties]::SetName($change, $(if ($s.PeriodOpen) { 'Close the period' } else { 'Change the period' }))
+    $change.Margin = [Windows.Thickness]::new(14, 0, 0, 0)
+    $row.Children.Add($change) | Out-Null
+    if ($p.Chosen) {
+        $all = New-GuiButton -Text 'All dates' -Small -Name 'PeriodAll' -OnClick { Reset-MbtGuiPeriod }
+        [Windows.Automation.AutomationProperties]::SetName($all, 'Take all dates')
+        $all.Margin = [Windows.Thickness]::new(8, 0, 0, 0)
+        $row.Children.Add($all) | Out-Null
     }
-    $content.Add($holder)
+}
+
+function Update-MbtGuiPeriodDetail {
+    <# The two days, the problem line and the hint, under the line of the period, while it is open. #>
+    $g = $script:Gui; $s = $g.S
+    if (-not $g.Browsers.ContainsKey('export')) { return }
+    $detailHost = $g.Browsers['export'].C.PeriodDetail
+    $g.PeriodHolder = $null
+    if (-not $s.PeriodOpen) { $detailHost.Content = $null; return }
+    $first = New-GuiDatePicker -Value ([string]$s.ArrFrom) -Automation 'Period from' -OnChange { param($x, $e) $s.ArrFrom = ConvertTo-MbtGuiPeriodDay $x.SelectedDate; Set-MbtGuiPeriodChoice }
+    $last = New-GuiDatePicker -Value ([string]$s.ArrTo) -Automation 'Period to' -OnChange { param($x, $e) $s.ArrTo = ConvertTo-MbtGuiPeriodDay $x.SelectedDate; Set-MbtGuiPeriodChoice }
+    $days = [Windows.Controls.Grid]::new()
+    foreach ($i in 0, 1, 2) { $col = [Windows.Controls.ColumnDefinition]::new(); $col.Width = $(if ($i -eq 2) { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }); $days.ColumnDefinitions.Add($col) }
+    $fromLabel = New-GuiText 'From' 'Small' -NoWrap; $fromLabel.VerticalAlignment = 'Center'; $fromLabel.Margin = [Windows.Thickness]::new(0, 0, 8, 0)
+    $toLabel = New-GuiText 'To' 'Small' -NoWrap; $toLabel.VerticalAlignment = 'Center'; $toLabel.Margin = [Windows.Thickness]::new(18, 0, 8, 0)
+    $left = New-GuiStack @($fromLabel, $first) -Orientation Horizontal
+    $right = New-GuiStack @($toLabel, $last) -Orientation Horizontal
+    [Windows.Controls.Grid]::SetColumn($right, 1)
+    [void]$days.Children.Add($left); [void]$days.Children.Add($right)
+    $holder = [Windows.Controls.ContentControl]::new(); $holder.Name = 'PeriodProblem'; $holder.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    $g.PeriodHolder = $holder
     $problem = (Get-MbtGuiPeriod $s).Problem
     if ($problem) { $holder.Content = New-GuiMessage -Kind bad -Icon x -Text $problem }
-    $content.Add((New-GuiText '**Arrived** is the date the item was created in the mailbox. For mail that was migrated or imported into the mailbox, that is the date of the import, not the original date of the message. Messages you tick one by one are always exported, whatever their date.' 'Hint'))
-    return (New-GuiCard -Title 'Period' -Content $content.ToArray())
+    $hint = New-GuiText '**Arrived** is the date the item was created in the mailbox. For mail that was migrated or imported into the mailbox, that is the date of the import, not the original date of the message. Both days are included; leave one empty for no limit on that side. Messages you tick one by one are always exported, whatever their date.' 'Hint'
+    $detailHost.Content = (New-GuiStack @($days, $holder, $hint))
+}
+
+function Set-MbtGuiPeriodChoice {
+    <# A day was picked or cleared: a period is chosen as soon as a day is set, and all dates when both are empty. #>
+    $s = $script:Gui.S
+    $s.Period = $(if ($s.ArrFrom -or $s.ArrTo) { 'between' } else { 'all' })
+    Update-MbtGuiPeriodState
+}
+
+function Switch-MbtGuiPeriodDetail {
+    <# Change opens the days, Done closes them. #>
+    $s = $script:Gui.S
+    $s.PeriodOpen = -not $s.PeriodOpen
+    Update-MbtGuiPeriodDetail
+    Update-MbtGuiPeriodState
+}
+
+function Reset-MbtGuiPeriod {
+    <# All dates: no period, no day. #>
+    $s = $script:Gui.S
+    $s.Period = 'all'; $s.ArrFrom = ''; $s.ArrTo = ''; $s.PeriodOpen = $false
+    Update-MbtGuiPeriodDetail
+    Update-MbtGuiPeriodState
 }
 
 #endregion
@@ -400,11 +447,13 @@ function Build-MbtGuiExportFromPage {
     $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
     $g.ExportSelection = $sel
     $left = New-GuiStack @((New-MbtGuiSignInCard 'export'))
-    if ($s.Signed) { $left.Children.Add((New-MbtGuiLocationsCard)) | Out-Null; $left.Children.Add((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s))) | Out-Null; $left.Children.Add((New-MbtGuiPeriodCard)) | Out-Null }
+    if ($s.Signed) { $left.Children.Add((New-MbtGuiLocationsCard)) | Out-Null; $left.Children.Add((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s))) | Out-Null }
     else { $left.Children.Add((New-MbtGuiSelectionCard $sel)) | Out-Null }
     if ($s.Signed) {
         $right = [Windows.Controls.Grid]::new()
         Place-MbtGuiBrowser $browser $right
+        Update-MbtGuiPeriodRow $browser
+        Update-MbtGuiPeriodDetail
     } else {
         $ico = New-GuiIcon mail 22 'MbtBrandText'; $ico.HorizontalAlignment = 'Center'
         $t1 = New-GuiText 'Sign in to look inside the mailbox.' 'Muted'; $t1.TextAlignment = 'Center'; $t1.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
@@ -726,7 +775,7 @@ function New-MbtGuiExportPlanWhat {
     $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
     $periodFact = @(); if ($period.Active) { $periodFact = @(, @('Period', "items that $($period.Text) $([char]0x00B7) the exact numbers come when the items are listed")) }
     $facts = New-GuiFacts ($shared + $periodFact + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
-        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)) $([char]0x00B7) $(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $(if ($period.Active) { "$etaText It can be shorter: only the items of the period are downloaded." } else { $etaText }) 'Body'))))
+        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)) $([char]0x00B7) $(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $(if ($period.Active) { $etaText.TrimEnd('.', ' ') + '. It can be shorter: only the items of the period are downloaded.' } else { $etaText }) 'Body'))))
     return (New-GuiCard -Title 'What will be done' -Content @($ol, $facts))
 }
 

@@ -274,23 +274,61 @@ foreach ($theme in 'Light', 'Dark') {
         & $walk $root
         return $found.ToArray()
     }
-    Check 'period (From): all dates is the default; the second choice shows the two days and says what "arrived" means and what is always exported' {
+    Check 'period (From): the line under the browser says all dates by default, in the tray of the browser and in view, with a Change button and no All dates button' {
         Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
-        $a = (Find-Text $g.C.Page.Content 'All dates (recommended)') -and (Find-Text $g.C.Page.Content 'Only items that arrived between') -and $g.S.Period -eq 'all' -and @(Find-ByAutomationName $g.C.Page.Content 'Period from').Count -eq 0 -and $g.C.Primary.IsEnabled
-        $g.S.Period = 'between'; Show-MbtGuiPage; Measure-Window $window
-        $b = @(Find-ByAutomationName $g.C.Page.Content 'Period from').Count -eq 1 -and @(Find-ByAutomationName $g.C.Page.Content 'Period to').Count -eq 1 -and (Find-Text $g.C.Page.Content 'not the original date of the message') -and (Find-Text $g.C.Page.Content 'whatever their date')
-        $a -and $b }
-    Check 'period (From): the first day after the last one says so and greys Continue; a valid pair turns it on; no day at all is refused; one day alone is fine' {
+        $b = Get-MbtGuiBrowser 'export'
+        $row = Get-AllText $b.C.PeriodRow
+        $change = @(Find-ByAutomationName $b.C.PeriodRow 'Change the period')
+        $top = $b.C.PeriodRow.TransformToAncestor($g.C.PageScroll).Transform([Windows.Point]::new(0, 0)).Y
+        $b.C.PeriodRow.Visibility -eq 'Visible' -and ($row -join ' ') -match 'Period: ?all dates \(recommended\)' -and $change.Count -eq 1 -and @(Find-ByAutomationName $b.C.PeriodRow 'Take all dates').Count -eq 0 -and $g.S.Period -eq 'all' -and $null -eq $b.C.PeriodDetail.Content -and $top -ge 0 -and ($top + $b.C.PeriodRow.ActualHeight) -le $g.C.PageScroll.ViewportHeight }
+    Check 'period (From): Change opens the two days with the hint about migrated mail and about messages ticked one by one, Done closes them, and nothing is chosen while no day is set' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        Switch-MbtGuiPeriodDetail; Measure-Window $window
+        $a = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1 -and @(Find-ByAutomationName $b.C.PeriodDetail 'Period to').Count -eq 1 -and (Find-Text $b.C.PeriodDetail 'not the original date of the message') -and (Find-Text $b.C.PeriodDetail 'whatever their date') -and $g.S.PeriodOpen -and $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
+        $d = @(Find-ByAutomationName $b.C.PeriodRow 'Close the period').Count -eq 1
+        Switch-MbtGuiPeriodDetail; Measure-Window $window
+        $c = -not $g.S.PeriodOpen -and $null -eq $b.C.PeriodDetail.Content
+        $a -and $d -and $c }
+    Check 'period (From): picking a day chooses the period and the line says it, with All dates; All dates puts everything back' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        Switch-MbtGuiPeriodDetail; Measure-Window $window
+        (@(Find-ByAutomationName $b.C.PeriodDetail 'Period from')[0]).SelectedDate = [datetime]::new(2026, 1, 1)
+        (@(Find-ByAutomationName $b.C.PeriodDetail 'Period to')[0]).SelectedDate = [datetime]::new(2026, 3, 31)
+        $a = $g.S.Period -eq 'between' -and $g.S.ArrFrom -eq '2026-01-01' -and $g.S.ArrTo -eq '2026-03-31' -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived between 2026-01-01 and 2026-03-31' -and @(Find-ByAutomationName $b.C.PeriodRow 'Take all dates').Count -eq 1
+        Reset-MbtGuiPeriod; Measure-Window $window
+        $c = $g.S.Period -eq 'all' -and $g.S.ArrFrom -eq '' -and $g.S.ArrTo -eq '' -and -not $g.S.PeriodOpen -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'all dates \(recommended\)' -and $null -eq $b.C.PeriodDetail.Content
+        $a -and $c }
+    Check 'period (From): the line of a chosen period is in the scenarios, with the days open or closed, and the left column has no Period card' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriod'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $a = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived between 2026-01-01 and 2026-03-31' -and $null -eq $b.C.PeriodDetail.Content -and -not (Find-Text $g.C.Page.Content 'All dates (recommended) ') -and (Find-Text $g.C.Page.Content 'at most')
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-Window $window
+        $o = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpenEnd'; Measure-Window $window
+        $e = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived from 2025-07-01' -and $g.C.Primary.IsEnabled
+        $a -and $o -and $e }
+    Check 'period (From): the first day after the last one says so and greys Continue; a valid pair turns it on' {
         Reset-State; Set-MbtGuiScenario 'ExportFromPeriodInvalid'; Measure-Window $window
-        $a = (Find-Text $g.C.Page.Content 'The first date is after the last date') -and -not $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Problem
-        $from = @(Find-ByAutomationName $g.C.Page.Content 'Period from')[0]; $to = @(Find-ByAutomationName $g.C.Page.Content 'Period to')[0]
+        $b = Get-MbtGuiBrowser 'export'
+        $a = (Find-Text $b.C.PeriodDetail 'The first date is after the last date') -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'check the days below' -and -not $g.C.Primary.IsEnabled
+        $from = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from')[0]; $to = @(Find-ByAutomationName $b.C.PeriodDetail 'Period to')[0]
         $from.SelectedDate = [datetime]::new(2026, 2, 1)
-        $b = $g.S.ArrFrom -eq '2026-02-01' -and $g.C.Primary.IsEnabled -and -not (Find-Text $g.C.Page.Content 'The first date is after the last date')
+        $c = $g.S.ArrFrom -eq '2026-02-01' -and $g.C.Primary.IsEnabled -and -not (Find-Text $b.C.PeriodDetail 'The first date is after the last date')
         $from.SelectedDate = $null; $to.SelectedDate = $null
-        $c = $g.S.ArrFrom -eq '' -and $g.S.ArrTo -eq '' -and (Find-Text $g.C.Page.Content 'Pick at least one date') -and -not $g.C.Primary.IsEnabled
+        $d = $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
         $to.SelectedDate = [datetime]::new(2026, 3, 31)
-        $d = $g.S.ArrTo -eq '2026-03-31' -and $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Text -eq 'arrived until 2026-03-31'
-        $a -and $b -and $c -and $d }
+        $f = $g.S.ArrTo -eq '2026-03-31' -and $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Text -eq 'arrived until 2026-03-31'
+        $a -and $c -and $d -and $f }
+    Check 'period (From): the line is in view at 1366 x 700 too, days open or closed' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-WindowAt $window 1366 700
+        $b = Get-MbtGuiBrowser 'export'
+        $top = $b.C.PeriodRow.TransformToAncestor($g.C.PageScroll).Transform([Windows.Point]::new(0, 0)).Y
+        $detailBottom = $b.C.PeriodDetail.TransformToAncestor($g.C.PageScroll).Transform([Windows.Point]::new(0, $b.C.PeriodDetail.ActualHeight)).Y
+        $ok = $top -ge 0 -and $top -lt $g.C.PageScroll.ViewportHeight -and $detailBottom -le ($g.C.PageScroll.ViewportHeight + 1)
+        Measure-Window $window
+        $ok }
     Check 'period: the days are kept as yyyy-MM-dd whatever the culture of the window, and an end of the period alone or a start alone is an open side' {
         $was = [Globalization.CultureInfo]::CurrentCulture
         try {
@@ -301,12 +339,16 @@ foreach ($theme in 'Light', 'Dark') {
         Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
         $cmd = Get-CommandLineText
         $atMost = { @(Get-AllText $g.C.Page.Content | Where-Object { $_ -match '^at most [\d,]+$' }).Count -gt 0 }
-        $a = @(($g.S.PlanState -eq 'ok'), (Find-Text $g.C.Page.Content 'keeping the ones that arrived between 2026-01-01 and 2026-03-31'), (& $atMost), (Find-Text $g.C.Page.Content 'The period is applied while the items are listed'), (Find-Text $g.C.Page.Content 'the most the period leaves'))
+        $a = @(($g.S.PlanState -eq 'ok'), (Find-Text $g.C.Page.Content 'keeping the ones that arrived between 2026-01-01 and 2026-03-31'), (& $atMost), (Find-Text $g.C.Page.Content 'The period is applied while the items are listed'), (Find-Text $g.C.Page.Content 'the period is applied while the items are listed'))
         $b = @(($cmd -match '-SelectionFile \S+ -ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31 '), $g.C.Primary.IsEnabled)
         $g.S.Period = 'all'; Show-MbtGuiPage; Measure-Window $window
         $c = @(((Get-CommandLineText) -notmatch 'Arrived'), -not (& $atMost), -not (Find-Text $g.C.Page.Content 'The period is applied'))
         if (($a + $b + $c) -contains $false) { throw ('a=' + ($a -join ',') + ' b=' + ($b -join ',') + ' c=' + ($c -join ',') + ' cmd=' + $cmd) }
         $true }
+    Check 'period (Verify): the Time fact and the plan check read as sentences' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
+        $t = (Get-AllText $g.C.Page.Content) -join ' | '
+        $t -notmatch '[a-z] It can be shorter' -and $t -match '\. It can be shorter: only the items of the period are downloaded\.' -and $t -match 'counted by the service: at most [\d,]+ items in \d+ folders?, .*\(the period is applied while the items are listed\)' -and $t -notmatch 'the most the period leaves' }
     Check 'period (Verify): a period or an end of it that changes voids the plan; the store of an export with a period is its own folder' {
         Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'
         $k1 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-04-30'; $k2 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-03-31'; $k3 = Get-MbtGuiPlanKey
