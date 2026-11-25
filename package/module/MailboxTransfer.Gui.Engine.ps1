@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - the real engine adapter (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -64,7 +64,7 @@ function New-MbtGuiRealEngine {
     $e.Readiness = { param($Work)
         $lights = [Collections.Generic.List[object]]::new()
         $ps = $PSVersionTable.PSVersion
-        $lights.Add(@{ Name = 'PowerShell 7.5 or later'; Detail = $ps.ToString(); Ok = ($ps -ge [version]'7.5') })
+        $lights.Add(@{ Name = 'PowerShell 7.6 or later'; Detail = $ps.ToString(); Ok = ($ps -ge [version]'7.6') })
         $msal = $null; try { $msal = Find-MbtMsal } catch { $msal = $null }
         $window = $null; if ($msal) { try { $window = Get-MbtWindowsSignIn } catch { $window = $null } }
         $msalDetail = if (-not $msal) { 'not found: see the guide, "Start here"' }
@@ -89,40 +89,65 @@ function New-MbtGuiRealEngine {
 
     $e.Jobs = {
         param($Work)
-        # a batch is one line (its numbers and its report; a batch is run from the command line), and the jobs of a batch that is complete are not listed one by one; the jobs of a batch that is not
-        # complete are listed with the name of the batch, three at most
-        $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 3)
+        # a batch is one line (its numbers and its report; a batch is run from the command line); the jobs of a batch that is complete are not listed one by one, the jobs of a batch that is not
+        # complete are listed with the name of the batch, three at most. The lines of the jobs that are not finished come first, then the finished ones (Finished = $true).
+        $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 20)
         $lines = [Collections.Generic.List[object]]::new()
         foreach ($b in $batches) {
-            $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
+            $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Mode -ne 'Export') { 'import' + $(if ($b.Total -eq 1) { '' } else { 's' }) } elseif ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
             if ($b.Partial + $b.Running) { $sub += ', {0} not complete' -f (Format-MbtNumber ($b.Partial + $b.Running)) }
             if ($b.Failed) { $sub += ', {0} failed' -f (Format-MbtNumber $b.Failed) }
             if ($b.Pending) { $sub += ', {0} not started' -f (Format-MbtNumber $b.Pending) }
             if ($b.State -ne 'complete') { $sub += '. Run it again from the command line to continue.' }
-            $lines.Add([pscustomobject]@{ Task = 'batch'; Title = "Batch $($b.Id)"; Sub = $sub; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id })
+            $lines.Add([pscustomobject]@{ Task = 'batch'; Kind = 'batch'; Title = "$(if ($b.Mode -ne 'Export') { 'Import batch' } else { 'Batch' }) $($b.Id)"; Sub = $sub; Sub2 = ''; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id; Name = $b.Id; Finished = ($b.State -eq 'complete'); CanContinue = $false })
         }
         $finished = @($(foreach ($b in @(Get-MbtBatchList -WorkFolder $Work -Limit 1000 | Where-Object { $_.State -eq 'complete' })) { $b.Jobs }))
+        $listing = Get-MbtJobListing -WorkFolder $Work -FinishedLimit 50 -ExcludeFolder $finished
         $ofBatch = 0
-        foreach ($j in @(Get-MbtJob -WorkFolder $Work -Limit 50 -ExcludeFolder $finished)) {
+        foreach ($j in @($listing.Unfinished) + @($listing.Finished)) {
             if ($j.Batch -and $ofBatch -ge 3) { continue }
             if ($j.Batch) { $ofBatch++ }
-            $lines.Add($j)
-        }
-        $out = foreach ($j in @($lines | Select-Object -First 8)) {
-            if ($j.PSObject.Properties['Report']) { $j; continue }
-            $state = switch ($j.EffectiveState) { 'complete' { 'ok' } 'error' { 'warn' } 'needs-decision' { 'warn' } default { 'run' } }
-            $counts = $j.Counts
-            $sub = switch ($j.EffectiveState) {
-                'complete' { 'finished ' + $j.Updated.ToLocalTime().ToString('yyyy-MM-dd') }
-                'needs-decision' { 'Almost done: an item needs your decision.' }
-                'error' { 'Stopped by an error. Nothing is lost.' }
-                default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiQuantity $counts.done 'item') done" } else { '' }) }
-            }
-            if ($j.Alive) { $sub = 'running elsewhere' }
+            $isDone = [string]$j.EffectiveState -eq 'complete'
+            $state = switch ([string]$j.EffectiveState) { 'complete' { 'ok' } 'error' { 'warn' } 'needs-decision' { 'warn' } default { 'run' } }
+            $sub = [string]$j.Why
             if ($j.Batch) { $sub = "batch $($j.Batch) - $sub" }
-            [pscustomobject]@{ Task = $j.Task; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; State = $state; Button = $(if ($j.EffectiveState -eq 'complete' -or $j.Alive) { 'Open' } else { 'Continue' }); Folder = $j.Folder }
+            $canContinue = (-not $isDone) -and (-not [bool]$j.Alive)
+            $lines.Add([pscustomobject]@{ Task = $j.Task; Kind = 'job'; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; Sub2 = [string]$j.Progress; State = $state; Button = $(if ($canContinue) { 'Continue' } else { 'Open' }); Folder = $j.Folder; Name = $j.Name; Batch = $j.Batch; Finished = $isDone; CanContinue = $canContinue; Alive = [bool]$j.Alive })
         }
-        @($out)
+        # not finished first, every one of them; the batches and the jobs each newest first
+        @(@($lines | Where-Object { -not $_.Finished }) + @($lines | Where-Object { $_.Finished }))
+    }.GetNewClosure()
+
+    # what Delete would do for a job (and why it would be refused), with the size of the copy store: the worker reads it, the page asks the question
+    $e.JobDeleteInfo = { param($Work, $Name, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work, $Name) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($work, $name)
+            $job = Find-MbtJob -WorkFolder $work -Name $name
+            if (-not $job) { throw "The job $name is not there any more." }
+            Get-MbtJobRemovalPlan -WorkFolder $work -Job $job -WithSize
+        }
+    }.GetNewClosure()
+
+    # the deletion itself (the folder of the job, and the copy store when it was ticked): the engine checks everything again
+    $e.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work, $Name, [bool]$WithStore) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($work, $name, $withStore)
+            try { $null = Start-MbtLog -Directory (Join-Path $work 'logs') } catch { Write-Verbose "no log: $_" }
+            Remove-MbtJob -WorkFolder $work -Name $name -IncludeStore:$withStore -Confirm:$false
+        }
+    }.GetNewClosure()
+
+    # what Continue does for a job, for its mode, read from its folder (the Resume view)
+    $e.JobResume = { param($Work, $Name)
+        $job = Find-MbtJob -WorkFolder $Work -Name $Name
+        if (-not $job) { return $null }
+        $request = Read-MbtJobRequest -Folder $job.Folder
+        $description = Get-MbtJobDescription -Job $job
+        $text = Get-MbtJobResumeText -Job $job -Request $request
+        [pscustomobject]@{
+            Name = $job.Name; Title = $(if ($job.Title) { [string]$job.Title } else { [string]$job.JobId }); Kind = $description.Kind; Why = $description.Why; Progress = $description.Progress
+            Heading = $text.Heading; Already = $text.Already; Again = $text.Again; From = $text.From; Notes = $text.Notes; Problem = $text.Problem; Started = $job.Started; Updated = $job.Updated
+        }
     }.GetNewClosure()
 
     # "All jobs": the overview page of the work folder, written by the worker; OnDone gets its path
@@ -638,8 +663,8 @@ function Get-MbtGuiFindingLevel {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD1z8+tiTnGIgZJ
-# kSOJr812d8PEkEXN687EIu8sdkt/0qCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCdHiT2VJEFj81J
+# sShlHmTQm76Y+RTG6XPX17RtDNRxe6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -716,23 +741,23 @@ function Get-MbtGuiFindingLevel {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBjvBl2YNeL
-# KExcT2fhet32yerowFbnBLqKEgvyF/czhTANBgkqhkiG9w0BAQEFAASCAgBdykLK
-# 3+y+2tlPwcZll+w94UUhYHWs0ZlWUbAlVIV6RYCG1qXkHZSdasGYH6EU40Y6SWXr
-# s4WkV4BxLf8G1oWSgqDeMnkC4d/yvFc9Xw/CmxRxwRI6JMbtwZNMYFeib/bYFlx+
-# ea2F/JrdbNbx/JXrueZ+fM0ggRewnbV/17cNH9ZUw2WIWIbr7fEE2Lw2j1r3n3BA
-# D0phgBxDa3UpPgvbWXArabGCqVk2FzCOT8VcnEUfMYxsU9usbCsjdiNkLKEjKcKi
-# ul7dWcP7F/kHJCwd0RD+3qKNtkszHNnv7nFBhCNQTgFrc14VmXGWPQtCWf1+Q5FE
-# 7UiXPsNb2aQIsINyUKwC43+1kJB6Jqz+G2RZ3i6IMQqCYhB/ohSkoYAyiWxkBmhE
-# JRnJVvpzQ6ZUXrL1BylvzrY8utLXn2+j2p0pibWWiQdsPnZ0Th4a44Pud6OEkQW7
-# xiNRooUolnAYK+UJw2lLAwYZlSDZNvVfKqIYJM/5yydZKyEdM5tsSvcf2EwkcLwc
-# CH+A/pmHRmw2/4ymQhs1081Eji9bQN8r5pkQzK1M+EYiNiMfbjH3YToqwIHSGvRG
-# isx5jWnVYSAbLZ7PCPJGa6cGEZtwExWa6FCJMYLvLi3o/riwFTlG0TQa8shvgJYb
-# UTHp8u0VKA/Pk9aHpiR9Zs5XEdpZbvJ6ekYS96GCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDv+AuKf4LH
+# yPMIKqBYPMLmLRnyoUUApohLOlKxMX+w0zANBgkqhkiG9w0BAQEFAASCAgCcfbFx
+# J55uv/jnGZ2XNPZpn8njXN4hLOSWwCqO2jPDS2HWG2a3OxTV5o2O6phsWjl1p8Q5
+# 1KWZ9WeLT52SzrZ8k8lkmdryx325OX7HxjJrPzDEpfDLFZRa7Dov4Nj61m2VYWOs
+# v/qZGuv/AlzAL3D3OnmsCSeX0Snm+OwMNKIcLlgA9Flq+bOqYliprzdsy4uAg3ID
+# GB82/rUhonIQEjHdZfUnAWox2sXjv867aHHi7u0apK8/11jcTb2++LviCmVDevtM
+# pDxI0hJiaK0hrrM5hK2q3TD8pEGqW4L/Y3di8sTspIa5oxvIZ/9M8U4ir8IBS0Gk
+# g96DmJp8rJEN5CWNlbIiOx/+H82aNhlTxpaWqB0t7eYlv5TiBdN4/tdYT3gdM51b
+# LtiVNYD3IEhbONGrjHmHliiChvAkxjVqHLFc7XyPIC9H9To1YMkXjaGnVkfanVMM
+# CHZHmIwlme6f0AtX9k39zGn7e1yjdqLgLrhOevCjdEtNcoCOVBkAYj/O3rEshMsO
+# Yha3JAeP9R5B8iILKbpNZvNcNAojF3UfH8p8EjRfweKeQEKJm1DiCnPwW5HqIE0M
+# bcY5x3YoI2UgYaIF2PksGoJsrBXSlxH2h2U3Eb5Oxd/YSyFEZSVb6I8NVBldR6bR
+# jDZgvbm80YaxcaV37pHB3zIKH+pGj2xfb07kdKGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIKvy6DtcZZClOS936CGz0lPHQwe98zBSTs/g7Rd+NDbYAghtz+hd1D8Z
-# 7hgPMjAyNjExMTUxNDM1MDZaMAMCAQECECd6KKNOH102MJfY3GgafJKgghGnMIIE
+# BAIBBQAEIEmamJMp0PWbr+6N7qtRfqw5tp0iXLHEigmVqYNu1NInAghOiRnZ78xx
+# yxgPMjAyNjExMjUxNTM3MDZaMAMCAQECEBF9Uy8rjPI5L9RsWMmvmZGgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -831,13 +856,13 @@ function Get-MbtGuiFindingLevel {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUwNlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIFRl
-# Bm73YG9ctC10rsGcidGJzCsH2ko2DmLEtrVVKFO2MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcwNlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBrX
+# t2gMS6VUpU2rQY54LewNJqT0Ntm8TG9bzS431IF0MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiBZiUYG6F9mUW8sFXVhurSeBhtq0S+1MTcd/PtkpwcCbgIhALkL
-# IAAQz2ik7O/437VGRUhU8xIRIhA7wPOOYarodF8G
+# zj0EAwIERzBFAiAhYCExw64aNH+DC7HFfl+U0fUsN3mUCxSvb9EoYsxcWgIhAKgi
+# I579l8FSeved9EUE3P2CIkJRfn7jkPn0A2f5iyfk
 # SIG # End signature block

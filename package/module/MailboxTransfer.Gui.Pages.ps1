@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - the pages Setup, Task (What, From, To), Verify (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -20,6 +20,8 @@ $script:PageBuilders = @{
     exFrom = { Build-MbtGuiExportFromPage }
     exTo = { Build-MbtGuiExportToPage }
     exPlan = { Build-MbtGuiExportPlanPage }
+    mcTo = { Build-MbtGuiMailCopyToPage }
+    mcPlan = { Build-MbtGuiMailCopyPlanPage }
     imFrom = { Build-MbtGuiImportFromPage }
     imTo = { Build-MbtGuiImportToPage }
     imPlan = { Build-MbtGuiImportPlanPage }
@@ -29,6 +31,7 @@ $script:PageBuilders = @{
     opFrom = { Build-MbtGuiOpenPage }
     cpTo = { Build-MbtGuiCopyToPage }
     cpPlan = { Build-MbtGuiCopyPlanPage }
+    resume = { Build-MbtGuiResumePage }
     run = { Build-MbtGuiRunPage }
     done = { Build-MbtGuiDonePage }
 }
@@ -94,9 +97,10 @@ function Format-MbtGuiSelectionFooter {
 }
 
 function New-MbtGuiSelectionCard {
-    param($Selection)
+    param($Selection, $Period)
     if ($Selection.Items -gt 0) {
-        $body = New-GuiFacts @(@('Items', (Format-MbtGuiSelectionItems $Selection)), @('Size', (Format-MbtGuiSelectionSize $Selection)), @('Folders', [string]$Selection.Folders))
+        $atMost = [bool]($Period -and $Period.Active)
+        $body = New-GuiFacts @(@('Items', (Format-MbtGuiSelectionItems $Selection -AtMost:$atMost)), @('Size', ($(if ($atMost) { 'at most ' } else { '' }) + (Format-MbtGuiSelectionSize $Selection))), @('Folders', [string]$Selection.Folders))
     } else { $body = New-GuiText 'Tick a folder or some messages in the browser.' 'Hint' }
     return (New-GuiCard -Title 'Your selection' -Content @($body))
 }
@@ -135,34 +139,76 @@ function New-MbtGuiTaskCard {
     return $btn
 }
 
+function New-MbtGuiJobRow {
+    <# One job of the list: the icon of its state, its title, why it stopped and when, the step it reached, and its buttons (Continue for a job that is not finished, Open the report, Delete). A batch has its report only. #>
+    param([Parameter(Mandatory)]$Job, [bool]$First)
+    $state = [string](Get-MbtGuiProp $Job 'State' 'run')
+    $isBatch = ((Get-MbtGuiProp $Job 'Task' '') -eq 'batch')
+    $glyphName = switch ($state) { 'ok' { 'check' } 'warn' { 'warn' } default { 'pause' } }
+    $brush = switch ($state) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } default { 'MbtBrandText' } }
+    if ([bool](Get-MbtGuiProp $Job 'Alive' $false)) { $glyphName = 'play'; $brush = 'MbtSuccess' }
+    $row = [Windows.Controls.Grid]::new()
+    foreach ($w in 'Auto', '*') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }; $row.ColumnDefinitions.Add($cd) }
+    $ic = New-GuiIcon $glyphName 14 $brush; $ic.Margin = [Windows.Thickness]::new(0, 2, 12, 0); $ic.VerticalAlignment = 'Top'
+    $txt = [Windows.Controls.StackPanel]::new(); [Windows.Controls.Grid]::SetColumn($txt, 1)
+    $t1 = New-GuiText ([string](Get-MbtGuiProp $Job 'Title' '')) 'Body'; $t1.FontSize = 13; $t1.FontWeight = [Windows.FontWeights]::SemiBold
+    $txt.Children.Add($t1) | Out-Null
+    $why = [string](Get-MbtGuiProp $Job 'Sub' '')
+    if ($why) { $txt.Children.Add((New-GuiText $why 'Small')) | Out-Null }
+    $progress = [string](Get-MbtGuiProp $Job 'Sub2' '')
+    if ($progress) { $txt.Children.Add((New-GuiText $progress 'Small')) | Out-Null }
+    $bar = [Windows.Controls.WrapPanel]::new(); $bar.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    if ($isBatch) {
+        $bar.Children.Add((New-GuiButton -Text ([string](Get-MbtGuiProp $Job 'Button' 'Open the report')) -Small -OnClick { Resume-MbtGuiJob $Job }.GetNewClosure())) | Out-Null
+    } else {
+        if ([bool](Get-MbtGuiProp $Job 'CanContinue' $false)) { $bar.Children.Add((New-GuiButton -Text 'Continue' -Small -Icon play -OnClick { Resume-MbtGuiJob $Job }.GetNewClosure())) | Out-Null }
+        $bar.Children.Add((New-GuiButton -Text 'Open the report' -Small -Icon doc -OnClick { Open-MbtGuiJobReport $Job }.GetNewClosure())) | Out-Null
+        $bar.Children.Add((New-GuiButton -Text 'Delete' -Small -Icon trash -OnClick { Show-MbtGuiJobDelete $Job }.GetNewClosure())) | Out-Null
+    }
+    $txt.Children.Add($bar) | Out-Null
+    $row.Children.Add($ic) | Out-Null; $row.Children.Add($txt) | Out-Null
+    $wrap = [Windows.Controls.Border]::new(); $wrap.Child = $row; $wrap.Padding = [Windows.Thickness]::new(0, 9, 0, 9)
+    if (-not $First) { $wrap.BorderThickness = [Windows.Thickness]::new(0, 1, 0, 0); Set-MbtGuiResource $wrap ([Windows.Controls.Border]::BorderBrushProperty) 'DividerStrokeColorDefaultBrush' }
+    return $wrap
+}
+
 function New-MbtGuiJobList {
+    <# The jobs of the work folder: the ones that are not finished first, every one of them, in a list that scrolls inside the card; the finished ones in a fold below. #>
     $g = $script:Gui
     $jobs = @()
     try { $jobs = @(& $g.Engine.Jobs $g.S.WorkFolder) } catch { Write-Verbose "jobs: $_" }
     if (-not $jobs.Count) { return (New-GuiText 'No job yet. A job you stop, or that is not finished, is listed here so you can continue it.' 'Hint') }
+    $open = @($jobs | Where-Object { -not [bool](Get-MbtGuiProp $_ 'Finished' $false) })
+    $done = @($jobs | Where-Object { [bool](Get-MbtGuiProp $_ 'Finished' $false) })
     $stack = [Windows.Controls.StackPanel]::new()
     $first = $true
-    foreach ($j in $jobs) {
-        $row = [Windows.Controls.Grid]::new()
-        $row.Margin = [Windows.Thickness]::new(0, 0, 0, 0)
-        foreach ($w in 'Auto', '*', 'Auto') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }; $row.ColumnDefinitions.Add($cd) }
-        $glyphName = switch ($j.State) { 'ok' { 'check' } 'warn' { 'warn' } default { 'pause' } }
-        $brush = switch ($j.State) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } default { 'MbtBrandText' } }
-        $ic = New-GuiIcon $glyphName 14 $brush; $ic.Margin = [Windows.Thickness]::new(0, 0, 12, 0); $ic.VerticalAlignment = 'Center'
-        $txt = [Windows.Controls.StackPanel]::new(); [Windows.Controls.Grid]::SetColumn($txt, 1)
-        $t1 = New-GuiText $j.Title 'Body'; $t1.FontSize = 13; $t1.FontWeight = [Windows.FontWeights]::SemiBold
-        $t2 = New-GuiText $j.Sub 'Small'
-        $txt.Children.Add($t1) | Out-Null; $txt.Children.Add($t2) | Out-Null
-        $btn = New-GuiButton -Text $j.Button -Small -OnClick { Resume-MbtGuiJob $j }.GetNewClosure()
-        $btn.Margin = [Windows.Thickness]::new(12, 0, 0, 0); $btn.VerticalAlignment = 'Center'
-        [Windows.Controls.Grid]::SetColumn($btn, 2)
-        $row.Children.Add($ic) | Out-Null; $row.Children.Add($txt) | Out-Null; $row.Children.Add($btn) | Out-Null
-        $wrap = [Windows.Controls.Border]::new(); $wrap.Child = $row; $wrap.Padding = [Windows.Thickness]::new(0, 9, 0, 9)
-        if (-not $first) { $wrap.BorderThickness = [Windows.Thickness]::new(0, 1, 0, 0); Set-MbtGuiResource $wrap ([Windows.Controls.Border]::BorderBrushProperty) 'DividerStrokeColorDefaultBrush' }
-        $stack.Children.Add($wrap) | Out-Null
-        $first = $false
+    foreach ($j in $open) { $stack.Children.Add((New-MbtGuiJobRow -Job $j -First $first)) | Out-Null; $first = $false }
+    if (-not $open.Count) { $stack.Children.Add((New-GuiText 'Nothing to continue: every job is finished.' 'Hint')) | Out-Null }
+    if ($done.Count) {
+        $rows = @(for ($i = 0; $i -lt $done.Count; $i++) { New-MbtGuiJobRow -Job $done[$i] -First ($i -eq 0) })
+        $fold = New-GuiMore -Summary "Finished ($($done.Count))" -Content $rows
+        $fold.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+        $stack.Children.Add($fold) | Out-Null
     }
-    return $stack
+    $scroll = [Windows.Controls.ScrollViewer]::new()
+    $scroll.VerticalScrollBarVisibility = 'Auto'; $scroll.HorizontalScrollBarVisibility = 'Disabled'; $scroll.MaxHeight = 380; $scroll.Focusable = $false; $scroll.FontSize = 14
+    $scroll.Content = $stack
+    $scroll.Tag = 'MbtJobList'
+    # the wheel scrolls the list, and the page when the list is at its end
+    Add-MbtGuiHandler $scroll 'PreviewMouseWheel' {
+        param($sender, $e)
+        $atTop = ($e.Delta -gt 0 -and $sender.VerticalOffset -le 0)
+        $atBottom = ($e.Delta -lt 0 -and $sender.VerticalOffset -ge $sender.ScrollableHeight)
+        if (-not ($atTop -or $atBottom)) { return }
+        $e.Handled = $true
+        $parent = [Windows.Media.VisualTreeHelper]::GetParent($sender) -as [Windows.UIElement]
+        if ($parent) {
+            $forward = [Windows.Input.MouseWheelEventArgs]::new($e.MouseDevice, $e.Timestamp, $e.Delta)
+            $forward.RoutedEvent = [Windows.UIElement]::MouseWheelEvent; $forward.Source = $sender
+            $parent.RaiseEvent($forward)
+        }
+    }
+    return $scroll
 }
 
 function New-MbtGuiCheckRow {
@@ -297,7 +343,7 @@ function Build-MbtGuiSetupPage {
 function Build-MbtGuiStartPage {
     $g = $script:Gui; $s = $g.S; $engine = $g.Engine
     $sel = $s.Sel
-    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = 4
+    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') }).Count
     foreach ($k in @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })) {
         $card = New-MbtGuiTaskCard -Key $k -Selected ($sel -eq $k)
         $card.Margin = [Windows.Thickness]::new(0, 0, $(if ($k -eq 'open') { 0 } else { 12 }), 0)
@@ -318,7 +364,7 @@ function Build-MbtGuiStartPage {
     Set-MbtGuiActions -Footer $footer -Label 'Continue' -Enabled ([bool]$sel) -OnClick {
         $s = $script:Gui.S
         $s.Task = $s.Sel
-        $s.Step = $script:Flows[$s.Task].IndexOf($(switch ($s.Task) { 'export' { 'exFrom' } 'import' { 'imFrom' } 'repair' { 'rpFrom' } default { 'opFrom' } }))
+        $s.Step = $script:Flows[$s.Task].IndexOf($(switch ($s.Task) { 'export' { 'exFrom' } 'import' { 'imFrom' } 'repair' { 'rpFrom' } 'mailcopy' { 'exFrom' } default { 'opFrom' } }))
         Initialize-MbtGuiTask
         Show-MbtGuiPage
     }
@@ -342,8 +388,8 @@ function Initialize-MbtGuiTask {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBEW31WcESq3dNa
-# YUM63U94ru1Aj8wrpZXwZWvupnzonaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDVXRbZg+yvITYx
+# bOweXKk7VUCf2ZV7Q8RKQ52gLLSpbKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -420,23 +466,23 @@ function Initialize-MbtGuiTask {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDBk4Vg7h26
-# 1z21c6n794hMucUIkvJiQEymSp0ZaULDcjANBgkqhkiG9w0BAQEFAASCAgBb4fGH
-# eda73UClB0FLPqoD4t4ZuSKpR5fuoT0pV3XuZHd3ABrehUyrhzwbXI6EtijmRXhR
-# 0/lcUeL3tEBH+dcDSExtkApAhXISKv7+d2LGGg9rWhwwQsFZ/ANeflyZ7tDclncZ
-# 6uJ3k8L7X+SFtDerDfp/yKPa/VuwyC9h5lgXr0EgDaQvU+wdF7Pve72jxm0tIQ4c
-# m6bj5ww7iBDYcJYth3jdOWA5xgaAoOgfJ4pKAuZRyyfQFtjRGvW9DeOGq2Z4Blca
-# qule2cuXzOARxEszd1pcmUu3cZl0PhNWpLUSqktMB2GDR2riGNnr0dUF7AVg7Hs8
-# ex8Byo1yNHLMxPhI+HdCAPgBlkRFCHAZZJeNjjCPQSm1mNy29gevn71RQwmBT7ml
-# ERF1F1PAoJ1QdGLNupM3zInqhLvaAXJ1Bw4V0TX7jvnzsabHMHeBl7W8NEBOTBO3
-# dFgJJpbzn8eBWT/brpgsHgkpTd4m+/OyVM+eDW28TYdfjFagjdYkkyF+5yB/ZRmm
-# imffIZ3vPh7TQhwVSJqlZxM9p2Bkn8ZGNBXVq9HGFI8Mr8DXwK6jilx0JHBVGw2j
-# v3IACLgOGErrTA3mP3DFgwbY6G4Fuo1hiCDlHz5/1fbZRBFERMgdlxr8IhcdbN2V
-# MCN6VZBX6ax6uJL/KO7RV9+6IcRTMIDdXhVde6GCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDALZseVbnw
+# ncDMcM59y6qblIPrkMxVqV+HNId1f9o/tTANBgkqhkiG9w0BAQEFAASCAgAIkvz/
+# apFjtaPZXCgTbFicDkchV5/IZTYusnRKr+FDeIfLsZgqw4gynSRfdDZHpvuFU1Wq
+# 5rl28DB4gNKuPPwGH0i37oSxdW/CQs/qZVEDgsHvwiEjQTr8SYv4b1nJXhbIZO0K
+# 2T42LSiNFWYHneo7MbUT/0Gp+OuTa4q3vHD8OykGXVrPPLRMTyxYFyPtQsjS9rFB
+# zTzXWa74LU3k7llt8wr4p0MePVBeVqePpJmppWRu+FzE744vBoNKgrZAW8MQcfyM
+# L0SYx9eivZszNfP+pRDkcOUiDVQHHgz+Vgn/cGk/3X5B5KgxTrqFY7MF3D85Unhf
+# iQclKGEy7UfkuobAda4hDp5S1TZM+N3KGLBOgwFz5CdmUS6CwQZvLvNHfhSdw/4F
+# IPcQMr+VSJyxTn9sYQk6wCx8NbO1kRPZCipaWG3toJMIieW6uBnfsdZ84rQhVwMR
+# e8fS/ZIWUHoO9gna3Jrcd+SoTA4NKeLuyPMr91w9Szo65JwzcSs/EhNAc6ZnEes0
+# uHLKodOmUUgPovabTMp4TaRgdVBm4MLGYNSg4+L6OtFUfFuScLeyQvBA8c76x0Zd
+# J99Te7purxaMLNT0sP0VT82xi10iaKTQs6km7vGIndIdgD0wIe1+FZFofbUly/qA
+# Rk6UN+wLp9UKP9UdbWVCeKrq606oWSzTUTwXSaGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIILa6HjJY1xXGJBCawDb+pPhEMFEZi4w+NUTR9iGy5jBAggP4DgZnKMf
-# phgPMjAyNjExMTUxNDM1MzVaMAMCAQECEEE+EjWT1Ysdw/vWVQbv9xCgghGnMIIE
+# BAIBBQAEIBwdNIsNSQ1LFmRDkP4fDuJHQJ58edN04n5wOH/ebmd5AggdjdYURq4t
+# 1hgPMjAyNjExMjUxNTM3MTNaMAMCAQECEEH9G8CAVu8XssD/1rPMa0ygghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -535,13 +581,13 @@ function Initialize-MbtGuiTask {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUzNVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHqG
-# FTi5qNn8RZb1mDnH67KSk2wFBJYac9c6ZX/7+tX1MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcxM1owKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIMdE
+# w6OdwF1NF0Z5MrUauSsPKozEG9kTVyov9/7EOu6nMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiAdAWPa9RtxrfwsFHFqmq/6UdiOOQ8uGvGki+Xi/2FIqwIhAKm7
-# TEeDGCUxu/DM/3ExBGOkLjTpW4DjvT2LahTsgraE
+# zj0EAwIERzBFAiEAm311kjxt+235HN197ciXot7Wox4Yb3LIVbl9hl8SRVYCIGjL
+# HFV8SZIdU/4e2Ca37QSmu+g3a6vpuRuf7uReZoom
 # SIG # End signature block

@@ -1,4 +1,4 @@
-﻿#Requires -Version 7.5
+﻿#Requires -Version 7.6
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('Analyze', 'Test', 'Package')][string]$Stage,

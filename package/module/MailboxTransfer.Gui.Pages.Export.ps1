@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - sign-in card and the pages of Browse and export (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -335,14 +335,121 @@ function New-MbtGuiLocationsCard {
 
 #endregion
 
+#region Export: Period ---------------------------------------------------------------------------------------
+
+function ConvertTo-MbtGuiPeriodDay {
+    <# The day a date picker holds as yyyy-MM-dd text (the same whatever the language of Windows), '' when it holds none. #>
+    param($Date)
+    if ($null -eq $Date) { return '' }
+    return ([datetime]$Date).ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Update-MbtGuiPeriodState {
+    <# A day or the choice changed: the period of the state follows the days, the line under the browser, the problem line and the button of the From page, without building the page again. #>
+    $g = $script:Gui; $s = $g.S
+    $p = Get-MbtGuiPeriod $s
+    if ($g.ContainsKey('PeriodHolder') -and $g.PeriodHolder) { $g.PeriodHolder.Content = $(if ($p.Problem) { New-GuiMessage -Kind bad -Icon x -Text $p.Problem } else { $null }) }
+    if ($g.Browsers.ContainsKey('export')) { Update-MbtGuiPeriodRow $g.Browsers['export'] }
+    if ((Get-MbtGuiScreen) -eq 'exFrom') { Update-MbtGuiExportFromFooter }
+}
+
+function Update-MbtGuiPeriodRow {
+    <# The line "Period: ..." under the selection of the browser of an export, with its buttons: Change (opens the days, Done closes them) and, once a period is chosen, All dates. #>
+    param($Browser)
+    $g = $script:Gui
+    if (-not $g -or -not $g.ContainsKey('S') -or -not $g.S) { return }
+    $s = $g.S
+    $row = $Browser.C.PeriodRow
+    $row.Children.Clear()
+    if ($s.Task -notin 'export', 'mailcopy') { $row.Visibility = 'Collapsed'; return }
+    $row.Visibility = 'Visible'
+    $p = Get-MbtGuiPeriod $s
+    $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items that $($p.Text)" } else { '**Period:** all dates (recommended)' }
+    $t = New-GuiText $text 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
+    $row.Children.Add($t) | Out-Null
+    $change = New-GuiButton -Text $(if ($s.PeriodOpen) { 'Done' } else { 'Change' }) -Small -Name 'PeriodChange' -OnClick { Switch-MbtGuiPeriodDetail }
+    [Windows.Automation.AutomationProperties]::SetName($change, $(if ($s.PeriodOpen) { 'Close the period' } else { 'Change the period' }))
+    $change.Margin = [Windows.Thickness]::new(14, 0, 0, 0)
+    $row.Children.Add($change) | Out-Null
+    if ($p.Chosen) {
+        $all = New-GuiButton -Text 'All dates' -Small -Name 'PeriodAll' -OnClick { Reset-MbtGuiPeriod }
+        [Windows.Automation.AutomationProperties]::SetName($all, 'Take all dates')
+        $all.Margin = [Windows.Thickness]::new(8, 0, 0, 0)
+        $row.Children.Add($all) | Out-Null
+    }
+}
+
+function Update-MbtGuiPeriodDetail {
+    <# The two days, the problem line and the hint, under the line of the period, while it is open. #>
+    $g = $script:Gui; $s = $g.S
+    if (-not $g.Browsers.ContainsKey('export')) { return }
+    $detailHost = $g.Browsers['export'].C.PeriodDetail
+    $g.PeriodHolder = $null
+    if (-not $s.PeriodOpen) { $detailHost.Content = $null; return }
+    $first = New-GuiDatePicker -Value ([string]$s.ArrFrom) -Automation 'Period from' -OnChange { param($x, $e) $s.ArrFrom = ConvertTo-MbtGuiPeriodDay $x.SelectedDate; Set-MbtGuiPeriodChoice }
+    $last = New-GuiDatePicker -Value ([string]$s.ArrTo) -Automation 'Period to' -OnChange { param($x, $e) $s.ArrTo = ConvertTo-MbtGuiPeriodDay $x.SelectedDate; Set-MbtGuiPeriodChoice }
+    $days = [Windows.Controls.Grid]::new()
+    foreach ($i in 0, 1, 2) { $col = [Windows.Controls.ColumnDefinition]::new(); $col.Width = $(if ($i -eq 2) { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }); $days.ColumnDefinitions.Add($col) }
+    $fromLabel = New-GuiText 'From' 'Small' -NoWrap; $fromLabel.VerticalAlignment = 'Center'; $fromLabel.Margin = [Windows.Thickness]::new(0, 0, 8, 0)
+    $toLabel = New-GuiText 'To' 'Small' -NoWrap; $toLabel.VerticalAlignment = 'Center'; $toLabel.Margin = [Windows.Thickness]::new(18, 0, 8, 0)
+    $left = New-GuiStack @($fromLabel, $first) -Orientation Horizontal
+    $right = New-GuiStack @($toLabel, $last) -Orientation Horizontal
+    [Windows.Controls.Grid]::SetColumn($right, 1)
+    [void]$days.Children.Add($left); [void]$days.Children.Add($right)
+    $holder = [Windows.Controls.ContentControl]::new(); $holder.Name = 'PeriodProblem'; $holder.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    $g.PeriodHolder = $holder
+    $problem = (Get-MbtGuiPeriod $s).Problem
+    if ($problem) { $holder.Content = New-GuiMessage -Kind bad -Icon x -Text $problem }
+    $hint = New-GuiText '**Arrived** is the date the item was created in the mailbox. For mail that was migrated or imported into the mailbox, that is the date of the import, not the original date of the message. Both days are included; leave one empty for no limit on that side. Messages you tick one by one are always exported, whatever their date.' 'Hint'
+    $detailHost.Content = (New-GuiStack @($days, $holder, $hint))
+}
+
+function Set-MbtGuiPeriodChoice {
+    <# A day was picked or cleared: a period is chosen as soon as a day is set, and all dates when both are empty. #>
+    $s = $script:Gui.S
+    $s.Period = $(if ($s.ArrFrom -or $s.ArrTo) { 'between' } else { 'all' })
+    Update-MbtGuiPeriodState
+}
+
+function Switch-MbtGuiPeriodDetail {
+    <# Change opens the days, Done closes them. #>
+    $s = $script:Gui.S
+    $s.PeriodOpen = -not $s.PeriodOpen
+    Update-MbtGuiPeriodDetail
+    Update-MbtGuiPeriodState
+}
+
+function Reset-MbtGuiPeriod {
+    <# All dates: no period, no day. #>
+    $s = $script:Gui.S
+    $s.Period = 'all'; $s.ArrFrom = ''; $s.ArrTo = ''; $s.PeriodOpen = $false
+    Update-MbtGuiPeriodDetail
+    Update-MbtGuiPeriodState
+}
+
+#endregion
+
 #region Export: From -------------------------------------------------------------------------------------
+
+function Get-MbtGuiCopySourceProblem {
+    <# Copy to another mailbox reads ONE place, the Primary mailbox or the Archive (the auxiliary archives follow the Archive): what is ticked must be in one. The sentence that says what to change, or $null. #>
+    param($Selection)
+    if (-not $Selection -or @($Selection.Entries).Count -eq 0) { return $null }
+    $kinds = @($Selection.Entries | ForEach-Object { ([string](Get-MbtGuiRootNode $_.Node).Kind).ToLowerInvariant() } | Sort-Object -Unique)
+    if ($kinds -contains 'aux') { return 'An auxiliary archive cannot be copied on its own: tick the folders of the Archive, its auxiliary archives follow it.' }
+    if ($kinds.Count -gt 1) { return 'Your ticks are in more than one place. A copy reads one place: tick in the Primary mailbox or in the Archive, and copy the other in another task.' }
+    return $null
+}
 
 function Update-MbtGuiExportFromFooter {
     $g = $script:Gui
     if ((Get-MbtGuiScreen) -ne 'exFrom') { return }
     $browser = Get-MbtGuiBrowser 'export'
     $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
-    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and $sel.Items -gt 0) -Footer (Format-MbtGuiSelectionFooter $sel $g.S.Signed)
+    $period = Get-MbtGuiPeriod $g.S
+    $copyProblem = if ($g.S.Task -eq 'mailcopy') { Get-MbtGuiCopySourceProblem $sel }
+    $problem = if ($period.Problem) { $period.Problem } else { $copyProblem }
+    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and $sel.Items -gt 0 -and -not $problem) -Footer $(if ($problem -and $sel.Items -gt 0) { $problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed })
     $g.ExportSelection = $sel
 }
 
@@ -352,11 +459,14 @@ function Build-MbtGuiExportFromPage {
     $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
     $g.ExportSelection = $sel
     $left = New-GuiStack @((New-MbtGuiSignInCard 'export'))
-    if ($s.Signed) { $left.Children.Add((New-MbtGuiLocationsCard)) | Out-Null; $left.Children.Add((New-MbtGuiSelectionCard $sel)) | Out-Null }
+    if ($s.Task -eq 'mailcopy') { $left.Children.Add((New-GuiMessage -Kind info -Icon send -Text '**Copy to another mailbox.** Tick what to copy, in one place: the Primary mailbox or the Archive. This mailbox is only read. The next page asks which mailbox receives the copy.')) | Out-Null }
+    if ($s.Signed) { $left.Children.Add((New-MbtGuiLocationsCard)) | Out-Null; $left.Children.Add((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s))) | Out-Null }
     else { $left.Children.Add((New-MbtGuiSelectionCard $sel)) | Out-Null }
     if ($s.Signed) {
         $right = [Windows.Controls.Grid]::new()
         Place-MbtGuiBrowser $browser $right
+        Update-MbtGuiPeriodRow $browser
+        Update-MbtGuiPeriodDetail
     } else {
         $ico = New-GuiIcon mail 22 'MbtBrandText'; $ico.HorizontalAlignment = 'Center'
         $t1 = New-GuiText 'Sign in to look inside the mailbox.' 'Muted'; $t1.TextAlignment = 'Center'; $t1.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
@@ -365,8 +475,11 @@ function Build-MbtGuiExportFromPage {
         $right = New-GuiCard -Title 'Browse' -Content @($body)
     }
     $g.OnSelectionChanged = { Update-MbtGuiExportFromFooter }
-    Set-MbtGuiActions -Footer (Format-MbtGuiSelectionFooter $sel $s.Signed) -Label 'Continue to destination' -Enabled ($s.Signed -and $sel.Items -gt 0) -OnClick { Move-MbtGuiStep 1 }
-    return (New-GuiTwoColumns -Left $left -Right $right)
+    $periodProblem = (Get-MbtGuiPeriod $s).Problem
+    $copy = ($s.Task -eq 'mailcopy')
+    $problem = if ($periodProblem) { $periodProblem } elseif ($copy) { Get-MbtGuiCopySourceProblem $sel }
+    Set-MbtGuiActions -Footer $(if ($problem -and $sel.Items -gt 0) { $problem } else { Format-MbtGuiSelectionFooter $sel $s.Signed }) -Label $(if ($copy) { 'Continue to the mailbox that receives' } else { 'Continue to destination' }) -Enabled ($s.Signed -and $sel.Items -gt 0 -and -not $problem) -OnClick { Move-MbtGuiStep 1 }
+    return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
 #endregion
@@ -452,7 +565,7 @@ function Refresh-MbtGuiExportTo {
     $enough = ($null -eq $free) -or ($need.Need -le $free)
     $g.ExportDiskBad = -not $enough
     $drive = if ($s.OutFolder -match '^([A-Za-z]:)') { $Matches[1].ToUpperInvariant() } else { 'the disk' }
-    $needText = if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { "about **$(Format-MbtGuiBytes $need.Need)**" + $(if ($s.Dest -eq 'pst' -and $s.KeepStore) { ' (store + PST)' } else { '' }) }
+    $needText = if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { "$(if ((Get-MbtGuiPeriod $s).Active) { 'up to ' })about **$(Format-MbtGuiBytes $need.Need)**" + $(if ($s.Dest -eq 'pst' -and $s.KeepStore) { ' (store + PST)' } else { '' }) }
     $facts = New-GuiFacts @(@('Selection', $(if ($need.Size -le 0 -and $need.Unknown) { 'unknown' } else { Format-MbtGuiBytes $need.Size })), @('Needed on disk', (New-GuiText $needText 'Body')), @("Free on $drive", $(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' })))
     $facts.Margin = [Windows.Thickness]::new(0)
     $msg = if ($enough) { New-GuiMessage -Kind ok -Icon check -Text 'There is enough disk space.' } else { New-GuiMessage -Kind bad -Icon x -Text "**Not enough disk space on $drive.** Free about $(Format-MbtGuiBytes ($need.Need - $free)) or choose another folder." }
@@ -493,7 +606,7 @@ function Get-MbtGuiCountedSizes {
     <# The size the service counted for each folder of the plan (by the path of the folder in its mailbox); a folder counted twice under one path, or counted without a complete size, is left out. #>
     $g = $script:Gui
     $sizes = @{}
-    if ($g.S.Task -ne 'export' -or $g.S.PlanState -ne 'ok' -or -not $g.ContainsKey('PlanRun') -or -not $g.PlanRun) { return $sizes }
+    if ($g.S.Task -notin 'export', 'mailcopy' -or $g.S.PlanState -ne 'ok' -or -not $g.ContainsKey('PlanRun') -or -not $g.PlanRun) { return $sizes }
     $planned = @($g.PlanRun.Objects | Where-Object { $_.Step -eq 'plan' -and $_.State -ne 'refused' -and $_.Key -ne '(folders)' })
     foreach ($group in ($planned | Group-Object { $_.Key })) {
         if (@($group.Group).Count -eq 1 -and $group.Group[0].Bytes -ge 0) { $sizes[$group.Name] = [long]$group.Group[0].Bytes }
@@ -513,6 +626,7 @@ function Get-MbtGuiNodeMailboxPath {
 function New-MbtGuiPlanTable {
     param($Selection)
     $counted = Get-MbtGuiCountedSizes
+    $period = Get-MbtGuiPeriod $script:Gui.S
     $anyUnknown = $false
     $rows = @(foreach ($e in $Selection.Entries) {
         $n = $e.Node; $root = Get-MbtGuiRootNode $n
@@ -536,11 +650,12 @@ function New-MbtGuiPlanTable {
         $cell = [Windows.Controls.StackPanel]::new()
         $cell.Children.Add((New-GuiText (Get-MbtGuiNodePath $n) 'Body')) | Out-Null
         if ($note) { $sm = New-GuiText $note 'Small'; $sm.Margin = [Windows.Thickness]::new(0); $cell.Children.Add($sm) | Out-Null }
-        , @($cell, (Format-MbtGuiCount $e.Items), $(if ($unknown -and $bytes -le 0) { 'size unknown' } elseif ($unknown) { (Format-MbtGuiBytes $bytes) + ' + unknown' } else { Format-MbtGuiBytes $bytes }))
+        , @($cell, $(if ($period.Active -and $e.Kind -in 'tree', 'own') { 'at most ' + (Format-MbtGuiCount $e.Items) } else { Format-MbtGuiCount $e.Items }), $(if ($unknown -and $bytes -le 0) { 'size unknown' } elseif ($unknown) { (Format-MbtGuiBytes $bytes) + ' + unknown' } else { Format-MbtGuiBytes $bytes }))
     })
-    $tbl = New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', '90', '110') -Right @(1, 2)
+    $tbl = New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', $(if ($period.Active) { '120' } else { '90' }), '110') -Right @(1, 2)
     if (-not @($rows).Count) { $tbl = New-GuiText 'Nothing ticked.' 'Muted' }
     $parts = @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint'))
+    if ($period.Active) { $parts += New-GuiText "**Period: items that $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied while the items are listed: the end of the export gives the exact numbers (kept, outside the period). Messages ticked one by one are always exported." 'Hint' }
     if ($anyUnknown) { $parts += New-GuiText 'Microsoft does not give the size of calendar, contact and task folders in advance. The check reads the items of a small one to find it; the size of a larger one is known once the export runs.' 'Hint' }
     return (New-GuiStack $parts)
 }
@@ -610,7 +725,7 @@ function Get-MbtGuiCommandLine {
         The command line(s) of the task as an operator would type them (ConvertTo-MbtGuiCommandLine): the parameters that are a choice, no plumbing of the
         console, no value that is the default. With -Job: the job that ran; without: the one the Start button would begin.
     #>
-    param([Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'copy')][string]$Task, $Job)
+    param([Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'copy', 'mailcopy')][string]$Task, $Job)
     $s = $script:Gui.S
     $stub = if ($Job) { $Job } else { New-MbtGuiPreviewJob -Task $Task }
     try { $commands = @(Get-MbtGuiCommand -Task $Task -S $s -Job $stub) } catch { return '' }
@@ -628,7 +743,7 @@ function New-MbtGuiCommandLineCard {
     $state = @{ Text = $text }
     $copy = New-GuiButton -Text 'Copy' -Small -Icon clip -OnClick { param($b, $e) if ($state.Text -and (Set-MbtGuiClipboard $state.Text)) { $b.Content = 'Copied' } }.GetNewClosure()
     $copy.Margin = [Windows.Thickness]::new(0)
-    $hint = $(if ($Task -in 'export', 'copy' -or ($Task -eq 'import' -and $script:Gui.S.ImSrc -ne 'store')) { 'Run it in PowerShell 7 from the tool folder. The files it names are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
+    $hint = $(if ($Task -in 'export', 'copy', 'mailcopy' -or ($Task -eq 'import' -and $script:Gui.S.ImSrc -ne 'store')) { 'Run it in PowerShell 7 from the tool folder. The files it names are saved when the job starts.' } else { 'Run it in PowerShell 7 from the tool folder.' })
     return (New-GuiCard -Title 'The same from the command line' -Info $hint -Right $copy -Content @($box))
 }
 
@@ -663,7 +778,8 @@ function New-MbtGuiExportPlanWhat {
     $g = $script:Gui; $s = $g.S
     $sel = Get-MbtGuiPlanSelection
     $pst = $s.Dest -eq 'pst'
-    $steps = @('Read the folder tree and list the items you chose.', 'Download them into the export store, checking each one.')
+    $period = Get-MbtGuiPeriod $s
+    $steps = @($(if ($period.Active) { "Read the folder tree and list the items you chose, keeping the ones that $($period.Text)." } else { 'Read the folder tree and list the items you chose.' }), 'Download them into the export store, checking each one.')
     if ($pst) { $steps += "Write the PST files ($($s.SplitGB) GB at most each) with the real folder tree."; $steps += 'Check every PST file.' }
     elseif ($s.Dest -eq 'eml') { $steps += 'Write one .eml file per message, in the real folder tree.' }
     else { $steps += 'Check the store.' }
@@ -672,8 +788,9 @@ function New-MbtGuiExportPlanWhat {
     $eta = Get-MbtGuiPlanEta -Task export -Bytes $sel.Bytes
     $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated yet: Microsoft does not give the size of calendar, contact and task folders in advance. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
     $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
-    $facts = New-GuiFacts ($shared + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
-        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun) $([char]0x00B7) $(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $etaText 'Body'))))
+    $periodFact = @(); if ($period.Active) { $periodFact = @(, @('Period', "items that $($period.Text) $([char]0x00B7) the exact numbers come when the items are listed")) }
+    $facts = New-GuiFacts ($shared + $periodFact + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
+        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)) $([char]0x00B7) $(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $(if ($period.Active) { $etaText.TrimEnd('.', ' ') + '. It can be shorter: only the items of the period are downloaded.' } else { $etaText }) 'Body'))))
     return (New-GuiCard -Title 'What will be done' -Content @($ol, $facts))
 }
 
@@ -715,8 +832,8 @@ function Build-MbtGuiExportPlanPage {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCh45x8zA8biGxb
-# QAcJa8n+yJwMnQJQVT4dZMgvMUEF/6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCwfwSyCefm/ge4
+# vmMYGPMo1FulB/HtIoV0tWmVDyaW7qCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -793,23 +910,23 @@ function Build-MbtGuiExportPlanPage {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDSsWMUOob3
-# E3lLXTnWFfoQTktCANjuicINUL0pIaC/HTANBgkqhkiG9w0BAQEFAASCAgBH2Dnh
-# 8soO9WxCmmUjQX8RsBjUcYdWnXdY8NbzIGRUseDlidzA8cCMESMYJKq0ghlhOzVc
-# 3hDsQ6ea2cxfrzB1MAcNDN+TWkM8/CzjD/LEAKlYXT/rCWvUTShai+c5R/Ph+bGt
-# T5PnYuPJDWuFgLyr5QIRcZ6tmyifueJUSTAjm2vY66ZC0oRKUOpohQXlyKYXYR8/
-# X8EcB8Fh/FnxF1brQW7JZ/xJ2oDQncslBUeRL0An4p2yR0rn21V75YnLesKQc1fR
-# 94EBpixuJuJBSuwU7MO9Y81fo2eaeUCb6p+xvQKMxVV37qSULW7KBXrtwZTKuCW3
-# 6MPqanPb35LPSFNPJCasD9U3YFaT3DGDRdbPxXls1FXQ94zcQCJoN8Ii1XsGgajE
-# cOki5ShroLG9vXUFblZ+7iwAE5yVvrMU3i+DcvMWhKKMA8J9R9sP8rZR0PSeRcMX
-# XzFvCj7N22kURUBbHQyBkiKJCn2kk5a/44pbiHzN9mJafh1CkESttVaaql9vtpFj
-# Ug+x+vodkL/I9Nu/9DV20NziJokUxhAJziQPyVYn67anIGtkQeY1Iz4OwyT5pIh7
-# k5buxqJ3zCiKsPtgPM45ChUTZ4ZmHLN3Jji195ldsa5g17ox2spwyLv/k9Mo3tCB
-# rFL0ZrkwpUP7PGd8Hcy6Hazs122Gf4cMToPFcqGCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDBAW6VNitU
+# /fLBkr/aVZ9mbqIQDX8FWV9qXAkSIkhntjANBgkqhkiG9w0BAQEFAASCAgCT27a6
+# m8hLkrM1jqQ5ZcQ11Qt/NDfkw3rxICC8PwLgY+mZXZpTuNjxuKWTx4x0xxI95HUH
+# J4vWkdpyL/El75IWSA5h6LHDFfqjLkKQkPWaHPmsVWXGx5TB4efiB4xMfGbMYxRD
+# Pr55xuPCWshsrEQaor/COiRikN8ir0zdfFV8Hiw8HGpTMDVEMwGwsGxXwI2ijkc9
+# azVPkA/7qgD+5mtoJLIBlUcXuqX/UNryDjQeNK6aItpIsY1NkqfWulC0fZgs4rU7
+# IhRZg76kt/TSxenmxP43sXa+G3juIPOTx36YlQIO26spDxsCR543O20C25rpBm5y
+# Mw54wpmULLMoav497w8h/++LajKT8ltINlSwqXDkXZO3Fdqy+KO81xNqf/LKXVle
+# v7UUjYOxXA7ctsm1OKYsqRxVBmpX0FJMQP6SJSRJERXrjmleKQSBZHNqeuMworwk
+# 6fnhHz8f37fDy1I2nNcptNTVfkEek7W7B+YRXOMN4iGHs5UJcG8HZlPqiBpgXPWF
+# xH+UztDqdWPcuBZfWMhFAqnP1J8K+eolNOPSpgx/aPXWJj4JUF5LLTEWVrUhuiio
+# MlQ7PFT52RNhy9fDwzRhPfOJttJyZ2lz8+blzhVpldyUEZGVtUD/2hyY7cYLrkXI
+# 2YuJclXHwPDlrB8wHIvbRLs23m9aEVIngNyj1aGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIGfFOLjTvaEp/Oqlvte9yxF4lDoGW3wjL+Bj8UlKJal2Agg3RNXMfSCx
-# GxgPMjAyNjExMTUxNDM1MjFaMAMCAQECEAu4wjr1XTU0E1SM3VP+ekqgghGnMIIE
+# BAIBBQAEIEHUc4Eryh2vSdSylBjYbPzTcUJWAjWE6h88k8Sqdts6AggHPsut/vBk
+# CBgPMjAyNjExMjUwODAzMDlaMAMCAQECEH2rUUSsaFjoIq/XRZMm4KOgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -908,13 +1025,13 @@ function Build-MbtGuiExportPlanPage {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUyMVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICm1
-# 3gGAOjftuAgLwm2dLdQ3GyPs0fo6/6Xr5N6O4rG4MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDMwOVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIB69
+# /yt9cTQySVYN/OXtKEEIXjGRmpb92TZX5o+pZLnuMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEAx2k6Mn98KlKgSjN3qSHSSN/q6AkRH4BTyBYC5K+jmYwCIFfR
-# 4Xe0n6TrjR4e1Zxd6MPPS60mIOQcvQNH6uvlqKvO
+# zj0EAwIERzBFAiB7uX0YAfFKDNt0pnY2mvHVxp8Av3T9vAVmL/3oBBF+pgIhALKs
+# jTC+dgh7EsVOIgX1CYal6OX3izVPiw/9t8y8Mhbc
 # SIG # End signature block

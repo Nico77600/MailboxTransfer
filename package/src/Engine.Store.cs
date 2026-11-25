@@ -865,6 +865,10 @@ CREATE TABLE IF NOT EXISTS importRoute(
   learned_utc  INTEGER NOT NULL,
   PRIMARY KEY (job_id, from_mailbox, from_folder)
 );
+CREATE TABLE IF NOT EXISTS exportOption(
+  name  TEXT COLLATE NOCASE PRIMARY KEY,             -- what an export of this store was asked (for example the period of a mailbox)
+  value TEXT NOT NULL
+);
 ";
 
         private void InitSchema(string name, string source)
@@ -1187,6 +1191,52 @@ CREATE TABLE IF NOT EXISTS importRoute(
             finally { ExitOp(); }
         }
 
+        /// <summary>A value an export recorded in the store (see <see cref="SetExportOption"/>), or null when none was recorded (also in a store written before the table existed).</summary>
+        public string GetExportOption(string name)
+        {
+            EnterOp(false);
+            try
+            {
+                try
+                {
+                    using (var l = Reader())
+                    using (var cmd = Cmd(l.Conn, "SELECT value FROM exportOption WHERE name=@n COLLATE NOCASE", null, "@n", name))
+                    {
+                        object v = cmd.ExecuteScalar();
+                        return v == null || v is DBNull ? null : Convert.ToString(v, CultureInfo.InvariantCulture);
+                    }
+                }
+                catch (SqliteException ex) when (ex.Message.IndexOf("no such table", StringComparison.OrdinalIgnoreCase) >= 0) { return null; }
+            }
+            finally { ExitOp(); }
+        }
+
+        /// <summary>Records a value for the exports of this store (the name is not case sensitive). Returns true when the value was written, false when onlyIfAbsent is set and the name is already recorded.</summary>
+        public bool SetExportOption(string name, string value, bool onlyIfAbsent = false)
+        {
+            if (string.IsNullOrEmpty(name)) throw new ArgumentException("name");
+            EnterOp(true);
+            try
+            {
+                lock (_dbLock)
+                {
+                    var c = W();
+                    using (var cmd = Cmd(c, "SELECT COUNT(*) FROM exportOption WHERE name=@n COLLATE NOCASE", null, "@n", name))
+                        if (Convert.ToInt64(cmd.ExecuteScalar(), CultureInfo.InvariantCulture) > 0)
+                        {
+                            if (onlyIfAbsent) return false;
+                            using (var upd = Cmd(c, "UPDATE exportOption SET value=@v WHERE name=@n COLLATE NOCASE", null, "@n", name, "@v", value ?? ""))
+                                upd.ExecuteNonQuery();
+                            return true;
+                        }
+                    using (var ins = Cmd(c, "INSERT INTO exportOption(name,value) VALUES(@n,@v)", null, "@n", name, "@v", value ?? ""))
+                        ins.ExecuteNonQuery();
+                    return true;
+                }
+            }
+            finally { ExitOp(); }
+        }
+
         /// <summary>Every known location of the store, Primary first, then the archive, then the auxiliary archives in the order they were discovered. Empty for a store written before the table existed and opened read-only.</summary>
         public List<StoreMailboxLocation> GetLocations()
         {
@@ -1208,23 +1258,6 @@ CREATE TABLE IF NOT EXISTS importRoute(
                 }
                 catch (SqliteException ex) when (ex.Message.IndexOf("no such table", StringComparison.OrdinalIgnoreCase) >= 0) { }
                 return list;
-            }
-            finally { ExitOp(); }
-        }
-
-        /// <summary>Mailbox id of a folder record with this folder id in a mailbox of this kind (the main archive holds the record of an expanded folder), or null.</summary>
-        public string FindFolderMailbox(string folderId, StoreMailboxKind kind)
-        {
-            EnterOp(false);
-            try
-            {
-                using (var l = Reader())
-                using (var cmd = Cmd(l.Conn, "SELECT m.mailbox_id FROM folder f JOIN mailbox m ON m.mailbox_key=f.mailbox_key WHERE f.folder_id=@f AND m.kind=@k ORDER BY m.mailbox_key LIMIT 1", null,
-                    "@f", folderId, "@k", (int)kind))
-                {
-                    object o = cmd.ExecuteScalar();
-                    return o == null ? null : Convert.ToString(o, CultureInfo.InvariantCulture);
-                }
             }
             finally { ExitOp(); }
         }

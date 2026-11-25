@@ -20,6 +20,7 @@ package/MailboxTransfer.psd1 -text whitespace=blank-at-eol,space-before-tab,blan
 package/MailboxTransfer.psm1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Eml.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Events.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
+package/module/MailboxTransfer.JobFolders.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Report.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Overview.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol
 package/module/MailboxTransfer.Batch.ps1 -text whitespace=blank-at-eol,space-before-tab,blank-at-eof,cr-at-eol

@@ -26,7 +26,20 @@
     "tests/Gui.Smoke.Tests.ps1",
     "tests/Gui.CommandLine.Tests.ps1",
     "tests/Gui.ClickThrough.Tests.ps1",
-    "tests/Configuration.Tests.ps1"
+    "tests/Configuration.Tests.ps1",
+    "tests/Batch.Tests.ps1",
+    "tests/BatchCopy.Tests.ps1",
+    "tests/BatchImport.Tests.ps1",
+    "tests/Copy.Tests.ps1",
+    "tests/Culture.Tests.ps1",
+    "tests/ExportFxCorpus.Tests.ps1",
+    "tests/Gui.Engine.Tests.ps1",
+    "tests/JobRetention.Tests.ps1",
+    "tests/LabFxCorpus.Tests.ps1",
+    "tests/Overview.Tests.ps1",
+    "tests/PstStreaming.Tests.ps1",
+    "tests/Report.Tests.ps1",
+    "tests/SignIn.Tests.ps1"
   ],
   "packageBuilder": "tools/New-MailboxTransferPackage.ps1",
   "packageEntry": "Invoke-MailboxTransfer.ps1"

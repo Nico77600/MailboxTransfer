@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Repairs a big damaged synthetic PST (2 GB and more) and measures the memory of the repair: the working set and the private bytes of

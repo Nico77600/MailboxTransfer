@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - the pages Import, Check and repair a PST, Open (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -107,7 +107,7 @@ function Build-MbtGuiImportFromPage {
     }
     $ok = [bool]($s.ImInfo -and $s.ImInfo.Ok)
     Set-MbtGuiActions -Footer 'Pick what to import. The file is checked first.' -Label 'Continue to the mailbox' -Enabled $ok -OnClick { Move-MbtGuiStep 1 }
-    $stack = New-GuiStack @((New-GuiText 'What do you want to import?' 'H2'), (New-GuiTwoColumns -Left $left -Right $right))
+    $stack = New-GuiFillPage -Title 'What do you want to import?' -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill)
     return $stack
 }
 
@@ -416,7 +416,7 @@ function Build-MbtGuiOpenPage {
         $s.Task = 'import'; $s.Sel = 'import'; $s.Step = $script:Flows.import.IndexOf('imFrom')
         Show-MbtGuiPage
     }
-    return (New-GuiTwoColumns -Left $left -Right $right)
+    return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
 #endregion
@@ -496,11 +496,176 @@ function Build-MbtGuiCopyPlanPage {
 
 #endregion
 
+#region Copy to another mailbox (a mailbox read into a store, then added to another mailbox) -----------------------------------
+
+function Get-MbtGuiMailCopyEnds {
+    <# The two ends of a copy to another mailbox as the pages say them: the mailbox that is read and its place (from what is ticked), the mailbox that receives and its place. Same: they are the same place. #>
+    $g = $script:Gui; $s = $g.S
+    $fromKind = if ($s.McFromKind) { $s.McFromKind } else { 'Primary' }
+    $sel = if ($g.ContainsKey('ExportSelection')) { $g.ExportSelection } else { $null }
+    if ($sel -and @($sel.Entries).Count) {
+        $fromKind = switch (([string](Get-MbtGuiRootNode @($sel.Entries)[0].Node).Kind).ToLowerInvariant()) { 'archive' { 'Archive' } default { 'Primary' } }
+    }
+    $from = if ($s.Shared) { [string]$s.Shared } else { [string]$s.Mailbox }
+    $app = ($s.AuthMode -eq 'app')
+    $to = if ($app) { ([string]$s.McTarget).Trim() } elseif ($s.Account) { [string]$s.Account } else { [string]$s.Mailbox }
+    return [pscustomobject]@{ From = $from; FromKind = $fromKind; To = $to; ToKind = [string]$s.TgtLoc; App = $app; Same = [bool]($from -and $to -and $from -ieq $to -and $fromKind -ieq [string]$s.TgtLoc) }
+}
+
+function Test-MbtGuiMailCopyTarget {
+    <# What stops the copy from going on, in plain words, or $null. #>
+    param([hashtable]$S)
+    $ends = Get-MbtGuiMailCopyEnds
+    if ($ends.App) {
+        if (-not $ends.To) { return 'Type the address of the mailbox that receives the copy.' }
+        if ($ends.To -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { return 'Type the address of the mailbox like adele.vance@contoso.com.' }
+    }
+    if ($ends.Same) { return 'This is the mailbox you copy from. Choose the other part of the mailbox, or another mailbox: a copy writes into a different place.' }
+    if ($S.TgtMode -eq 'new') { return (Test-MbtGuiFolderName $S.TgtName) }
+    return $null
+}
+
+function Update-MbtGuiMailCopyTo {
+    <# The address of the target or the folder name changed: the button and the footer follow, without building the page again. #>
+    if ((Get-MbtGuiScreen) -ne 'mcTo') { return }
+    $problem = Test-MbtGuiMailCopyTarget $script:Gui.S
+    Update-MbtGuiPrimary -Enabled (-not $problem) -Footer $(if ($problem) { $problem } else { 'Choose the mailbox and where in it the items go.' })
+}
+
+function Build-MbtGuiMailCopyToPage {
+    $g = $script:Gui; $s = $g.S
+    $ends = Get-MbtGuiMailCopyEnds
+    $s.McFromKind = $ends.FromKind
+    $sel = $g.ExportSelection
+    $how = New-GuiCard -Title 'How the copy works' -Content @(
+        (New-GuiText 'It has two parts, one after the other. First the items you ticked are read from the mailbox and saved in a store on this PC. Then the store is added to the mailbox that receives the copy.' 'Body'),
+        (New-GuiText 'The mailbox you copy from is only read. When the copy is over, the store stays on this PC: it is the proof of what was read, and the point where a stopped copy continues.' 'Body'))
+    $left = New-GuiStack @((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s)), $how)
+    $items = [Collections.Generic.List[object]]::new()
+    if ($ends.App) {
+        $items.Add((New-GuiText 'Mailbox that receives the copy' 'Label'))
+        $items.Add((New-GuiTextBox -Text $s.McTarget -Automation 'Target mailbox address' -OnChange { param($x, $e) $s.McTarget = $x.Text; Update-MbtGuiMailCopyTo }))
+        $items.Add((New-GuiText 'Required: the application has no mailbox of its own. The mailbox must be in the scope of the application.' 'Hint'))
+    } else {
+        $items.Add((New-GuiMessage -Kind info -Icon shield -Text "**The copy goes into your own mailbox, $($ends.To).** A delegated sign-in can write only into the mailbox of the account that signs in: Microsoft refuses a write into another person's or a shared mailbox. To write into another mailbox, sign in as the application (Setup)."))
+    }
+    $items.Add((New-GuiText 'Part of the mailbox' 'Label'))
+    foreach ($place in @(@('Primary', 'Primary mailbox', ''), @('Archive', 'Archive', 'If this mailbox has no archive, the check on the next page says so.'))) {
+        $kind = $place[0]
+        $items.Add((New-GuiOption -Type Radio -Group loc -Title $place[1] -Hint $place[2] -Checked ($s.TgtLoc -eq $kind) -OnChange { $s.TgtLoc = $kind; Show-MbtGuiPage }.GetNewClosure()))
+    }
+    $items.Add((New-GuiText 'Folder' 'Label'))
+    if (-not $s.TgtName) { $s.TgtName = "Copy of $(($ends.From -split '@')[0]) $((Get-Date).ToString('yyyy-MM-dd'))" }
+    $newOpt = New-GuiOption -Type Radio -Group tm -Title 'A new folder (recommended)' -Hint 'Everything goes under one new folder. Easy to find, easy to move or delete later.' -Checked ($s.TgtMode -eq 'new') -Margin '0' -OnChange { $s.TgtMode = 'new'; Show-MbtGuiPage }
+    $items.Add($newOpt)
+    if ($s.TgtMode -eq 'new') {
+        $name = New-GuiTextBox -Text $s.TgtName -Automation 'Folder name' -OnChange { param($x, $e) $s.TgtName = $x.Text; Update-MbtGuiMailCopyTo }
+        $name.Margin = [Windows.Thickness]::new(30, 6, 0, 0)
+        $items.Add($name)
+    }
+    $items.Add((New-GuiOption -Type Radio -Group tm -Title 'The same folder names' -Hint 'Items are added to folders with the same names. Existing items are left alone. Duplicates are possible.' -Checked ($s.TgtMode -eq 'same') -OnChange { $s.TgtMode = 'same'; Show-MbtGuiPage }))
+    $items.Add((New-GuiMessage -Kind info -Icon shield -Text '**Nothing is deleted. Nothing is overwritten.** The copy only adds items. A folder is never renamed.'))
+    if (Test-MbtGuiSelectionHasDeletedItems $sel) {
+        $items.Add((New-GuiMessage -Kind info -Icon shield -Text '**Your ticks hold deleted items (Recoverable Items).** They are put in a normal folder named **Restored deleted items** (inside your new folder if you chose one), never back into Recoverable Items.'))
+    }
+    $mapBtn = New-GuiButton -Text 'Use a mapping file...' -Small -Icon open -OnClick { $f = Select-MbtGuiFile -Title 'Mapping file' -Filter 'Mapping (*.psd1;*.json)|*.psd1;*.json'; if ($f) { $s.Mapping = $f; Show-MbtGuiPage } }
+    $mapLine = if ($s.Mapping) { New-GuiText "Mapping file: $($s.Mapping)" 'Small' } else { New-GuiText 'For renaming folders while copying (source path to target path). Optional.' 'Hint' }
+    $items.Add((New-GuiMore -Summary 'More options' -Content @($mapBtn, $mapLine)))
+    $problem = Test-MbtGuiMailCopyTarget $s
+    if ($problem) { $items.Add((New-GuiMessage -Kind warn -Icon warn -Text $problem)) }
+    $right = New-GuiCard -Title 'Where to copy' -Info "$($ends.From) ($($ends.FromKind)) $([char]0x2192)" -Content $items.ToArray()
+    Set-MbtGuiActions -Footer $(if ($problem) { $problem } else { 'Choose the mailbox and where in it the items go.' }) -Label 'Continue to Verify' -Enabled (-not $problem) -OnClick { Move-MbtGuiStep 1 }
+    return (New-GuiStack @((New-GuiText 'Into which mailbox?' 'H2'), (New-GuiTwoColumns -Left $left -Right $right)))
+}
+
+function New-MbtGuiMailCopyConfirmCard {
+    <# "Before anything is written": the target, the volume, what the copy does, and ONE box that says exactly what, from where and into where. Start stays grey until it is ticked. #>
+    param([string]$ItemsQuantity, [long]$Bytes, [bool]$SizeUnknown, [bool]$AtMost)
+    $g = $script:Gui; $s = $g.S
+    $mid = [char]0x00B7
+    $ends = Get-MbtGuiMailCopyEnds
+    $folderText = if ($s.TgtMode -eq 'new') { "new folder $($s.TgtName)" } else { 'folders with the same names' }
+    $target = [Windows.Controls.Border]::new(); $target.CornerRadius = [Windows.CornerRadius]::new(8); $target.Padding = [Windows.Thickness]::new(14, 10, 14, 12); $target.Margin = [Windows.Thickness]::new(0, 4, 0, 0)
+    Set-MbtGuiResource $target ([Windows.Controls.Border]::BackgroundProperty) 'MbtAccentSoft'
+    $eyebrow = New-GuiText 'INTO' 'Small' -NoWrap; $eyebrow.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $eyebrow ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText'
+    $big = New-GuiText $ends.To 'Big' -NoWrap; $big.FontSize = 22
+    $line = [Windows.Controls.StackPanel]::new(); $line.Orientation = 'Horizontal'; $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    $pill = New-GuiPill $ends.ToKind 'run'; $pill.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
+    $fi = New-GuiIcon folder 14; $fi.Margin = [Windows.Thickness]::new(0, 0, 6, 0)
+    $ft = New-GuiText $(if ($s.TgtMode -eq 'new') { "in a new folder named **$($s.TgtName)**" } else { 'in the folders that have the same names' }) 'Body'; $ft.VerticalAlignment = 'Center'
+    $line.Children.Add($pill) | Out-Null; $line.Children.Add($fi) | Out-Null; $line.Children.Add($ft) | Out-Null
+    $from = New-GuiText "copied from **$($ends.From)** $mid $($ends.FromKind)" 'Body'; $from.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
+    $target.Child = (New-GuiStack @($eyebrow, $big, $line, $from))
+    $volume = if ($SizeUnknown) { "$ItemsQuantity" } else { "$ItemsQuantity $mid $(if ($AtMost) { 'at most ' })$(Format-MbtGuiBytes $Bytes)" }
+    $vol = New-GuiText $volume 'Big'; $vol.Margin = [Windows.Thickness]::new(0, 12, 0, 0)
+    $sub = New-GuiText 'will be added to this mailbox.' 'Hint'; $sub.Margin = [Windows.Thickness]::new(0)
+    $warn = New-GuiMessage -Kind warn -Icon shield -Text '**Adds only.** Nothing is deleted or overwritten. This tool cannot undo a copy: you would delete the items yourself.'
+    $claim = "I checked: copy $ItemsQuantity from $($ends.From) $mid $($ends.FromKind) into $($ends.To) $mid $($ends.ToKind) $mid $folderText"
+    $box = New-GuiOption -Type Check -Title $claim -Checked $s.Confirmed -Margin '0,12,0,0' -OnChange {
+        param($x, $e)
+        $s.Confirmed = [bool]$x.IsChecked
+        $s.ConfirmKey = $(if ($s.Confirmed) { Get-MbtGuiPlanKey } else { '' })
+        Update-MbtGuiPrimary -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok') -Footer (Get-MbtGuiPlanFooter)
+    }.GetNewClosure()
+    $box.FontWeight = [Windows.FontWeights]::SemiBold
+    $frame = [Windows.Controls.Border]::new(); $frame.BorderThickness = [Windows.Thickness]::new(1); $frame.CornerRadius = [Windows.CornerRadius]::new(8); $frame.Padding = [Windows.Thickness]::new(12, 0, 12, 12); $frame.Margin = [Windows.Thickness]::new(0, 14, 0, 0)
+    Set-MbtGuiResource $frame ([Windows.Controls.Border]::BorderBrushProperty) 'AccentFillColorDefaultBrush'
+    $frame.Child = $box
+    return (New-GuiCard -Title 'Before anything is written' -Content @($target, $vol, $sub, $warn, $frame))
+}
+
+function Build-MbtGuiMailCopyPlanPage {
+    $g = $script:Gui; $s = $g.S
+    $sel = Get-MbtGuiPlanSelection
+    $ends = Get-MbtGuiMailCopyEnds
+    $period = Get-MbtGuiPeriod $s
+    $mid = [char]0x00B7
+    $bytes = [long]$sel.Bytes
+    $sizeUnknown = ($sel.UnknownSize -gt 0 -and $bytes -le 0)
+    $itemsQuantity = Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)
+    $store = (New-MbtGuiRequest -Task mailcopy).StorePath
+    $target = if ($s.TgtMode -eq 'new') { $s.TgtName } else { 'the same folder names' }
+    $steps = @(
+        $(if ($period.Active) { "Read the folder tree and list the items you ticked, keeping the ones that $($period.Text)." } else { 'Read the folder tree and list the items you ticked.' }),
+        'Download them into the store on this PC, checking each one.',
+        'Open the store again and check it. Here the second part begins.',
+        "Create the folders under **$target** in the mailbox that receives the copy.",
+        "Send $itemsQuantity, one by one, into that mailbox.",
+        'For any item Microsoft does not answer for, look in the folder and decide by itself. Then a final check of the whole job.')
+    $ol = [Windows.Controls.StackPanel]::new(); $i = 1
+    foreach ($t in $steps) { $r = New-GuiText ("$i.  $t") 'Body'; $r.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($r) | Out-Null; $i++ }
+    $eta = Get-MbtGuiPlanEta -Task import -Bytes $bytes
+    $etaText = if ($sizeUnknown) { 'cannot be estimated yet: Microsoft does not give the size of every folder in advance. It shows once the copy runs.' } else { "**$($eta.Text)**, mostly the second part: Microsoft accepts only about 4 GiB per hour into one mailbox" }
+    $sizeText = if ($sizeUnknown) { 'size unknown before the check' } else { "$(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)" }
+    $facts = New-GuiFacts @(@('From', "$($ends.From) $mid $($ends.FromKind) mailbox $mid **only read**"), @('Into', "$($ends.To) $mid $($ends.ToKind) mailbox"), @('Store', "$store (stays on this PC)"),
+        @('Size', "$itemsQuantity $mid $sizeText"), @('Time', (New-GuiText $etaText 'Body')))
+    $warn = New-GuiMessage -Kind warn -Icon clock -Text '**This is a long job.** The first part is quick, the second is not: Microsoft accepts only about 4 GiB per hour into one mailbox, whatever the speed of your PC or network. You can stop and continue as often as you like: the part that is finished is not done again, and no item is added twice.'
+    $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
+    $free = $null; try { $free = [double](& $g.Engine.FreeSpace $s.WorkFolder) } catch { $free = $null }
+    $need = [double]$bytes * 1.1
+    $drive = if ($s.WorkFolder -match '^([A-Za-z]:)') { $Matches[1].ToUpperInvariant() } else { 'the disk' }
+    $enough = ($null -eq $free) -or ($need -le $free)
+    $diskRow = New-MbtGuiCheckRow -State $(if ($enough) { 'ok' } else { 'bad' }) -Text $(if ($enough) { 'Enough disk space for the store' } else { 'Not enough disk space for the store' }) -Detail $(if ($bytes -le 0) { "$(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' }) free on $drive" } else { "about $(Format-MbtGuiBytes $need) needed, $(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' }) free on $drive" })
+    $placeRow = New-MbtGuiCheckRow -State $(if ($ends.Same) { 'bad' } else { 'ok' }) -Text $(if ($ends.Same) { 'The mailbox you copy from is the target' } else { 'A different place' }) -Detail "from $($ends.From) ($($ends.FromKind)) into $($ends.To) ($($ends.ToKind))"
+    $ruleRow = New-MbtGuiCheckRow -State ok -Text $(if ($ends.App) { 'The application writes into the target' } else { 'You write into your own mailbox' }) -Detail $(if ($ends.App) { 'the target must be in the scope of the application; the check above looks at it' } else { "$($ends.To), the account that is signed in (a delegated sign-in cannot write into another mailbox)" })
+    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $placeRow, $ruleRow, $diskRow)
+    $left = New-GuiStack @($checks, (New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $warn)))
+    $before = New-GuiCard -Title 'Before you start' -Content @((New-GuiText ([char]0x2022 + '  Keep the PC plugged in and awake (the console does this for you).') 'Body'), (New-GuiText ([char]0x2022 + '  The mailbox you copy from is only read. The store stays on this PC after the copy: it is the proof of what was read.') 'Body'), (New-MbtGuiSleepInfo))
+    $right = New-GuiStack @((New-MbtGuiMailCopyConfirmCard -ItemsQuantity $itemsQuantity -Bytes $bytes -SizeUnknown $sizeUnknown -AtMost $period.Active), $before)
+    $key = Get-MbtGuiPlanKey
+    if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
+    if ($s.ConfirmKey -ne $key) { $s.Confirmed = $false; $s.ConfirmKey = '' }
+    Set-MbtGuiActions -Footer (Get-MbtGuiPlanFooter) -Label "Start the copy into $($ends.To)" -Icon play -Enabled ($s.Confirmed -and $s.PlanState -eq 'ok' -and -not $ends.Same) -OnClick { Start-MbtGuiRun }
+    return (New-GuiStack @((New-MbtGuiVerifyBottom -Columns (New-GuiTwoColumns -Left $left -Right $right -LeftWidth 520) -Task mailcopy -Include @('conc', 'retry', 'reconcile', 'tries', 'awake'))))
+}
+
+#endregion
+
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDKQUhEsjntg6gc
-# 1PYNUOHFlpcdEn++BX+w+fahxQMt+KCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBY3D7bsmhyO89w
+# DqHGd9/rWon3GDy0xe4mxWwE6Ci48qCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -577,23 +742,23 @@ function Build-MbtGuiCopyPlanPage {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCv07bWmMT/
-# 4bMRtyVLanFnseNJojcd+9359Ru8BwwpyDANBgkqhkiG9w0BAQEFAASCAgBvg4vW
-# Zq1bsB/IFHzjuBdBhlBWk1y5pA9b2UdJKoSyZdLSAXJAaibi3LVTcMa9iAeKcvxO
-# 9/9zBJJ6JbXNTGfuga93pZe3Ljni3Eo9IHG1Dhr8BXM54QWMZaY+5hs3h9aAQkbm
-# 3Buy9ExXF0pFv0RuvNhaCSxO8Jxph13BnklrD2IStlMSLgLXfDBdUt9qKMiSRdt/
-# RWerr7uIRYZtRnpJ6Gf7BFYZNdayDOzK+eQM+8aYk6eOu2NaRpGc+8KlP7PE6CuU
-# TJ3Q6vFF+WXQF3cAlBv6hEhiEzKXQmwd+iPJGmmAsGMrsJNfl8SlcnKAVC1+Lqxh
-# 4EqT/fYw34RRXGgUSZ6O4e7n6zSt+X8RFy6KlSLWrRNbmWYP3iYUvUsG6Q9nSvYu
-# +G7unLYjbOqyEaIM1bKcedYzt2pAcsw/Wgc4v2H289VOIdg0lT/cWxDN+K/Zmjpb
-# aPmjPBEw5Tkq/8LBbXsANEbDM0UxLaLYfr+pP9JELxJriVj5OOVnJNfZf9B0do7T
-# oAybnl+Px9uEdqvO0ISxrHCYOQcO0qpMIEiXKD4vD3u6WstyJ5I5HFv5iV9M9cF7
-# E9BwTK0Lm1UjGg9GmEgyfW4/7Oy0VUxgWYhNQ6SPjoVG95kA6fW1Hu4kpVyWkIX7
-# hYkarKH6qZFcAhBi7fdXQRk1ea2W2i0qADSlVqGCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCubtYijcN+
+# IjSZyE5sDV9nUCkDl+Gb32WY0aripgNjRjANBgkqhkiG9w0BAQEFAASCAgAEPsYQ
+# DoqQIAAGvszhE5LGG9zJu0FkBB2dSUvyJNSBWJCJWseB190UJO63vhFt2Yv6v8mz
+# UnPwJQxdjlciQSApJORdYkD9b/tR0azOnK6JIW2W+SB9H2IuPoEnUwxDXJn94BS1
+# tWb4S8NavkpKQXHi/+bl2yNfadIgv8VeDv1S+w1nKAzMgNmXPy38vpTSpJhZaq2p
+# TQ/wdUuyWwVxi+Ozjem+eiTVpDfnMIsflodTRPGjgQJDzPjtl2Bj1KjxE0bSasCN
+# 9grjqtZVhIYTYn0wVlGck+qAGGIu4Mh8I/fEf5e1y1Y50VchiPG+++AoMDOEXd1/
+# n52nbPAeEIqireDNmadTIws9htiyPXr1kNHe1zZXyeklUN1/DilKvapMFn5Qgjbd
+# VXCaOnyZW/zhm1v81MGAySjQdIBSKWRtPYEOj42mgbdSQiCZtxKAzfASBjoQGGXd
+# N7CYr9P39DkAmNboljd2dm+yLnDNVI5OkI1GZ5qgCBKrA/8F6j/zDEqvvw3H9FZ7
+# VRxYzOt7ekNCZL7SiUHrjPQNQAs/yaWVsd++7gszIcG4WydCEaplinLkzxaxK5DW
+# 57v8FMObe9+JC8dt/R12rwXBr8AkCOL3aKFl9n2UyF1Ft4YSr6jRvN+8uAiuIOox
+# psLJmG1WdJzIPtamJA6b/66hWOHTT2Uq7Q7Je6GCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIGAb5wefhHtOp1C/uDGYZ53LsaaTWbCFGWtaXM2tvRrgAggcftqzpUMb
-# cBgPMjAyNjExMTUxNDM1MzBaMAMCAQECEB1ibmU8LxNmX+XUpKce5I6gghGnMIIE
+# BAIBBQAEIK2LrwCxxDelpl+ff7F8E+trzKqzL4TfurykBZd5qnKlAghUipcywBIn
+# DhgPMjAyNjExMjUwODAzMTVaMAMCAQECEAdWpnchs9l7jjWMPDbW5BSgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -692,13 +857,13 @@ function Build-MbtGuiCopyPlanPage {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUzMFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIN2Q
-# Xlv1rs03t1YVnEnu8ddg/sCSn7fRozhhvUQqM4/IMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDMxNVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIJXy
+# 6tZ1ECilju9Z/nF0bSsYucCSgEFpZ1X0jFZKUJ6eMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEAk6W1jilEIaSnFLZGsTMlr8uc5Zq+KeNmL1uKleBCkcsCIGRD
-# Lhw83Jrej30lBKtx2+ec3TivBRMElzLCWV5Ukljp
+# zj0EAwIERzBFAiEA2XoOVtpqNsC30y5JOk2J/TnOIg/+45UHvsbeZ/tf+uECIBp4
+# iRJRpAE4OOggPQ2IQwluH06ej5axibMiecOFczm/
 # SIG # End signature block

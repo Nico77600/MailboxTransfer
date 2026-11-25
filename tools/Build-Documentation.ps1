@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Builds package\docs\MailboxTransfer-UserGuide.html and MailboxTransfer-Guide.html from the Markdown files next to them
@@ -202,8 +202,8 @@ for ($i = 0; $i -lt $headings.Count; $i++) {
             "<span class=""badge badge-accent"">Version $($meta.version)</span>",
             "<span class=""badge"">$(Get-Icon 'calendar' 'icon-sm')Updated $($meta.updated)</span>",
             "<span class=""badge"">$(Get-Icon 'user' 'icon-sm')$($meta.author)</span>",
-            "<span class=""badge"">$(Get-Icon 'terminal' 'icon-sm')Collector 5.1 · Analysis 7.4+</span>",
-            "<span class=""badge"">$(Get-Icon 'shield' 'icon-sm')Read-only collector</span>") -join ''
+            "<span class=""badge"">$(Get-Icon 'terminal' 'icon-sm')$(& $enc $meta.runtime)</span>",
+            "<span class=""badge"">$(Get-Icon 'shield' 'icon-sm')Import only adds, export only reads</span>") -join ''
         $hero = "<header class=""hero"" id=""top""><div class=""hero-top""><div class=""hero-logo"">$(Get-Icon 'shield')</div><div><div class=""eyebrow"">$(& $enc $meta.subtitle)</div><h1>$(& $enc $meta.title)</h1></div>" +
             "<button type=""button"" id=""theme"" class=""ghost"" title=""Light / dark"">$(Get-Icon 'moon' 'icon-sm')</button></div>" +
             "<div class=""badges"">$badges</div><p class=""lead"">$lead</p>$content</header>"

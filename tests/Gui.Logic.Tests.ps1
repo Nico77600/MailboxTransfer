@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 # Console: the logic that needs no window (run model, ETA, commands, names, job folder). Nothing contacts the cloud.
 BeforeAll {
     $script:Package = Join-Path (Split-Path $PSScriptRoot -Parent) 'package'
@@ -244,6 +244,93 @@ Describe 'Commands of a job' {
         $c = (Get-MbtGuiCommand -Task check -S $script:S -Job $script:Job)[0].Arguments
         $c | Should -Not -Contain '-Destination'
         $c[($c.IndexOf('-Mode') + 1)] | Should -Be 'CheckPst'
+    }
+}
+
+Describe 'The period of an export' {
+    BeforeAll {
+        function New-PeriodState([hashtable]$Extra = @{}) {
+            $s = @{ Task = 'export'; Mailbox = 'adele.vance@contoso.com'; Shared = ''; Dest = 'store'; OutFolder = 'D:\Exports\adele'; OutName = 'adele.pst'; SplitGB = 50; CheckEach = $true; SepAux = $false; Conc = 4; Tries = 3; Awake = $false; Changed = @{}; AuthMode = 'user'; TenantId = ''; ClientId = ''; AppTenant = ''; AppClient = ''; AppThumb = ''
+                Period = 'all'; ArrFrom = ''; ArrTo = '' }
+            foreach ($k in $Extra.Keys) { $s[$k] = $Extra[$k] }
+            return $s
+        }
+        function New-PeriodJob { @{ Id = 'job-1'; Folder = 'D:\w\jobs\j'; EventsPath = 'D:\w\jobs\j\events.jsonl'; StopPath = 'D:\w\jobs\j\stop.request'; StorePath = 'D:\w\stores\adele'; SelectionFiles = @('D:\w\selections\export-7b843299.json'); JobName = 'import-ab12' } }
+        $script:GuiBeforePeriod = Get-Variable -Name Gui -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $script:Gui = @{ Engine = [pscustomobject]@{ } }
+    }
+    AfterAll { if ($null -ne $script:GuiBeforePeriod) { $script:Gui = $script:GuiBeforePeriod } else { Remove-Variable -Name Gui -Scope Script -ErrorAction SilentlyContinue } }
+    It 'is every date by default, and the second choice is a period with a first day, a last day or both' {
+        $all = Get-MbtGuiPeriod (New-PeriodState)
+        $all.Active | Should -BeFalse; $all.Chosen | Should -BeFalse; $all.Problem | Should -BeNullOrEmpty; $all.Text | Should -Be 'all dates'
+        $both = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })
+        $both.Active | Should -BeTrue; $both.Text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'; $both.From | Should -Be '2026-03-01'; $both.To | Should -Be '2026-03-31'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })).Text | Should -Be 'arrived from 2026-03-01'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' })).Text | Should -Be 'arrived until 2026-03-31'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'BETWEEN'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'the case of a value does not matter'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-31'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'one day is a period'
+    }
+    It 'refuses a first day after the last one, and a period with no day, in plain words' {
+        $swapped = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })
+        $swapped.Active | Should -BeFalse; $swapped.Chosen | Should -BeTrue; $swapped.Problem | Should -Be 'The first date is after the last date. Swap them, or pick other dates.'
+        $none = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between' })
+        $none.Active | Should -BeFalse; $none.Problem | Should -Be 'Pick at least one date, or choose All dates.'
+    }
+    It 'is the period of an export only, and a state without the keys is every date' {
+        (Get-MbtGuiPeriod (New-PeriodState @{ Task = 'import'; Period = 'between'; ArrFrom = '2026-03-01' })).Active | Should -BeFalse
+        (Get-MbtGuiPeriod @{ Task = 'export' }).Active | Should -BeFalse
+    }
+    It 'puts -ArrivedFrom and -ArrivedTo in the command, as ISO days, and nothing for every date, an open side or a wrong period' {
+        $line = { param($s) $c = @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)); ConvertTo-MbtGuiCommandLine -Command $c -S $s }
+        (& $line (New-PeriodState)) | Should -Not -Match 'Arrived'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })) | Should -Match '-SelectionFile \S+ -ArrivedFrom 2026-03-01 -ArrivedTo 2026-03-31 -StorePath '
+        $open = & $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })
+        $open | Should -Match '-ArrivedFrom 2026-03-01 -StorePath'; $open | Should -Not -Match 'ArrivedTo'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })) | Should -Not -Match 'Arrived' -Because 'the page does not let a wrong period go on'
+    }
+    It 'the same period is the same command under a French culture' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            $s = New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-09'; ArrTo = '2026-03-31' }
+            (ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)) -S $s) | Should -Match '-ArrivedFrom 2026-03-09 -ArrivedTo 2026-03-31'
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
+    }
+    It 'every parameter of the period exists in the entry script' {
+        $declared = (Get-Command (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1')).Parameters.Keys
+        $declared | Should -Contain 'ArrivedFrom'; $declared | Should -Contain 'ArrivedTo'
+    }
+    It 'gives an export with a period a store of its own, named after it' {
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState) | Should -Be ''
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-2026-03-01_2026-03-31'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' }) | Should -Be '-arrived-from-2026-03-01'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-until-2026-03-31'
+    }
+    It 'writes the numbers of a plan as "at most" for a period, and as they are otherwise' {
+        $t = [pscustomobject]@{ Items = 1208; Folders = 12; Bytes = [long](2GB); UnknownSize = 0 }
+        Format-MbtGuiPlanTotals $t -AtMost | Should -Be 'at most 1,208 items in 12 folders, 2 GiB'
+        Format-MbtGuiPlanTotals $t | Should -Be '1,208 items in 12 folders, 2 GiB'
+        $sel = [pscustomobject]@{ Items = 1500; SubtreeUnread = $false }
+        Format-MbtGuiSelectionItems $sel -WithNoun -AtMost | Should -Be 'at most 1,500 items'
+        Format-MbtGuiSelectionItems $sel -WithNoun | Should -Be '1,500 items'
+        Format-MbtGuiSelectionItems ([pscustomobject]@{ Items = 1500; SubtreeUnread = $true }) -AtMost | Should -Be '1,500 or more before the period is applied'
+    }
+    It 'the demonstration job writes the period, the items left out and the counts of an export with a period, and none without' {
+        $demo = Join-Path $script:Package 'module\MailboxTransfer.Gui.DemoJob.ps1'
+        $run = {
+            param($Extra)
+            $events = Join-Path $TestDrive ('events-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.jsonl')
+            $null = & (Get-Process -Id $PID).Path -NoProfile -File $demo -EventsFile $events -Speed 1000 -Mode Export @Extra
+            return @(Get-Content -LiteralPath $events | ForEach-Object { $_ | ConvertFrom-Json })
+        }
+        $with = & $run @('-ArrivedFrom', '2026-01-01', '-ArrivedTo', '2026-03-31')
+        ($with | Where-Object e -EQ 'plan').period.text | Should -Be 'arrived between 2026-01-01 and 2026-03-31'
+        ($with | Where-Object { $_.e -eq 'step' -and $_.id -eq 'list' -and $_.state -eq 'done' }).msg | Should -Match 'outside the period left out'
+        $result = $with | Where-Object e -EQ 'result'
+        $result.counts.outsidePeriod | Should -Be 14; $result.counts.withoutDate | Should -Be 1; $result.counts.kept | Should -BeGreaterThan 0
+        $without = & $run @()
+        ($without | Where-Object e -EQ 'plan').PSObject.Properties.Name | Should -Not -Contain 'period'
+        ($without | Where-Object e -EQ 'result').counts.PSObject.Properties.Name | Should -Not -Contain 'outsidePeriod'
     }
 }
 
@@ -860,5 +947,145 @@ Describe 'The All jobs button' {
         $run = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
         $run | Should -Match '(?s)function Resume-MbtGuiJob.*?\$Entry\.Task -eq ''batch''\) \{ Open-MbtGuiBatchReport \$Entry; return \}.*?\$reqFile'
         $run | Should -Match '(?s)function Open-MbtGuiBatchReport.*?\$g\.Engine\.BatchReport \$g\.S\.WorkFolder'
+    }
+}
+
+Describe 'The pause and resume buttons of the running step' {
+    BeforeAll { . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') }
+    It 'a running job offers Pause, in the same cases as the Stop button of the action bar' {
+        foreach ($state in 'running', 'sleep', 'decision') {
+            Get-MbtGuiRunStepControl @{ State = $state; StopRequested = $false; Result = $null } | Should -Be 'pause' -Because $state
+        }
+    }
+    It 'a stopped job offers Resume' {
+        Get-MbtGuiRunStepControl @{ State = 'stopped'; StopRequested = $true; Result = @{ Exit = 2 } } | Should -Be 'resume'
+    }
+    It 'offers nothing while the stop is being done, nor on a job that is finished' {
+        Get-MbtGuiRunStepControl @{ State = 'running'; StopRequested = $true; Result = $null } | Should -BeNullOrEmpty
+        foreach ($state in 'complete', 'partial', 'error', 'finishing') {
+            Get-MbtGuiRunStepControl @{ State = $state; StopRequested = $false; Result = @{ Exit = 0 } } | Should -BeNullOrEmpty -Because $state
+        }
+        Get-MbtGuiRunStepControl @{ State = 'running'; StopRequested = $false; Result = @{ Exit = 0 } } | Should -BeNullOrEmpty
+    }
+    It 'the model of a run gives the states the function reads' {
+        $r = New-MbtGuiRun -Task import
+        Get-MbtGuiRunStepControl $r | Should -Be 'pause'
+        $r.StopRequested = $true
+        Get-MbtGuiRunStepControl $r | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Copy to another mailbox: one command for both parts, the period, the store, the time left of the second part' {
+    BeforeAll {
+        $script:Entry = Join-Path $script:Package 'Invoke-MailboxTransfer.ps1'
+        $script:Cs = @{ Task = 'mailcopy'; Mailbox = 'adele@contoso.com'; Shared = 'projects@contoso.com'; AuthMode = 'user'; McTarget = ''; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'Copy of projects'; Mapping = ''; Conc = 4; Tries = 3; Reconcile = 5; Awake = $false
+            Changed = @{}; Period = 'all'; ArrFrom = ''; ArrTo = ''; TenantId = ''; ClientId = ''; AppTenant = ''; AppClient = ''; AppThumb = '' }
+        $script:Cj = @{ Id = 'mailcopy-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; StorePath = 'D:\Store'; SelectionFiles = @('D:\J\selection-1.json'); JobName = '' }
+    }
+    It 'is ONE command, so that Pause, Stop and Continue work across the two parts: -Mode Copy, the selection, the target, the folder, the store, the delay of the reconciliation' {
+        $c = @(Get-MbtGuiCommand -Task mailcopy -S $script:Cs -Job $script:Cj)
+        $c.Count | Should -Be 1
+        $a = $c[0].Arguments
+        $a[($a.IndexOf('-Mode') + 1)] | Should -Be 'Copy'
+        $a[($a.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'adele@contoso.com'
+        $a[($a.IndexOf('-SelectionFile') + 1)] | Should -Be 'D:\J\selection-1.json'
+        $a[($a.IndexOf('-TargetMailbox') + 1)] | Should -Be 'Primary'
+        $a[($a.IndexOf('-TargetRoot') + 1)] | Should -Be 'Copy of projects'
+        $a[($a.IndexOf('-StorePath') + 1)] | Should -Be 'D:\Store'
+        $a[($a.IndexOf('-ReconcileDelaySeconds') + 1)] | Should -Be '300'
+        $a | Should -Contain '-NoPrompt'; $a | Should -Contain '-EventsFile'; $a | Should -Contain '-StopFile'
+        $a | Should -Not -Contain '-TargetMailboxId' -Because 'a delegated sign-in writes into its own mailbox'
+        $a | Should -Not -Contain '-WhatIf'
+        (Get-MbtGuiCommand -Task mailcopy -S $script:Cs -Job $script:Cj -Plan)[0].Arguments | Should -Contain '-WhatIf'
+    }
+    It 'the application names the mailbox that receives; the same folder names and a mapping file are said as they are' {
+        $s = $script:Cs.Clone(); $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 'contoso.onmicrosoft.com'; $s.AppClient = '11111111-2222-3333-4444-555555555555'; $s.McTarget = ' adele.vance@contoso.com '; $s.TgtMode = 'same'; $s.TgtLoc = 'Archive'; $s.Mapping = 'D:\map.psd1'
+        $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments
+        $a[($a.IndexOf('-TargetMailboxId') + 1)] | Should -Be 'adele.vance@contoso.com'
+        $a[($a.IndexOf('-TargetMailbox') + 1)] | Should -Be 'Archive'
+        $a[($a.IndexOf('-MappingFile') + 1)] | Should -Be 'D:\map.psd1'
+        $a | Should -Not -Contain '-TargetRoot'
+        $a[($a.IndexOf('-CertificateThumbprint') + 1)] | Should -Be ('AB' * 20)
+    }
+    It 'a period is given to the copy as to an export, and the store has its own name for it' {
+        $s = $script:Cs.Clone(); $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'
+        $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments
+        $a[($a.IndexOf('-ArrivedFrom') + 1)] | Should -Be '2026-01-01'
+        $a[($a.IndexOf('-ArrivedTo') + 1)] | Should -Be '2026-03-31'
+        (Get-MbtGuiPeriod $s).Active | Should -BeTrue
+        (Get-MbtGuiPeriodStoreSuffix $s) | Should -Be '-arrived-2026-01-01_2026-03-31'
+        $other = $script:Cs.Clone(); $other.Task = 'import'; $other.Period = 'between'; $other.ArrFrom = '2026-01-01'
+        (Get-MbtGuiPeriod $other).Active | Should -BeFalse -Because 'only an export and a copy read a live mailbox'
+    }
+    It 'refuses a folder name the engine would take for a parameter' {
+        $s = $script:Cs.Clone(); $s.TgtName = '-Force'
+        { Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj } | Should -Throw '*cannot start with a dash*'
+    }
+    It 'every parameter of the command is a parameter of the entry script' {
+        $declared = (Get-Command $script:Entry).Parameters.Keys
+        $s = $script:Cs.Clone(); $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = 'adele@contoso.com'; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.Mapping = 'D:\m.psd1'; $s.Awake = $true; $s.Changed['Retry'] = $true; $s.Retry = 4
+        foreach ($t in (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because $t } }
+    }
+    It 'the second part starts when the export store is verified: the rates of the first part say nothing about the speed of the second' {
+        $r = New-MbtGuiRun -Task mailcopy
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'download'; title = 'Download' }, [pscustomobject]@{ id = 'check'; title = 'Verify the export store' }, [pscustomobject]@{ id = 'send'; title = 'Send' }) }
+        Add-Evt $r rate -Fields @{ window = '5m'; gibPerHour = 80 }
+        Add-Evt $r rate -Fields @{ window = '5m'; gibPerHour = 90 }
+        $r.Rates.Count | Should -Be 2
+        $r.ImportHalf | Should -BeFalse
+        Add-Evt $r step -Fields @{ id = 'check'; state = 'done'; msg = 'The export store is open.' }
+        $r.ImportHalf | Should -BeTrue
+        $r.Rates.Count | Should -Be 0
+        Add-Evt $r rate -Fields @{ window = '5m'; gibPerHour = 3.8 }
+        Add-Evt $r step -Fields @{ id = 'send'; state = 'running'; done = 1; total = 10 }
+        $r.Rates.Count | Should -Be 1 -Because 'the rates of the second part are kept'
+        $other = New-MbtGuiRun -Task import
+        Add-Evt $other rate -Fields @{ window = '5m'; gibPerHour = 3.9 }
+        Add-Evt $other step -Fields @{ id = 'check'; state = 'done' }
+        $other.Rates.Count | Should -Be 1 -Because 'an import is one part'
+    }
+}
+
+Describe 'Continue a job: the list, the Resume view, the first step of a resumed run' {
+    BeforeAll {
+        $script:PagesText = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.ps1') -Raw
+        $script:RunPagesText = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $script:EngineText = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1') -Raw
+    }
+    It 'the list is not cut to a few lines, scrolls inside its card and keeps the finished jobs in a fold' {
+        $script:EngineText | Should -Not -Match 'Select-Object -First 8'
+        $script:PagesText | Should -Match "(?s)function New-MbtGuiJobList.*?Finished \(\`$\(\`$done\.Count\)\).*?VerticalScrollBarVisibility = 'Auto'.*?MaxHeight = \d+"
+    }
+    It 'every line has Open the report and Delete, and Continue only for a job that can be continued; a batch has its report only' {
+        $script:PagesText | Should -Match "(?s)function New-MbtGuiJobRow.*?CanContinue.*?-Text 'Continue'.*?-Text 'Open the report'.*?-Text 'Delete'"
+        $script:PagesText | Should -Match "(?s)function New-MbtGuiJobRow.*?if \(\`$isBatch\).*?Resume-MbtGuiJob"
+    }
+    It 'Continue opens the Resume view; the job starts only from the button of that view' {
+        $script:RunPagesText | Should -Match '(?s)function Resume-MbtGuiJob.*?\$s\.Resume = @\{ Entry = \$Entry; Info = \$info; Request = \$req \}.*?Show-MbtGuiPage'
+        $script:RunPagesText | Should -Not -Match '(?s)function Resume-MbtGuiJob.*?Start-MbtGuiProcess.*?function New-MbtGuiResumeList'
+        $script:RunPagesText | Should -Match '(?s)function Build-MbtGuiResumePage.*?Already done, and not done again.*?Checked again.*?Where it restarts.*?Start-MbtGuiResumeRun'
+        $script:RunPagesText | Should -Match '(?s)function Start-MbtGuiResumeRun.*?Start-MbtGuiProcess'
+    }
+    It 'a job of the command line is continued by its name, also by Continue on the Run page after a stop' {
+        $script:RunPagesText | Should -Match "(?s)function Start-MbtGuiResumeRun.*?'-ResumeJob', \[string\]\`$Entry\.Name.*?ResumeArguments"
+        $script:RunPagesText | Should -Match "(?s)function Invoke-MbtGuiContinue.*?ResumeArguments"
+    }
+    It 'Delete asks the engine, names the job, says what goes and what never goes, and offers the copy store unticked' {
+        $script:RunPagesText | Should -Match "(?s)function Show-MbtGuiJobDelete.*?JobDeleteInfo"
+        $script:RunPagesText | Should -Match "(?s)function Show-MbtGuiJobDeleteQuestion.*?its log, its report and its events.*?Your data is never deleted.*?Also delete the copy store.*?-Checked \`$false.*?'Delete the job'"
+        $script:RunPagesText | Should -Match "(?s)function Invoke-MbtGuiJobDelete.*?JobDelete.*?Show-MbtGuiPage"
+    }
+    It 'a run that was resumed says first that it reads what is already done' {
+        $r = New-MbtGuiRun -Task export
+        $r.Resumed | Should -BeFalse
+        (Get-MbtGuiPreparingText $r) | Should -BeLike '**Preparing.**'
+        $r.Resumed = $true
+        (Get-MbtGuiPreparingText $r) | Should -Be '**Resume.** Reading what is already done, then connecting to Microsoft.'
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'resume'; title = 'Resume: reading what is already done' }, [pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }) }
+        Add-Evt $r step -Fields @{ id = 'resume'; state = 'running'; msg = 'Looking at what the earlier run already did' }
+        $r.Steps.Count | Should -Be 2
+        $r.Steps[0].Title | Should -Be 'Resume: reading what is already done'
+        (Get-MbtGuiPreparingText $r) | Should -BeLike '**Preparing.**'
+        $r.Planned | Should -BeTrue
     }
 }

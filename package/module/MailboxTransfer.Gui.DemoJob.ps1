@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - a job that only writes events (demonstration and tests).
@@ -26,6 +26,21 @@ if ($PSBoundParameters.ContainsKey('Rest') -and $Rest) {
     }
 }
 
+# the period of an export (-ArrivedFrom / -ArrivedTo), as the console gives it: yyyy-MM-dd
+$periodFrom = ''; $periodTo = ''
+if ($PSBoundParameters.ContainsKey('Rest') -and $Rest) {
+    for ($i = 0; $i -lt $Rest.Count - 1; $i++) {
+        if ([string]$Rest[$i] -ieq '-ArrivedFrom') { $periodFrom = [string]$Rest[$i + 1] }
+        if ([string]$Rest[$i] -ieq '-ArrivedTo') { $periodTo = [string]$Rest[$i + 1] }
+    }
+}
+$period = $null
+if ($Scenario -eq 'export' -and ($periodFrom -or $periodTo)) {
+    $period = [ordered]@{ text = $(if ($periodFrom -and $periodTo) { "arrived between $periodFrom and $periodTo" } elseif ($periodFrom) { "arrived from $periodFrom" } else { "arrived until $periodTo" }) }
+    if ($periodFrom) { $period.from = $periodFrom }
+    if ($periodTo) { $period.to = $periodTo }
+}
+
 function Write-Evt([hashtable]$e) {
     $e.v = 1; $e.t = [datetime]::UtcNow.ToString('o')
     ($e | ConvertTo-Json -Compress -Depth 6) | Add-Content -LiteralPath $EventsFile -Encoding utf8
@@ -39,7 +54,9 @@ $steps = switch ($Scenario) {
     'repair' { @(@{ id = 'before'; title = 'Check the file (before)' }, @{ id = 'scan'; title = 'Scan and read what can be read' }, @{ id = 'write'; title = 'Write the new file' }, @{ id = 'after'; title = 'Check the new file (after)' }) }
     default { @(@{ id = 'check'; title = 'Check the file' }) }
 }
-Write-Evt @{ e = 'plan'; job = $JobId; task = $Scenario; steps = $steps }
+$planEvent = @{ e = 'plan'; job = $JobId; task = $Scenario; steps = $steps }
+if ($period) { $planEvent.period = $period }
+Write-Evt $planEvent
 $work = switch ($Scenario) { 'import' { 'send' } 'repair' { 'write' } 'check' { 'check' } default { 'download' } }
 $total = 40; $bytesTotal = 4GB
 foreach ($s in $steps) {
@@ -57,19 +74,25 @@ foreach ($s in $steps) {
             Pause-Demo 0.4
         }
     } else { Pause-Demo 0.5 }
-    Write-Evt @{ e = 'step'; id = $s.id; state = 'done' }
+    if ($period -and $s.id -eq 'list') { Write-Evt @{ e = 'step'; id = 'list'; state = 'done'; msg = '14 items outside the period left out; 1 without a date kept' } }
+    else { Write-Evt @{ e = 'step'; id = $s.id; state = 'done' } }
 }
 switch ($Ending) {
     'decision' { Write-Evt @{ e = 'decision'; key = '42'; msg = 'Two items in the folder could be this one. We do not guess.'; candidates = @('A', 'B') }; Write-Evt @{ e = 'result'; exit = 3; complete = $false; next = 'decide'; counts = @{ done = $total - 1; unknown = 1 } }; exit 3 }
     'error' { Write-Evt @{ e = 'error'; code = 'disk-full'; msg = 'The disk is full.'; tech = 'IOException: There is not enough space on the disk.' }; Write-Evt @{ e = 'result'; exit = 1; complete = $false; next = 'retry' }; exit 1 }
-    default { Write-Evt @{ e = 'result'; exit = 0; complete = $true; next = 'done'; counts = @{ done = $total; failed = 0; bytes = [long]$bytesTotal; recovered = $total; partial = 0; lost = 0; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 } } }; exit 0 }
+    default {
+        $counts = @{ done = $total; failed = 0; bytes = [long]$bytesTotal; recovered = $total; partial = 0; lost = 0; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 } }
+        if ($period) { $counts.kept = $total + 1; $counts.outsidePeriod = 14; $counts.withoutDate = 1 }
+        Write-Evt @{ e = 'result'; exit = 0; complete = $true; next = 'done'; counts = $counts }
+        exit 0
+    }
 }
 
 # SIG # Begin signature block
 # MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBLBiBK5tdpi42J
-# CnZFIiJHp55Hqh3oTyj60Eh/SpIFtKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB4rIpSpXoq2/nO
+# Bqx7JSxhhW/DxnSvGnYFLeaKT/DSXKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -146,23 +169,23 @@ switch ($Ending) {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAAvXJZy46b
-# IPRBo2zFJfT2ENA26v7PcFJ8VQIU4K5H3TANBgkqhkiG9w0BAQEFAASCAgAHlx6G
-# wQxII4oF0nM/1dU0cNsytVPGjgkWrXvhn6+oOVZu8l8TQRPL1PU1H3QmAdv6oMOt
-# FAzUFmv+5+EhZ2dOq9ic/kJ6GPc4QmqNFCdkJWLo14GF17MOoSkUb4L2laVhf3Ly
-# QrLpqWkZSgbGBqC3zrYBS5KFY3oBp8wCQoTno1SLrpYsHADZbdfalaOSjq14cjyx
-# MQn4xSQBQVra/N85H1nIQsv9BOwzhjzLLP6w7Y64qvPPpWP7blFfIY7uoFSHvUaz
-# tVxLMQ2KBEC31ukTpUB3BioF8EzRTCmkz99ELmVK+MekGlqc6Aw+DWVQCuAm+YZY
-# TR/LSEWJCNPNb9MJLFk92t7L/n9gk+5sr25ZCeYmFrMZeL06OVjYA32zTO11o/El
-# Jq2jh1Jr9wbfoiyHVCGqZ8dcGqSJfDLPvbMxqd3/A86U6SUWxNyli8xeKWeC79Fu
-# WD9VryGEtWKybMC7PMCa3Nst3wcUbMDJu4dapc1oKe+aUjfowRoFjUFpJeryUy0J
-# 7v048GsFY5luIAHYHUQPzkJQksWQNwQosqBXKFG2lqxs2C1jVbtopJcclvVQXGKY
-# AGEecD00TfK8zmlpsLlqPH1WJDJXCnEsxYJbwU/UFT5DOXxxY0CsfrtNeJu8ja7q
-# sf219SMRPAazB64OvbAi7tO/BpqKhPg7G6MEUaGCFM0wghTJBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAwUTQKXdp+
+# aAPFOmrdWLZra4Ka7z20VMuoJhGuKQ7/3TANBgkqhkiG9w0BAQEFAASCAgBZRmp1
+# xzlsjwIiT/cNobyBVF3FIAiDiQMQAeZ0MO2erUPVodbY/Zp9E8B+Mcmxa6Mcr9cN
+# yxn/vNwM26Ixgt77gdY+bNev+W8hHawxnbEkFDklAJV3VAX9xDLRTotQaVhANGkS
+# wip+OogB8Ha16KVuLAwjiTjJ44mL/5Rzl52VjLyWd9wrmFFoh3kH8w1u9xjVpX/o
+# H8yzfiSOQ4NWde1LDfcIxUpqy05F13BXzJbekMUWfbuSj1INVODxywPuv4lb0Va0
+# xuXtBNPblA3ylip+IpSqTVrW2qDna2c649iEEc5ObArgL0hHPLm3rjIG6UHIrwGe
+# jsOddY9w8B5uMuLiMA1nGwDuYkmK8zpviKiZKvHZn02upSPdBu9BTbhcbUwGlRmT
+# Ewk6LVdqgZoi/WeoXs54X1cmYutwaSJzycOeQS9Gwo1gcNZwYho1odlUCrWzhgDE
+# ccKLS4P0/4/rCpPhJL9YpUubpnfll104NVQIIqCHa65BLmvuQW42xCObAM4QQruB
+# AKB5lll00KjkH2DEWRzPZhxxkmfs5QYio+ICT31xST/HgtliW0Hae1DxADkcLk4M
+# CGwpKJBZhJYfiiTKf0mA1dIwoHyVJNYruXhI81u374xBtcXpO9KdiT1+4PukUxeC
+# tijJdEBcNg8yw8F8o67Ck5qwCf0lnwyb571+aaGCFM0wghTJBgorBgEEAYI3AwMB
 # MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIMQvC2gVjvrKM3yfexmI/QTQXTBBb7HK3P3Kpem2gzudAgh2V1FNkGPg
-# oBgPMjAyNjExMTAwODIyMDdaMAMCAQECEDd5v2d/UxnEb2y6aghCUAugghGnMIIE
+# BAIBBQAEIHc7TmItJ9dIQyKN0P4LiBkxUihT3+xsXIrY/jX0hNW9AggK0jLDHBZU
+# 6BgPMjAyNjExMjUwODAyNTVaMAMCAQECEE0acCxDgaTj4is/yZQuguygghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -261,13 +284,13 @@ switch ($Ending) {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExMDA4MjIwN1owKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHpT
-# wqVvTu6nkLF+/UbWcBLGgK5kl0ZUWYS9CNMjFaAoMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDI1NVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIEgs
+# lG3Gx9Pwy9h4q6tXi1QV4UcqtzT1ooa6e3y7VJkyMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBgtpOEIPKg7BaJv3o51Xn21nYjxRJ5OodAwEuYVzz3hwIgT/Xw
-# fS5WXCFbdsqhrrCW2wUgPym3VTJqQUGgmAdzEcA=
+# zj0EAwIERjBEAiBLXGm2KltBKSvccoPkuJlKH56CqFhsLt33kiQng3vnxwIgE4Pa
+# hk/7XeRjL0glflz1b04/U+ghIgus7TzV1AlmEzk=
 # SIG # End signature block

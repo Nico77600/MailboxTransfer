@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Lists the files that the owner signs (Authenticode) before a release, and puts them in the form the signature needs.

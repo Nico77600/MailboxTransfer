@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     Package integrity: the contract of the release package (signed PowerShell files, hash manifest, byte-exact Git attributes) and the
     logic of the verifier on a controlled copy of the package.
@@ -65,7 +65,7 @@ Describe 'Static package contract' {
         $listed = @([regex]::Matches($block, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
         $actual = Get-SignedPaths
         $listed | Should -Be $actual
-        $actual.Count | Should -Be 23
+        $actual.Count | Should -Be 24
     }
     It 'keeps the signed files ASCII (the signature must read the same in Windows PowerShell 5.1 and PowerShell 7)' {
         foreach ($relative in Get-SignedPaths) {
@@ -95,7 +95,7 @@ Describe 'Static package contract' {
         }
     }
     It 'has one version: the module manifest, the module, the entry scripts, product.json and the top of the changelog' {
-        $v = '1.2.0'
+        $v = '1.3.0'
         (Import-PowerShellDataFile -LiteralPath (Join-Path $script:Package 'MailboxTransfer.psd1')).ModuleVersion | Should -Be $v
         [IO.File]::ReadAllText((Join-Path $script:Package 'MailboxTransfer.psm1')) | Should -Match "(?m)^\`$script:ToolVersion = '$v'"
         [IO.File]::ReadAllText((Join-Path $script:Package 'Start-MailboxTransferConsole.ps1')) | Should -Match "(?m)^\`$script:ConsoleVersion = '$v'"
@@ -262,5 +262,356 @@ Describe 'Native state of the real package - no substitution (honest, state-depe
         }
         $r = Invoke-Verifier -Root $script:Package -DevelopmentMode
         $r.ExitCode | Should -Be 0 -Because $r.Text
+    }
+}
+
+Describe 'Reparse points are judged by their tag' {
+    # A symbolic link needs a privilege that an ordinary account may not hold; known at discovery, for -Skip.
+    $canSymlink = $false
+    $probeTarget = Join-Path ([IO.Path]::GetTempPath()) ('mbt-symlink-probe-' + [guid]::NewGuid().ToString('N'))
+    try {
+        [void](New-Item -ItemType SymbolicLink -Path $probeTarget -Target $env:SystemRoot -ErrorAction Stop)
+        $canSymlink = $true
+        (Get-Item -LiteralPath $probeTarget -Force).Delete()
+    } catch { $canSymlink = $false }
+    BeforeAll {
+        $script:HelperNames = 'Get-PathReparseTag', 'Test-ReparseTagAllowed', 'Get-RefusedReparseTag', 'Test-CloudReadErrorCode', 'Get-ReadFailureCode', 'Assert-PlainPath'
+        $verifierAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Package 'src\Test-PackageIntegrity.ps1'), [ref]$null, [ref]$null)
+        foreach ($name in $script:HelperNames) {
+            $function = $verifierAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+            if ($null -eq $function) { throw "The verifier function $name is missing." }
+            . ([scriptblock]::Create($function.Extent.Text))
+        }
+        $script:TagFx = New-IntegrityFixture -Name 'tag-ok'
+        # A fixture whose verifier text is changed at an anchor; the manifest is written again so that the changed verifier is the signed one.
+        function Set-FixtureVerifier([string]$Fixture, [string]$Search, [string]$Replace) {
+            $verifier = Join-Path $Fixture 'src\Test-PackageIntegrity.ps1'
+            $text = [IO.File]::ReadAllText($verifier)
+            if (-not $text.Contains($Search)) { throw "The anchor was not found in the verifier: $Search" }
+            [IO.File]::WriteAllText($verifier, $text.Replace($Search, $Replace), [Text.UTF8Encoding]::new($false))
+            $null = & (Join-Path $script:Repo 'tools\New-PackageIntegrity.ps1') -Root $Fixture 6>&1
+        }
+        function Set-FixtureTag([string]$Fixture, [uint32]$Tag) {
+            $literal = '0x' + $Tag.ToString('X8') + 'u'
+            Set-FixtureVerifier $Fixture "Assert-PlainPath `$rootPath `$true`r`n" ('function Get-PathReparseTag { param($Path) [uint32]' + $literal + " }`r`nAssert-PlainPath `$rootPath `$true`r`n")
+        }
+        # docs\ becomes a junction to a copy of itself: a directory that is a reparse point and whose files keep their bytes.
+        function New-DocsJunction([string]$Fixture) {
+            $link = Join-Path $Fixture 'docs'
+            $copy = Join-Path $script:Tmp ('docs-copy-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+            Move-Item -LiteralPath $link -Destination $copy
+            [void](New-Item -ItemType Junction -Path $link -Target $copy)
+            [pscustomobject]@{ Link = $link; Target = $copy }
+        }
+        function ConvertTo-FlatText([string]$Text) { ($Text -replace '\s*\|\s*', ' ' -replace '\s+', ' ') }
+    }
+
+    It 'judges the tag <Name> (0x<Tag>): accepted is <Accepted>' -ForEach @(
+        @{ Name = 'symbolic link'; Tag = 'A000000C'; Accepted = $false }
+        @{ Name = 'junction and mount point'; Tag = 'A0000003'; Accepted = $false }
+        @{ Name = 'OneDrive cloud files'; Tag = '9000001A'; Accepted = $true }
+        @{ Name = 'OneDrive cloud files, variant 1'; Tag = '9000101A'; Accepted = $true }
+        @{ Name = 'OneDrive cloud files, variant 2'; Tag = '9000201A'; Accepted = $true }
+        @{ Name = 'OneDrive cloud files, variant 7'; Tag = '9000701A'; Accepted = $true }
+        @{ Name = 'OneDrive cloud files, variant F'; Tag = '9000F01A'; Accepted = $true }
+        @{ Name = 'data deduplication'; Tag = '80000013'; Accepted = $true }
+        @{ Name = 'WOF (CompactOS)'; Tag = '80000017'; Accepted = $true }
+        @{ Name = 'a cloud tag that carries the name-surrogate bit'; Tag = 'B000001A'; Accepted = $false }
+        @{ Name = 'an unknown tag with the name-surrogate bit (WSL symbolic link)'; Tag = 'A000001D'; Accepted = $false }
+        @{ Name = 'the name-surrogate bit alone'; Tag = '20000000'; Accepted = $false }
+        @{ Name = 'all bits set'; Tag = 'FFFFFFFF'; Accepted = $false }
+        @{ Name = 'an unknown tag without the bit (app execution alias)'; Tag = '8000001B'; Accepted = $false }
+        @{ Name = 'an unknown tag without the bit (hierarchical storage)'; Tag = 'C0000004'; Accepted = $false }
+        @{ Name = 'an unknown Microsoft tag'; Tag = '80000023'; Accepted = $false }
+        @{ Name = 'a cloud tag with another low byte'; Tag = '9000001B'; Accepted = $false }
+        @{ Name = 'a cloud tag with a variant in the wrong nibble'; Tag = '9000011A'; Accepted = $false }
+        @{ Name = 'a cloud tag with another high word'; Tag = '9001001A'; Accepted = $false }
+        @{ Name = 'a deduplication tag with a variant'; Tag = '80001013'; Accepted = $false }
+        @{ Name = 'a tag that is not set'; Tag = '00000000'; Accepted = $false }
+        @{ Name = 'a non-Microsoft tag'; Tag = '00000011'; Accepted = $false }
+    ) {
+        Test-ReparseTagAllowed ([Convert]::ToUInt32($Tag, 16)) | Should -Be $Accepted
+    }
+    It 'reads no tag from a normal file or folder, and refuses to guess for a path that does not exist' {
+        $file = Join-Path $script:TagFx 'README.md'
+        Get-PathReparseTag $file | Should -BeNullOrEmpty
+        Get-PathReparseTag $script:TagFx | Should -BeNullOrEmpty
+        Get-RefusedReparseTag (Get-Item -LiteralPath $file -Force) | Should -BeNullOrEmpty
+        { Get-PathReparseTag (Join-Path $script:TagFx 'missing.txt') } | Should -Throw -ExpectedMessage '*Windows error 2*'
+    }
+    It 'reads the tag of a junction without opening its target, from a path of more than 260 characters too' {
+        $target = Join-Path $script:Tmp 'tag-target'
+        [void][IO.Directory]::CreateDirectory($target)
+        $link = Join-Path $script:Tmp 'tag-junction'
+        [void](New-Item -ItemType Junction -Path $link -Target $target)
+        try {
+            '{0:X8}' -f (Get-PathReparseTag $link) | Should -Be 'A0000003'
+            Get-RefusedReparseTag (Get-Item -LiteralPath $link -Force) | Should -Be 'A0000003'
+            $deep = Join-Path $script:Tmp ((1..4 | ForEach-Object { 'd' * 70 }) -join '\')
+            [void][IO.Directory]::CreateDirectory('\\?\' + $deep)
+            $deepLink = Join-Path $deep 'deep-junction'
+            [void](New-Item -ItemType Junction -Path ('\\?\' + $deepLink) -Target $target)
+            $deepLink.Length | Should -BeGreaterThan 260
+            '{0:X8}' -f (Get-PathReparseTag $deepLink) | Should -Be 'A0000003'
+            [IO.Directory]::Delete('\\?\' + $deepLink)
+        }
+        finally { (Get-Item -LiteralPath $link -Force).Delete() }
+    }
+    It 'reads the tag of a symbolic link to a file and to a folder' -Skip:(-not $canSymlink) {
+        $target = Join-Path $script:Tmp 'symlink-target'
+        [void][IO.Directory]::CreateDirectory($target)
+        $targetFile = Join-Path $target 'file.txt'
+        Set-Content -LiteralPath $targetFile -Value 'x'
+        $fileLink = Join-Path $script:Tmp 'file-link'
+        $folderLink = Join-Path $script:Tmp 'folder-link'
+        [void](New-Item -ItemType SymbolicLink -Path $fileLink -Target $targetFile)
+        [void](New-Item -ItemType SymbolicLink -Path $folderLink -Target $target)
+        try {
+            '{0:X8}' -f (Get-PathReparseTag $fileLink) | Should -Be 'A000000C'
+            '{0:X8}' -f (Get-PathReparseTag $folderLink) | Should -Be 'A000000C'
+        }
+        finally { (Get-Item -LiteralPath $fileLink -Force).Delete(); (Get-Item -LiteralPath $folderLink -Force).Delete() }
+    }
+    It 'keeps one text of the three tag functions in the verifier, the module, both entry scripts and both tools' {
+        $files = 'package\src\Test-PackageIntegrity.ps1', 'package\MailboxTransfer.psm1', 'package\Invoke-MailboxTransfer.ps1', 'package\Start-MailboxTransferConsole.ps1', 'tools\New-MailboxTransferPackage.ps1', 'tools\New-PackageIntegrity.ps1'
+        foreach ($name in 'Get-PathReparseTag', 'Test-ReparseTagAllowed', 'Get-RefusedReparseTag') {
+            $texts = foreach ($relative in $files) {
+                $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Repo $relative), [ref]$null, [ref]$null)
+                $found = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))
+                $found.Count | Should -Be 1 -Because "$name in $relative"
+                $found[0].Extent.Text.Replace("`r`n", "`n")
+            }
+            @($texts | Select-Object -Unique).Count | Should -Be 1 -Because $name
+        }
+    }
+    It 'judges a path by its tag and not by the bare ReparsePoint attribute, in every place that judges one' {
+        foreach ($relative in 'package\src\Test-PackageIntegrity.ps1', 'package\MailboxTransfer.psm1', 'package\Invoke-MailboxTransfer.ps1', 'package\Start-MailboxTransferConsole.ps1', 'package\module\MailboxTransfer.Events.ps1', 'tools\New-MailboxTransferPackage.ps1', 'tools\New-PackageIntegrity.ps1') {
+            $text = [IO.File]::ReadAllText((Join-Path $script:Repo $relative))
+            @($text -split "`r?`n" | Where-Object { $_ -match '\$\w+\.Attributes -band \[IO\.FileAttributes\]::ReparsePoint' -and $_ -notmatch '\$(Item|Entry)\.Attributes' }).Count | Should -Be 0 -Because $relative
+        }
+    }
+
+    It 'refuses a file, a folder and an ancestor whose tag is <Name>, and names the tag' -ForEach @(
+        @{ Name = 'a symbolic link'; Tag = 'A000000C' }
+        @{ Name = 'a junction'; Tag = 'A0000003' }
+        @{ Name = 'unknown with the name-surrogate bit'; Tag = 'A000001D' }
+        @{ Name = 'unknown without it'; Tag = '8000001B' }
+        @{ Name = 'a cloud tag with the surrogate bit'; Tag = 'B000001A' }
+    ) {
+        $target = Join-Path $script:Tmp ('guard-refused-' + $Tag)
+        [void][IO.Directory]::CreateDirectory($target)
+        Set-Content -LiteralPath (Join-Path $target 'file.txt') -Value 'x'
+        $link = Join-Path $script:Tmp ('guard-link-' + $Tag)
+        [void](New-Item -ItemType Junction -Path $link -Target $target)
+        Mock Get-PathReparseTag ([scriptblock]::Create("[uint32]0x${Tag}u"))
+        try {
+            { Assert-PlainPath $link $true } | Should -Throw -ExpectedMessage "*reparse point that is not accepted (tag 0x$Tag)*"
+            { Assert-PlainPath (Join-Path $link 'file.txt') } | Should -Throw -ExpectedMessage "*reparse-point ancestor that is not accepted (tag 0x$Tag)*"
+        }
+        finally { (Get-Item -LiteralPath $link -Force).Delete() }
+    }
+    It 'accepts a file and a folder whose tag is <Name>' -ForEach @(
+        @{ Name = 'a OneDrive cloud placeholder'; Tag = '9000001A' }
+        @{ Name = 'a OneDrive cloud placeholder, variant F'; Tag = '9000F01A' }
+        @{ Name = 'a deduplicated item'; Tag = '80000013' }
+        @{ Name = 'a WOF item'; Tag = '80000017' }
+    ) {
+        $target = Join-Path $script:Tmp ('guard-accepted-' + $Tag)
+        [void][IO.Directory]::CreateDirectory($target)
+        Set-Content -LiteralPath (Join-Path $target 'file.txt') -Value 'x'
+        $link = Join-Path $script:Tmp ('guard-accepted-link-' + $Tag)
+        [void](New-Item -ItemType Junction -Path $link -Target $target)
+        Mock Get-PathReparseTag ([scriptblock]::Create("[uint32]0x${Tag}u"))
+        try {
+            { Assert-PlainPath $link $true } | Should -Not -Throw
+            { Assert-PlainPath (Join-Path $link 'file.txt') } | Should -Not -Throw
+        }
+        finally { (Get-Item -LiteralPath $link -Force).Delete() }
+    }
+    It 'still refuses a path of the wrong type, whatever its tag' {
+        { Assert-PlainPath (Join-Path $script:TagFx 'README.md') $true } | Should -Throw -ExpectedMessage '*unsafe path or unexpected type*'
+        { Assert-PlainPath (Join-Path $script:TagFx 'docs') } | Should -Throw -ExpectedMessage '*unsafe path or unexpected type*'
+        { Assert-PlainPath (Join-Path $script:TagFx 'README.md') } | Should -Not -Throw
+    }
+    It 'refuses a symbolic link to a file and to a folder of the package' -Skip:(-not $canSymlink) {
+        $fx = New-IntegrityFixture -Name ('symlink-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        $readme = Join-Path $fx 'README.md'
+        $copy = Join-Path $script:Tmp ('README-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.copy')
+        Move-Item -LiteralPath $readme -Destination $copy
+        [void](New-Item -ItemType SymbolicLink -Path $readme -Target $copy)
+        $r = Invoke-Verifier -Root $fx -Distribution
+        $r.ExitCode | Should -Not -Be 0
+        (ConvertTo-FlatText $r.Text) | Should -Match 'reparse point that is not accepted \(tag 0xA000000C\)'
+        (Get-Item -LiteralPath $readme -Force).Delete()
+        Move-Item -LiteralPath $copy -Destination $readme
+        $docs = Join-Path $fx 'docs'
+        $docsCopy = Join-Path $script:Tmp ('docs-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.copy')
+        Move-Item -LiteralPath $docs -Destination $docsCopy
+        [void](New-Item -ItemType SymbolicLink -Path $docs -Target $docsCopy)
+        $r = Invoke-Verifier -Root $fx -Distribution
+        $r.ExitCode | Should -Not -Be 0
+        (ConvertTo-FlatText $r.Text) | Should -Match 'reparse(-point ancestor| point) that is not accepted \(tag 0xA000000C\): \S*docs'
+        (Get-Item -LiteralPath $docs -Force).Delete()
+    }
+    It 'refuses a junction in the package tree, whatever it points to, and names the tag' {
+        $fx = New-IntegrityFixture -Name ('junction-tag-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        $link = New-DocsJunction $fx
+        try {
+            $r = Invoke-Verifier -Root $fx -Distribution
+            $r.ExitCode | Should -Not -Be 0
+            (ConvertTo-FlatText $r.Text) | Should -Match 'that is not accepted \(tag 0xA0000003\)'
+        }
+        finally { (Get-Item -LiteralPath $link.Link -Force).Delete() }
+    }
+    It 'accepts a package in a normal folder' {
+        $r = Invoke-Verifier -Root $script:TagFx -Distribution
+        $r.ExitCode | Should -Be 0 -Because $r.Text
+    }
+    It 'accepts a folder whose tag is <Name> and verifies the files in it' -ForEach @(
+        @{ Name = 'a OneDrive cloud placeholder'; Tag = 0x9000001Au }
+        @{ Name = 'a OneDrive cloud placeholder, variant F'; Tag = 0x9000F01Au }
+        @{ Name = 'a deduplicated item'; Tag = 0x80000013u }
+        @{ Name = 'a WOF item'; Tag = 0x80000017u }
+    ) {
+        $fx = New-IntegrityFixture -Name ('accepted-' + $Tag.ToString('X8'))
+        Set-FixtureTag $fx $Tag
+        $link = New-DocsJunction $fx
+        try {
+            $r = Invoke-Verifier -Root $fx -Distribution
+            $r.ExitCode | Should -Be 0 -Because $r.Text
+        }
+        finally { (Get-Item -LiteralPath $link.Link -Force).Delete() }
+    }
+    It 'refuses a folder whose tag is <Name>, even when the tag looks harmless' -ForEach @(
+        @{ Name = 'unknown with the name-surrogate bit'; Tag = 0xA000001Du; Text = 'A000001D' }
+        @{ Name = 'unknown without it'; Tag = 0x8000001Bu; Text = '8000001B' }
+    ) {
+        $fx = New-IntegrityFixture -Name ('refused-' + $Text)
+        Set-FixtureTag $fx $Tag
+        $link = New-DocsJunction $fx
+        try {
+            $r = Invoke-Verifier -Root $fx -Distribution
+            $r.ExitCode | Should -Not -Be 0
+            (ConvertTo-FlatText $r.Text) | Should -Match "that is not accepted \(tag 0x$Text\)"
+        }
+        finally { (Get-Item -LiteralPath $link.Link -Force).Delete() }
+    }
+    It 'still refuses a changed file inside an accepted reparse point: the SHA256 decides' {
+        $fx = New-IntegrityFixture -Name 'accepted-changed'
+        Set-FixtureTag $fx 0x9000001Au
+        $link = New-DocsJunction $fx
+        try {
+            (Invoke-Verifier -Root $fx -Distribution).ExitCode | Should -Be 0
+            [IO.File]::AppendAllText((Join-Path $link.Target 'MailboxTransfer-UserGuide.html'), "`r`n<!-- synchronised change -->")
+            $r = Invoke-Verifier -Root $fx -Distribution
+            $r.ExitCode | Should -Not -Be 0
+            $r.Text | Should -Match 'SHA256 mismatch: docs\\MailboxTransfer-UserGuide.html'
+        }
+        finally { (Get-Item -LiteralPath $link.Link -Force).Delete() }
+    }
+    It 'refuses a package under a junction, in the verifier, the entry script, the console and the module, and names the tag' {
+        $via = Join-Path $script:Tmp ('via-junction-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        [void](New-Item -ItemType Junction -Path $via -Target $script:Tmp)
+        try {
+            $linked = Join-Path $via (Split-Path $script:TagFx -Leaf)
+            $r = Invoke-Verifier -Root $linked -Distribution
+            $r.ExitCode | Should -Not -Be 0
+            (ConvertTo-FlatText $r.Text) | Should -Match 'reparse-point ancestor that is not accepted \(tag 0xA0000003\)'
+            $out = & pwsh -NoProfile -NonInteractive -File (Join-Path $linked 'Invoke-MailboxTransfer.ps1') -Mode Status -StorePath (Join-Path $script:Tmp 'none') 2>&1 | Out-String
+            (ConvertTo-FlatText $out) | Should -Match 'that is not accepted \(tag 0xA0000003\)'
+            $out = & pwsh -NoProfile -NonInteractive -File (Join-Path $linked 'Start-MailboxTransferConsole.ps1') 2>&1 | Out-String
+            (ConvertTo-FlatText $out) | Should -Match 'that is not accepted \(tag 0xA0000003\)'
+            $out = & pwsh -NoProfile -NonInteractive -Command "Import-Module '$(Join-Path $linked 'MailboxTransfer.psd1')'" 2>&1 | Out-String
+            (ConvertTo-FlatText $out) | Should -Match 'that is not accepted \(tag 0xA0000003\)'
+        }
+        finally { (Get-Item -LiteralPath $via -Force).Delete() }
+    }
+    It 'accepts a package under a folder whose tag is a cloud tag, and refuses one whose tag redirects' {
+        foreach ($case in @(@{ Tag = 0x9000001Au; Accepted = $true }, @{ Tag = 0xA000000Cu; Accepted = $false })) {
+            $fx = New-IntegrityFixture -Name ('via-' + $case.Tag.ToString('X8'))
+            Set-FixtureTag $fx $case.Tag
+            $via = Join-Path $script:Tmp ('via-cloud-' + $case.Tag.ToString('X8'))
+            [void](New-Item -ItemType Junction -Path $via -Target $script:Tmp)
+            try {
+                $r = Invoke-Verifier -Root (Join-Path $via (Split-Path $fx -Leaf)) -Distribution
+                if ($case.Accepted) { $r.ExitCode | Should -Be 0 -Because $r.Text }
+                else {
+                    $r.ExitCode | Should -Not -Be 0
+                    (ConvertTo-FlatText $r.Text) | Should -Match 'reparse-point ancestor that is not accepted \(tag 0xA000000C\)'
+                }
+            }
+            finally { (Get-Item -LiteralPath $via -Force).Delete() }
+        }
+    }
+    It 'refuses a link in the package when the manifest is written, and names the tag' {
+        $fx = New-IntegrityFixture -Name ('generator-' + [guid]::NewGuid().ToString('N').Substring(0, 6)) -WithoutManifest
+        $link = New-DocsJunction $fx
+        try {
+            { & (Join-Path $script:Repo 'tools\New-PackageIntegrity.ps1') -Root $fx 6>&1 | Out-Null } | Should -Throw -ExpectedMessage '*not accepted (tag 0xA0000003)*docs*'
+        }
+        finally { (Get-Item -LiteralPath $link.Link -Force).Delete() }
+    }
+    It 'accepts a file that Windows compressed with WOF (CompactOS) and keeps judging its bytes' {
+        $fx = New-IntegrityFixture -Name 'wof'
+        $readme = Join-Path $fx 'README.md'
+        $null = & compact.exe /C /EXE:XPRESS4K /F $readme
+        $compacted = $LASTEXITCODE -eq 0
+        (Invoke-Verifier -Root $fx -Distribution).ExitCode | Should -Be 0
+        $tag = if ($compacted) { Get-PathReparseTag $readme }
+        if ($null -eq $tag) { Set-ItResult -Skipped -Because 'this Windows build does not expose a reparse tag on a compacted file'; return }
+        '{0:X8}' -f $tag | Should -Be '80000017'
+        [IO.File]::WriteAllText($readme, ('# another content' * 2000))
+        $null = & compact.exe /C /EXE:XPRESS4K /F $readme
+        '{0:X8}' -f (Get-PathReparseTag $readme) | Should -Be '80000017'
+        $r = Invoke-Verifier -Root $fx -Distribution
+        $r.ExitCode | Should -Not -Be 0
+        $r.Text | Should -Match 'SHA256 mismatch: README.md'
+    }
+
+    It 'maps the Windows error <Code> (<Name>) of a read to the cloud message: <Mapped>' -ForEach @(
+        @{ Code = 362; Name = 'ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING'; Mapped = $true }
+        @{ Code = 369; Name = 'ERROR_FILE_SYSTEM_VIRTUALIZATION_UNAVAILABLE'; Mapped = $true }
+        @{ Code = 386; Name = 'ERROR_CLOUD_FILE_AUTHENTICATION_FAILED'; Mapped = $true }
+        @{ Code = 388; Name = 'ERROR_CLOUD_FILE_NETWORK_UNAVAILABLE'; Mapped = $true }
+        @{ Code = 389; Name = 'ERROR_CLOUD_FILE_UNSUCCESSFUL'; Mapped = $true }
+        @{ Code = 393; Name = 'ERROR_CLOUD_FILE_REQUEST_ABORTED'; Mapped = $true }
+        @{ Code = 398; Name = 'ERROR_CLOUD_FILE_REQUEST_CANCELED'; Mapped = $true }
+        @{ Code = 404; Name = 'ERROR_CLOUD_FILE_PROVIDER_TERMINATED'; Mapped = $true }
+        @{ Code = 426; Name = 'ERROR_CLOUD_FILE_REQUEST_TIMEOUT'; Mapped = $true }
+        @{ Code = 395; Name = 'ERROR_CLOUD_FILE_ACCESS_DENIED'; Mapped = $false }
+        @{ Code = 5; Name = 'ERROR_ACCESS_DENIED'; Mapped = $false }
+        @{ Code = 32; Name = 'ERROR_SHARING_VIOLATION'; Mapped = $false }
+        @{ Code = 2; Name = 'ERROR_FILE_NOT_FOUND'; Mapped = $false }
+        @{ Code = 0; Name = 'no error'; Mapped = $false }
+    ) {
+        Test-CloudReadErrorCode $Code | Should -Be $Mapped
+    }
+    It 'reads the Windows error from a Win32 HRESULT, a Win32Exception or an inner exception, and ignores the message text' {
+        Get-ReadFailureCode ([IO.IOException]::new('any text, in any language', [int]0x80070184)) | Should -Be 388
+        Get-ReadFailureCode ([IO.IOException]::new('Le fournisseur de synchronisation du cloud n''a pas pu', [int]0x8007016A)) | Should -Be 362
+        Get-ReadFailureCode ([ComponentModel.Win32Exception]::new(426)) | Should -Be 426
+        Get-ReadFailureCode ([InvalidOperationException]::new('outer', [IO.IOException]::new('inner', [int]0x80070185))) | Should -Be 389
+        Get-ReadFailureCode ([InvalidOperationException]::new('ERROR_CLOUD_FILE_NETWORK_UNAVAILABLE 388')) | Should -Be 0
+        Get-ReadFailureCode ([IO.IOException]::new('not a Win32 HRESULT', [int]0x80004005)) | Should -Be 0
+        Get-ReadFailureCode $null | Should -Be 0
+    }
+    It 'names a cloud file that cannot be downloaded, with the way out, when its read fails with <Code>' -ForEach @(
+        @{ Code = 388; HResult = [int]0x80070184 }
+        @{ Code = 362; HResult = [int]0x8007016A }
+        @{ Code = 426; HResult = [int]0x800701AA }
+    ) {
+        $fx = New-IntegrityFixture -Name ('cloud-read-' + $Code)
+        Set-FixtureVerifier $fx 'try { (Microsoft.PowerShell.Utility\Get-FileHash' "try { if (`$Path -like '*\README.md') { throw [IO.IOException]::new('texte localise', $HResult) }; (Microsoft.PowerShell.Utility\Get-FileHash"
+        $r = Invoke-Verifier -Root $fx -Distribution
+        $r.ExitCode | Should -Not -Be 0
+        (ConvertTo-FlatText $r.Text) | Should -Match "this cloud file \(OneDrive\) is not downloaded.*Windows error $Code.*README\.md.*Reconnect this computer to the network.*outside OneDrive"
+    }
+    It 'leaves the other read failures as they are' {
+        $fx = New-IntegrityFixture -Name 'cloud-read-other'
+        Set-FixtureVerifier $fx 'try { (Microsoft.PowerShell.Utility\Get-FileHash' "try { if (`$Path -like '*\README.md') { throw [IO.IOException]::new('texte localise', [int]0x80070005) }; (Microsoft.PowerShell.Utility\Get-FileHash"
+        $r = Invoke-Verifier -Root $fx -Distribution
+        $r.ExitCode | Should -Not -Be 0
+        $r.Text | Should -Match 'texte localise'
+        $r.Text | Should -Not -Match 'OneDrive'
     }
 }

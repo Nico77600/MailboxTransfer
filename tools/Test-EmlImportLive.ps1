@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Live check of the EML import (lab tenant, adele.vance@contoso.com's PRIMARY mailbox only): imports .eml files into a test folder, reads them back

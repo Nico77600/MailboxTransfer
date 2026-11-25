@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - starting a job, the Run page and the Done page (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -38,7 +38,9 @@ function Get-MbtGuiPlanKey {
     $g = $script:Gui; $s = $g.S
     $sb = [Text.StringBuilder]::new()
     # what is typed or picked (addresses, names, paths) does not depend on the case; the ids of the folders ticked are machine ids and stay exact
-    [void]$sb.Append("$($s.Task)|$($s.Dest)|$($s.OutFolder)|$($s.OutName)|$($s.SplitGB)|$($s.CheckEach)|$($s.SepAux)|$($s.KeepStore)|$($s.Conc)|$($s.Retry)|$($s.Tries)|$($s.Reconcile)|$($s.ImSrc)|$($s.ImPath)|$($s.TgtLoc)|$($s.TgtMode)|$($s.TgtName)|$($s.Mapping)|$($s.Shared)|$($s.ImShared)|$($s.RecoverableItems)|$($s.RpPath)|$($s.RpDest)|$($s.RpLevel)|$($s.RpKeep)|$($s.OpPath)|$($s.Mailbox)|$($s.AuthMode)|$($s.TenantId)|$($s.ClientId)|$($s.AppTenant)|$($s.AppClient)|$($s.AppThumb)|$($s.Awake)".ToLowerInvariant())
+    [void]$sb.Append("$($s.Task)|$($s.Dest)|$($s.OutFolder)|$($s.OutName)|$($s.SplitGB)|$($s.CheckEach)|$($s.SepAux)|$($s.KeepStore)|$($s.Conc)|$($s.Retry)|$($s.Tries)|$($s.Reconcile)|$($s.ImSrc)|$($s.ImPath)|$($s.TgtLoc)|$($s.TgtMode)|$($s.TgtName)|$($s.Mapping)|$($s.Shared)|$($s.ImShared)|$($s.McTarget)|$($s.RecoverableItems)|$($s.RpPath)|$($s.RpDest)|$($s.RpLevel)|$($s.RpKeep)|$($s.OpPath)|$($s.Mailbox)|$($s.AuthMode)|$($s.TenantId)|$($s.ClientId)|$($s.AppTenant)|$($s.AppClient)|$($s.AppThumb)|$($s.Awake)".ToLowerInvariant())
+    $period = Get-MbtGuiPeriod $s
+    [void]$sb.Append("|$($period.Active)|$($period.From)|$($period.To)")
     $sel = Get-MbtGuiTaskSelection
     if ($sel) { foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") } }
     $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
@@ -65,7 +67,7 @@ function Get-MbtGuiJobName {
 function New-MbtGuiPlanStateMessage {
     <# The first check of a Verify page: what the service said about this exact request. #>
     $s = $script:Gui.S
-    $name = if ($s.Task -eq 'import') { 'The plan is valid' } else { 'Every folder matched' }
+    $name = if ($s.Task -in 'import', 'mailcopy') { 'The plan is valid' } else { 'Every folder matched' }
     switch ($s.PlanState) {
         'checking' {
             $g = $script:Gui
@@ -74,7 +76,8 @@ function New-MbtGuiPlanStateMessage {
             return (New-MbtGuiCheckRow -State wait -Text 'Checking the plan with the service' -Detail (Get-MbtGuiPlanProgressText -Run $run -Started $started))
         }
         'ok' {
-            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals)" + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
+            $atMost = (Get-MbtGuiPeriod $s).Active
+            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals -AtMost:$atMost)" + $(if ($atMost) { ' (the period is applied while the items are listed)' }) + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
         }
         'error' {
@@ -94,7 +97,7 @@ function Get-MbtGuiPlanFooter {
     switch ($s.PlanState) {
         'ok' {
             switch (Get-MbtGuiScreen) {
-                'imPlan' { return $(if ($s.Confirmed) { 'Ready. Nothing is written before you press Start.' } else { 'Tick the box to unlock Start.' }) }
+                { $_ -in 'imPlan', 'mcPlan' } { return $(if ($s.Confirmed) { 'Ready. Nothing is written before you press Start.' } else { 'Tick the box to unlock Start.' }) }
                 'cpPlan' { return 'Read the plan. Nothing starts before you press Start.' }
                 default { return 'Read the checks and the plan. Nothing starts before you press Start.' }
             }
@@ -121,10 +124,10 @@ function Set-MbtGuiPlanState {
     param([ValidateSet('idle', 'checking', 'ok', 'error')][string]$State, [string]$Message = '')
     $g = $script:Gui; $s = $g.S
     $s.PlanState = $State; $s.PlanMsg = $Message
-    if ((Get-MbtGuiScreen) -notin 'exPlan', 'imPlan', 'cpPlan') { return }
+    if ((Get-MbtGuiScreen) -notin 'exPlan', 'imPlan', 'cpPlan', 'mcPlan') { return }
     if ($g.PlanHolder) { $g.PlanHolder.Content = New-MbtGuiPlanStateMessage }
     $ok = ($State -eq 'ok')
-    if ((Get-MbtGuiScreen) -eq 'imPlan') { $ok = $ok -and $s.Confirmed }
+    if ((Get-MbtGuiScreen) -in 'imPlan', 'mcPlan') { $ok = $ok -and $s.Confirmed }
     if ($State -eq 'ok' -and (Get-MbtGuiScreen) -eq 'exPlan') { Update-MbtGuiExportPlanSizes }
     $footer = Get-MbtGuiPlanFooter
     Update-MbtGuiPrimary -Enabled $ok -Footer $footer
@@ -149,8 +152,10 @@ function New-MbtGuiRequest {
     $g = $script:Gui; $s = $g.S
     $storeRoot = [IO.Path]::Combine($s.WorkFolder, 'stores')
     $store = switch ($Task) {
-        'export' { [IO.Path]::Combine($storeRoot, ($s.Mailbox -replace '[^\w\.\-@]', '_')) }
+        'export' { [IO.Path]::Combine($storeRoot, (($s.Mailbox + (Get-MbtGuiPeriodStoreSuffix $s)) -replace '[^\w\.\-@]', '_')) }
         'import' { if ($s.ImSrc -eq 'store') { $s.ImPath } else { [IO.Path]::Combine($storeRoot, 'import') } }
+        # a copy: one store for what is read (the mailbox, the ticks, the days), whatever the target; another choice has another store
+        'mailcopy' { $key = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((Get-MbtGuiSelectionKey) + (Get-MbtGuiPeriodStoreSuffix $s)))).Substring(0, 8).ToLowerInvariant(); [IO.Path]::Combine($storeRoot, ('copy-' + (($(if ($s.Shared) { $s.Shared } else { $s.Mailbox }) -replace '[^\w\.\-@]', '_') + '-' + $key))) }
         default { $null }
     }
     [pscustomobject]@{ Task = $Task; StorePath = $store }
@@ -166,7 +171,7 @@ function New-MbtGuiPreviewJob {
     $sel = Get-MbtGuiTaskSelection
     $hasSel = [bool]($sel -and @($sel.Entries).Count)
     $files = @(); $folderFile = $null; $itemsFile = $null
-    if ($hasSel -and ($Task -eq 'export' -or ($Task -eq 'import' -and $s.ImSrc -eq 'store'))) { $files = @("$base.json") }
+    if ($hasSel -and ($Task -in 'export', 'mailcopy' -or ($Task -eq 'import' -and $s.ImSrc -eq 'store'))) { $files = @("$base.json") }
     $source = if ($Task -eq 'copy') { 'pst' } elseif ($Task -eq 'import' -and $s.ImSrc -in 'pst', 'eml') { $s.ImSrc } else { $null }
     if ($hasSel -and $source) {
         $choice = Get-MbtGuiFolderChoice -Selection $sel -Source $source
@@ -209,7 +214,7 @@ function Start-MbtGuiPlanCheck {
         $g.PlanRun = New-MbtGuiRun -Task $s.Task; $g.PlanJob = $job
         $null = Start-MbtGuiProcess -Job $job
     }.GetNewClosure()
-    if ($sel -and $sel.Entries.Count -and $s.Task -eq 'export') { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError $fail }
+    if ($sel -and $sel.Entries.Count -and $s.Task -in 'export', 'mailcopy') { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError $fail }
     else { & $begin @() }
 }
 
@@ -218,7 +223,7 @@ function Step-MbtGuiPlanJob {
     if (-not $g.ContainsKey('PlanJob') -or -not $g.PlanJob) { return }
     $null = Step-MbtGuiJob -Job $g.PlanJob -Run $g.PlanRun
     # while the check runs the line says what it does and for how long (it is drawn again about once a second)
-    if (-not $g.PlanRun.Result -and $g.S.PlanState -eq 'checking' -and $g.PlanHolder -and ((Get-MbtGuiScreen) -in 'exPlan', 'imPlan', 'cpPlan')) {
+    if (-not $g.PlanRun.Result -and $g.S.PlanState -eq 'checking' -and $g.PlanHolder -and ((Get-MbtGuiScreen) -in 'exPlan', 'imPlan', 'cpPlan', 'mcPlan')) {
         $text = Get-MbtGuiPlanProgressText -Run $g.PlanRun -Started $g.PlanStarted
         if ($text -ne $g.PlanShown) { $g.PlanShown = $text; $g.PlanHolder.Content = New-MbtGuiPlanStateMessage }
     }
@@ -254,7 +259,7 @@ function Start-MbtGuiRun {
     }.GetNewClosure()
     $sel = Get-MbtGuiTaskSelection
     # ticks choose folders of a mailbox (export) or of an export store (import); the folders ticked in a PST or in .eml files go to the engine as a list of folders (Write-MbtGuiChoiceFiles)
-    $needsSel = $s.Task -eq 'export' -or ($s.Task -eq 'import' -and $s.ImSrc -eq 'store' -and $sel -and $sel.Entries.Count)
+    $needsSel = $s.Task -in 'export', 'mailcopy' -or ($s.Task -eq 'import' -and $s.ImSrc -eq 'store' -and $sel -and $sel.Entries.Count)
     if ($needsSel) { Save-MbtGuiSelectionFile -Selection $sel -Path "$base.json" -OnDone $begin -OnError { param($m) Set-MbtGuiPlanState error ((ConvertTo-MbtGuiMessage $m).Text); Show-MbtGuiPage } }
     else { & $begin @() }
 }
@@ -263,7 +268,7 @@ function Write-MbtGuiRequestFile {
     <# request.json: what was asked, no secrets; the Continue list and a resumed job read it. #>
     param([Parameter(Mandatory)][hashtable]$Job)
     $s = $script:Gui.S
-    $keys = 'Task', 'OpSrc', 'OpPath', 'Mailbox', 'Shared', 'ImShared', 'RecoverableItems', 'Dest', 'KeepStore', 'SplitGB', 'CheckEach', 'SepAux', 'OutFolder', 'OutName', 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake', 'ImSrc', 'ImPath', 'TgtLoc', 'TgtMode', 'TgtName', 'Mapping', 'RpPath', 'RpLevel', 'RpDest', 'RpKeep'
+    $keys = 'Task', 'OpSrc', 'OpPath', 'Mailbox', 'Shared', 'ImShared', 'McTarget', 'McFromKind', 'AuthMode', 'RecoverableItems', 'Period', 'ArrFrom', 'ArrTo', 'Dest', 'KeepStore', 'SplitGB', 'CheckEach', 'SepAux', 'OutFolder', 'OutName', 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake', 'ImSrc', 'ImPath', 'TgtLoc', 'TgtMode', 'TgtName', 'Mapping', 'RpPath', 'RpLevel', 'RpDest', 'RpKeep'
     $req = [ordered]@{ Title = (Get-MbtGuiRunTitle); Created = [datetime]::UtcNow.ToString('o'); JobId = $Job.Id; JobName = $Job.JobName; StorePath = $Job.StorePath; SelectionFiles = @($Job.SelectionFiles); Commands = @($Job.Queue | ForEach-Object { , $_.Arguments }) }
     foreach ($k in $keys) { $req[$k] = $s[$k] }
     $req | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Job.Folder 'request.json') -Encoding utf8
@@ -277,6 +282,7 @@ function Get-MbtGuiRunTitle {
         'import' { return "Import $mid $([IO.Path]::GetFileName($s.ImPath)) $arrow $($s.Mailbox) ($($s.TgtLoc))" }
         'repair' { return "Repair $mid $([IO.Path]::GetFileName($s.RpPath)) $arrow $([IO.Path]::GetFileName($s.RpDest))" }
         'copy' { return "Copy $mid $([IO.Path]::GetFileName($s.OpPath)) $arrow $($s.OutName)" }
+        'mailcopy' { $ends = Get-MbtGuiMailCopyEnds; return "Copy $mid $($ends.From) ($($ends.FromKind)) $arrow $($ends.To) ($($s.TgtLoc))" }
         default { return $script:Tasks[$s.Task].Title }
     }
 }
@@ -293,26 +299,180 @@ function Open-MbtGuiBatchReport {
     try { & $g.Engine.BatchReport $g.S.WorkFolder ([string]$Entry.Batch) $open $fail } catch { & $fail $_.Exception.Message }
 }
 
+function Open-MbtGuiJobReport {
+    <# The report of a job of the list: the file in its folder, written again by the worker when it is not there. #>
+    param([Parameter(Mandatory)]$Entry)
+    $g = $script:Gui
+    $say = { param([string]$Title, [string]$Body) Show-MbtGuiDialog -Title $Title -Body $Body -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $open = { param($path) if ($path -and (Test-Path -LiteralPath ([string]$path))) { Start-Process -FilePath ([string]$path) } else { & $say 'Nothing to open here' 'No file was written: this is the demonstration.' } }.GetNewClosure()
+    $folder = [string](Get-MbtGuiProp $Entry 'Folder' '')
+    if (-not $folder) { & $open $null; return }
+    $report = Join-Path $folder 'report.html'
+    if (Test-Path -LiteralPath $report) { & $open $report; return }
+    $fail = { param($message) & $say 'The report of the job could not be written' ([string]$message) }.GetNewClosure()
+    try { & $g.Engine.JobReport $folder $open $fail } catch { & $fail $_.Exception.Message }
+}
+
+function Show-MbtGuiJobDelete {
+    <# Delete on a job of the list: the engine says what the deletion would do (and refuse), then the dialog names the job and says exactly what goes. #>
+    param([Parameter(Mandatory)]$Entry)
+    $g = $script:Gui
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    $fail = { param($message) Show-MbtGuiDialog -Title 'The job cannot be deleted' -Body ([string]$message) -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $ask = { param($info) Show-MbtGuiJobDeleteQuestion -Entry $Entry -Info @($info)[0] }.GetNewClosure()
+    try { & $g.Engine.JobDeleteInfo $g.S.WorkFolder $name $ask $fail } catch { & $fail $_.Exception.Message }
+}
+
+function Show-MbtGuiJobDeleteQuestion {
+    param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)]$Info)
+    $g = $script:Gui
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    if (-not [bool](Get-MbtGuiProp $Info 'Allowed' $false)) {
+        Show-MbtGuiDialog -Title 'This job cannot be deleted' -Body ([string](Get-MbtGuiProp $Info 'Reason' 'The job is kept.')) -Buttons @(@{ Text = 'Close'; Accent = $true })
+        return
+    }
+    $when = { param($v) if ($v -is [datetime]) { $v.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) } else { '' } }
+    $lines = [Collections.Generic.List[object]]::new()
+    $lines.Add((New-GuiText ('**' + [string](Get-MbtGuiProp $Info 'Title' $name) + '**') 'Body'))
+    $source = [string](Get-MbtGuiProp $Info 'Source' ''); $destination = [string](Get-MbtGuiProp $Info 'Destination' '')
+    if ($source -or $destination) { $lines.Add((New-GuiText ((@($source, $destination) | Where-Object { $_ }) -join (' ' + [char]0x2192 + ' ')) 'Small')) }
+    $dates = @(); $started = & $when (Get-MbtGuiProp $Info 'Started'); $updated = & $when (Get-MbtGuiProp $Info 'Updated')
+    if ($started) { $dates += "started $started" }
+    if ($updated) { $dates += "last activity $updated" }
+    if ($dates.Count) { $lines.Add((New-GuiText ($dates -join (' ' + [char]0x00B7 + ' ')) 'Small')) }
+    $lines.Add((New-GuiText ('This deletes the folder of the job on this PC: its log, its report and its events. ' + [string](Get-MbtGuiProp $Info 'Folder' '')) 'Body' -Margin '0,10,0,0'))
+    $lines.Add((New-GuiText 'Your data is never deleted: the export store you chose, PST files, source files and the mailboxes are not touched.' 'Body' -Margin '0,6,0,0'))
+    foreach ($w in @(Get-MbtGuiProp $Info 'Warnings' @())) { $lines.Add((New-GuiMessage -Kind warn -Icon warn -Text ([string]$w))) }
+    $store = Get-MbtGuiProp $Info 'Store'
+    $check = $null
+    if ($store -and [bool](Get-MbtGuiProp $store 'Offered' $false)) {
+        $bytes = Get-MbtGuiProp $store 'Bytes'
+        $size = $(if ($null -ne $bytes) { Format-MbtGuiBytes ([double]$bytes) } else { 'size unknown' })
+        $allowed = [bool](Get-MbtGuiProp $store 'Allowed' $false)
+        $hint = if ($allowed) { [string]$store.Path + ': the items read from the source mailbox. The copy is complete, so nothing reads them any more.' } else { [string]$store.Reason }
+        $check = New-GuiOption -Type Check -Title "Also delete the copy store ($size)" -Hint $hint -Checked $false -Disabled:(-not $allowed) -Margin '0,12,0,0'
+        [Windows.Automation.AutomationProperties]::SetName($check, 'Also delete the copy store')
+        $lines.Add($check)
+    } elseif ($store -and (Get-MbtGuiProp $store 'Reason')) { $lines.Add((New-GuiText ([string]$store.Reason) 'Hint')) }
+    $body = New-GuiStack $lines.ToArray()
+    Show-MbtGuiDialog -Title 'Delete this job?' -Body $body -Buttons @(
+        @{ Text = 'Cancel' }
+        @{ Text = 'Delete the job'; Danger = $true; Action = { Invoke-MbtGuiJobDelete -Entry $Entry -WithStore ([bool]($check -and $check.IsChecked)) }.GetNewClosure() })
+}
+
+function Invoke-MbtGuiJobDelete {
+    param([Parameter(Mandatory)]$Entry, [bool]$WithStore)
+    $g = $script:Gui
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    $fail = { param($message) Show-MbtGuiDialog -Title 'The job could not be deleted' -Body ([string]$message) -Buttons @(@{ Text = 'Close'; Accent = $true }); Show-MbtGuiPage }
+    $done = { param($result) Show-MbtGuiPage }
+    try { & $g.Engine.JobDelete $g.S.WorkFolder $name $WithStore $done $fail } catch { & $fail $_.Exception.Message }
+}
+
 function Resume-MbtGuiJob {
-    <# Continue: the same request again, in the same job folder, so only what is left is done. #>
+    <# Continue on a job of the list: the Resume view first (what is done, what is checked again, where it restarts); the job starts when the button of that view is pressed. #>
     param($Entry)
     $g = $script:Gui; $s = $g.S
     if ($g.Engine.Name -eq 'Fake' -and $Entry.PSObject.Properties['Demo'] -and $Entry.Demo) { & $Entry.Demo; return }
     # a batch is run from the command line: the console shows its report, read only
     if ($Entry.PSObject.Properties['Task'] -and $Entry.Task -eq 'batch') { Open-MbtGuiBatchReport $Entry; return }
-    $reqFile = Join-Path $Entry.Folder 'request.json'
-    if (-not (Test-Path -LiteralPath $reqFile)) { return }
-    $req = Get-Content -LiteralPath $reqFile -Raw | ConvertFrom-Json
-    foreach ($p in $req.PSObject.Properties) { if ($s.ContainsKey($p.Name) -and $p.Name -notin 'Task') { $s[$p.Name] = $p.Value } }
-    $s.Task = [string]$req.Task; $s.Sel = $s.Task
-    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath ([string]$req.StorePath) -SelectionFiles @($req.SelectionFiles) -JobName ([string]$req.JobName)
+    $folder = [string](Get-MbtGuiProp $Entry 'Folder' '')
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    $info = $null
+    try { if ($name) { $info = @(& $g.Engine.JobResume $s.WorkFolder $name)[0] } } catch { Write-Verbose "resume: $_" }
+    if (-not $info) { Show-MbtGuiDialog -Title 'This job cannot be read' -Body 'Its folder or its status file is not there any more.' -Buttons @(@{ Text = 'Close'; Accent = $true }); return }
+    $req = $null
+    $reqFile = if ($folder) { Join-Path $folder 'request.json' } else { '' }
+    if ($reqFile -and (Test-Path -LiteralPath $reqFile)) {
+        $req = Get-Content -LiteralPath $reqFile -Raw | ConvertFrom-Json
+        foreach ($p in $req.PSObject.Properties) { if ($s.ContainsKey($p.Name) -and $p.Name -notin 'Task') { $s[$p.Name] = $p.Value } }
+        $s.Task = [string]$req.Task; $s.Sel = $s.Task
+    }
+    if (-not $s.Task -or -not $script:Flows.ContainsKey($s.Task)) {
+        Show-MbtGuiDialog -Title 'This job cannot be continued here' -Body ([string](Get-MbtGuiProp $info 'Problem' 'Its request says nothing the console can run again. Run its command again from the command line.')) -Buttons @(@{ Text = 'Close'; Accent = $true })
+        return
+    }
+    $s.Resume = @{ Entry = $Entry; Info = $info; Request = $req }
+    $s.Step = [math]::Max(0, $script:Flows[$s.Task].IndexOf('run') - 1)
+    Show-MbtGuiPage
+}
+
+function New-MbtGuiResumeList {
+    <# A list of sentences under a small heading, each with the icon of its kind. #>
+    param([string]$Heading, [string]$Icon, [string]$Brush, [string[]]$Lines)
+    $stack = [Windows.Controls.StackPanel]::new()
+    $stack.Children.Add((New-GuiText $Heading 'Label')) | Out-Null
+    foreach ($line in @($Lines)) {
+        $row = [Windows.Controls.Grid]::new(); $row.Margin = [Windows.Thickness]::new(0, 3, 0, 3)
+        $c1 = [Windows.Controls.ColumnDefinition]::new(); $c1.Width = [Windows.GridLength]::new(24)
+        $c2 = [Windows.Controls.ColumnDefinition]::new(); $c2.Width = [Windows.GridLength]::new(1, 'Star')
+        $row.ColumnDefinitions.Add($c1); $row.ColumnDefinitions.Add($c2)
+        $ic = New-GuiIcon $Icon 13 $Brush; $ic.VerticalAlignment = 'Top'; $ic.Margin = [Windows.Thickness]::new(0, 2, 0, 0)
+        $tx = New-GuiText $line 'Body'; $tx.FontSize = 13; [Windows.Controls.Grid]::SetColumn($tx, 1)
+        $row.Children.Add($ic) | Out-Null; $row.Children.Add($tx) | Out-Null
+        $stack.Children.Add($row) | Out-Null
+    }
+    return $stack
+}
+
+function Build-MbtGuiResumePage {
+    <# The Resume view: what happened to the job, and for its mode what is already done and not done again, what is checked again, where it restarts. Nothing starts before Continue is pressed. #>
+    $g = $script:Gui; $s = $g.S
+    $info = $s.Resume.Info
+    $problem = [string](Get-MbtGuiProp $info 'Problem' '')
+    $kind = [string](Get-MbtGuiProp $info 'Kind' '')
+    $label = switch ($kind) { 'interrupted' { 'Interrupted' } 'stopped' { 'Stopped by you' } 'error' { 'Stopped by an error' } 'decision' { 'Needs a decision' } 'signin' { 'Sign-in expired' } default { 'Not finished' } }
+    $pill = New-GuiPill $label $(if ($kind -eq 'error') { 'bad' } else { 'warn' })
+    $left = [Collections.Generic.List[object]]::new()
+    $left.Add((New-GuiText ([string](Get-MbtGuiProp $info 'Title' '')) 'Title'))
+    $why = [string](Get-MbtGuiProp $info 'Why' ''); if ($why) { $left.Add((New-GuiText $why 'Body' -Margin '0,6,0,0')) }
+    $progress = [string](Get-MbtGuiProp $info 'Progress' ''); if ($progress) { $left.Add((New-GuiText $progress 'Muted' -Margin '0,4,0,0')) }
+    $facts = @()
+    $started = Get-MbtGuiProp $info 'Started'; $updated = Get-MbtGuiProp $info 'Updated'
+    if ($started -is [datetime]) { $facts += , @('Started', $started.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) }
+    if ($updated -is [datetime]) { $facts += , @('Last sign of life', $updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) }
+    if ($facts.Count) { $left.Add((New-GuiFacts $facts)) }
+    $leftCard = New-GuiCard -Title 'The job' -Right $pill -Content $left.ToArray()
+    $right = [Collections.Generic.List[object]]::new()
+    $right.Add((New-GuiText ([string](Get-MbtGuiProp $info 'Heading' 'Continue the job')) 'Body'))
+    if ($problem) { $right.Add((New-GuiMessage -Kind bad -Icon x -Text $problem)) }
+    else {
+        $right.Add((New-MbtGuiResumeList -Heading 'Already done, and not done again' -Icon check -Brush MbtSuccess -Lines @(Get-MbtGuiProp $info 'Already' @())))
+        $right.Add((New-MbtGuiResumeList -Heading 'Checked again' -Icon refresh -Brush MbtBrandText -Lines @(Get-MbtGuiProp $info 'Again' @())))
+        $from = [string](Get-MbtGuiProp $info 'From' '')
+        if ($from) { $right.Add((New-MbtGuiResumeList -Heading 'Where it restarts' -Icon play -Brush MbtBrandText -Lines @($from))) }
+        foreach ($note in @(Get-MbtGuiProp $info 'Notes' @())) { $right.Add((New-GuiMessage -Kind info -Icon info -Text ([string]$note))) }
+    }
+    $rightCard = New-GuiCard -Title 'When you press Continue' -Content $right.ToArray()
+    $back = New-GuiButton -Text 'Back to the jobs' -Icon refresh -OnClick { $s = $script:Gui.S; $s.Resume = $null; $s.Task = $null; $s.Sel = $null; $s.Step = 1; Show-MbtGuiPage }
+    Set-MbtGuiActions -Back $false -Left $back -Footer $(if ($problem) { 'This job cannot be continued from here.' } else { 'Nothing starts before you press Continue. Everything done so far is kept.' }) -Label 'Continue' -Icon play -Enabled (-not $problem) -OnClick { Start-MbtGuiResumeRun }
+    return (New-GuiStack @((New-GuiText 'Resume this job' 'H2'), (New-GuiTwoColumns -Left $leftCard -Right $rightCard -LeftWidth 380)))
+}
+
+function Start-MbtGuiResumeRun {
+    <# Continue on the Resume view: the recorded command again, in the same job folder, so only what is left is done. #>
+    $g = $script:Gui; $s = $g.S
+    $resume = $s.Resume
+    if (-not $resume) { return }
+    $Entry = $resume.Entry; $req = $resume.Request
+    $s.Resume = $null
+    if ($g.Engine.Name -eq 'Fake' -and (Get-MbtGuiProp $Entry 'ResumeDemo')) { & $Entry.ResumeDemo; return }
+    if (-not $req) { return }
+    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath ([string](Get-MbtGuiProp $req 'StorePath' '')) -SelectionFiles @(Get-MbtGuiProp $req 'SelectionFiles' @()) -JobName ([string](Get-MbtGuiProp $req 'JobName' ''))
     $job.Folder = $Entry.Folder
     foreach ($k in 'EventsPath', 'StopPath', 'StatusPath', 'StdOut', 'StdErr') { $job[$k] = Join-Path $Entry.Folder (Split-Path $job[$k] -Leaf) }
     if (Test-Path -LiteralPath $job.StopPath) { Remove-Item -LiteralPath $job.StopPath -Force }
     # the events of the earlier runs stay in the file (with their result): the new run reads only what the new process writes
     $job.Offset = $(if (Test-Path -LiteralPath $job.EventsPath) { (Get-Item -LiteralPath $job.EventsPath).Length } else { 0L })
-    foreach ($c in @($req.Commands)) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = @($c) }) }
+    if ([string](Get-MbtGuiProp $req 'Source' '') -eq 'cli') {
+        # a job of the command line runs again by its name: the recorded command, in the folder it ran in
+        $job.ResumeArguments = @('-ResumeJob', [string]$Entry.Name, '-WorkFolder', $s.WorkFolder, '-StopFile', $job.StopPath, '-NoPrompt')
+        $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = $job.ResumeArguments })
+    } else {
+        foreach ($c in @($req.Commands)) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = @($c) }) }
+    }
     $g.Job = $job; $g.Run = New-MbtGuiRun -Task $s.Task -Title ([string]$req.Title)
+    $g.Run.Resumed = $true
     $g.Run.Dirty = $true
     $null = Start-MbtGuiProcess -Job $job
     Set-MbtGuiStep ($script:Flows[$s.Task].IndexOf('run'))
@@ -340,6 +500,31 @@ function Get-MbtGuiStepTone {
     }
 }
 
+function Get-MbtGuiRunStepControl {
+    <# The button the icon of the running step becomes: 'pause' while the job runs (when the Stop button of the action bar is shown), 'resume' once it is stopped (when Continue is shown), $null otherwise. #>
+    param($Run)
+    if ($Run.State -eq 'stopped') { return 'resume' }
+    if ($Run.State -in 'running', 'sleep', 'decision' -and -not $Run.StopRequested -and -not $Run.Result) { return 'pause' }
+    return $null
+}
+
+function New-MbtGuiStepControlButton {
+    <# The pause or resume button in the place of the icon of the running step: a small icon button, reachable with the keyboard. Pause opens the dialog of Stop and keep progress; Resume does what Continue does. #>
+    param([ValidateSet('pause', 'resume')][string]$Kind, [string]$Brush)
+    $btn = [Windows.Controls.Button]::new()
+    $btn.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtIconButton')
+    $text = if ($Kind -eq 'pause') { 'Pause (stop and keep progress)' } else { 'Resume (continue where it stopped)' }
+    $btn.Content = New-GuiIcon $(if ($Kind -eq 'pause') { 'pause' } else { 'play' }) 13 $Brush
+    $btn.ToolTip = $text
+    $btn.VerticalAlignment = 'Top'; $btn.HorizontalAlignment = 'Left'
+    $btn.Margin = [Windows.Thickness]::new(-4, -3, 0, 0)
+    [Windows.Automation.AutomationProperties]::SetName($btn, $text)
+    [Windows.Automation.AutomationProperties]::SetAutomationId($btn, $(if ($Kind -eq 'pause') { 'RunStepPause' } else { 'RunStepResume' }))
+    if ($Kind -eq 'pause') { Add-MbtGuiHandler $btn 'Click' { Show-MbtGuiStopDialog } }
+    else { Add-MbtGuiHandler $btn 'Click' { Invoke-MbtGuiContinue } }
+    return $btn
+}
+
 function Get-MbtGuiStepSub {
     param($Step)
     if ($Step.State -eq 'waiting') { return $Step.Msg }
@@ -352,7 +537,13 @@ function Get-MbtGuiStepSub {
 function Get-MbtGuiStepHelp {
     param([string]$Task, [string]$Id, [string]$Title)
     switch -Regex ("$Id $Title") {
+        '^resume|Resume: reading' { return 'Reads what the earlier run of this job already did (the store, the journal or the manifest it keeps), so that only what is left is done. Nothing is changed.' }
         '^tree|Read the folder tree' { return 'Reads the folders of the mailbox, 4 requests at a time. A mailbox with thousands of folders takes a minute or two. Nothing is changed.' }
+        '^list|List the items' { return 'Lists the items of the folders you chose, so that the number and the size are known before they are downloaded. With a period, only the items that arrived in it are kept.' }
+        '^verify|Check the downloads' { return 'Each item was checked against its fingerprint when it arrived in the store. Nothing else to do.' }
+        '^check|Verify the export store' { return 'The second part begins: the store that was just filled is opened and verified before anything is written into the other mailbox.' }
+        '^folders|Create the folders' { return 'Creates the folders that are missing in the mailbox that receives the copy. A folder that exists is used as it is; none is renamed or deleted.' }
+        '^final|Final check' { return 'Counts what is done in the job, the earlier runs included. The job is complete when every item is done.' }
         'send|Send the items' { return 'Reads each message and sends it to the mailbox. Only creates; never deletes or replaces.' }
         'reconcile|uncertain' { return 'When Microsoft did not answer, we cannot know if an item arrived. We look in the folder and decide for each one.' }
         'download|Download' { return 'Downloads the items, 20 at a time, and checks each against its fingerprint. An item that fails is tried again.' }
@@ -395,7 +586,7 @@ function New-MbtGuiRunHead {
             $items.Add((New-GuiMessage -Kind info -Icon pause -Text "**Stopped by you.** $(Format-MbtGuiProgressOf $run.Done $run.Total $run.Unit) $(Get-MbtGuiPlural $(if ($run.Done -gt $run.Total) { $run.Done } else { $run.Total }) 'is' 'are') done. Press **Continue** to do only what is left."))
         }
         default {
-            $eta = Get-MbtGuiEta -Run $run -Task $s.Task
+            $eta = Get-MbtGuiEta -Run $run -Task $(if ($s.Task -eq 'mailcopy') { if ($run.ImportHalf) { 'import' } else { 'export' } } else { $s.Task })
             if ($eta.State -eq 'ready') { $e = New-GuiText ("**$($eta.Text)**") 'Body'; $e.FontSize = 13; $e.Margin = [Windows.Thickness]::new(0, 8, 0, 0); $b2 = New-GuiText $eta.Basis 'Small'; $b2.Margin = [Windows.Thickness]::new(0, 2, 0, 0); $items.Add((New-GuiStack @($e, $b2))) }
             elseif ($eta.State -eq 'measuring') { $e = New-GuiText "**Measuring...** $($eta.Basis)" 'Body'; $e.FontSize = 13; $e.Margin = [Windows.Thickness]::new(0, 8, 0, 0); $items.Add($e) }
         }
@@ -449,9 +640,10 @@ function New-MbtGuiStepsColumn {
     $g = $script:Gui; $run = $g.Run; $s = $g.S
     $sel = Get-MbtGuiSelectedStep $run $s
     $stack = [Windows.Controls.StackPanel]::new()
+    $g.RunStepControl = $null
     $i = 0
     if (-not $run.Steps.Count -and -not $run.Result) {
-        $first = New-GuiStack @((New-GuiIcon play 13 'MbtBrandText'), (New-GuiText 'Starting the task...' 'Body')) -Orientation Horizontal
+        $first = New-GuiStack @((New-GuiIcon play 13 'MbtBrandText'), (New-GuiText $(if ($run.Resumed) { 'Resume: reading what is already done' } else { 'Starting the task...' }) 'Body')) -Orientation Horizontal
         $first.Children[0].Margin = [Windows.Thickness]::new(0, 2, 8, 0)
         $stack.Children.Add($first) | Out-Null
     }
@@ -463,7 +655,9 @@ function New-MbtGuiStepsColumn {
         foreach ($w in 26, '*', 'Auto') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } elseif ($w -eq 'Auto') { [Windows.GridLength]::Auto } else { [Windows.GridLength]::new($w) }; $grid.ColumnDefinitions.Add($cd) }
         foreach ($r in 1..3) { $grid.RowDefinitions.Add([Windows.Controls.RowDefinition]::new()) }
         $brush = switch ($tone[0]) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } 'bad' { 'MbtCritical' } 'run' { 'MbtBrandText' } default { 'TextFillColorTertiaryBrush' } }
-        $ic = New-GuiIcon $tone[1] 13 $brush; $ic.VerticalAlignment = 'Top'; $ic.Margin = [Windows.Thickness]::new(0, 2, 0, 0)
+        $control = if ($step.State -eq 'running' -and -not $g.RunStepControl) { Get-MbtGuiRunStepControl $run } else { $null }
+        if ($control) { $ic = New-MbtGuiStepControlButton -Kind $control -Brush $brush; $g.RunStepControl = $ic }
+        else { $ic = New-GuiIcon $tone[1] 13 $brush; $ic.VerticalAlignment = 'Top'; $ic.Margin = [Windows.Thickness]::new(0, 2, 0, 0) }
         [Windows.Controls.Grid]::SetRowSpan($ic, 2)
         $tt = New-GuiText ("$($i + 1). $($step.Title)") 'Body'; $tt.FontSize = 13; $tt.FontWeight = [Windows.FontWeights]::SemiBold; [Windows.Controls.Grid]::SetColumn($tt, 1)
         $tm = ''
@@ -524,7 +718,7 @@ function New-MbtGuiStepDetailsColumn {
     $content.Add($lbl)
     $selObj = if ($null -ne $s.RObj) { [int]$s.RObj } else { -1 }
     $content.Add((New-MbtGuiObjectRows -Objects $objs -Selected $selObj))
-    if ($s.Task -eq 'import') { $content.Add((New-GuiMessage -Kind info -Icon info -Text '**Why is it slow?** Microsoft accepts only a few GiB per hour into one mailbox. The tool waits exactly as long as Microsoft asks. This is normal.')) }
+    if ($s.Task -eq 'import' -or ($s.Task -eq 'mailcopy' -and $run.ImportHalf)) { $content.Add((New-GuiMessage -Kind info -Icon info -Text '**Why is it slow?** Microsoft accepts only a few GiB per hour into one mailbox. The tool waits exactly as long as Microsoft asks. This is normal.')) }
     $logStack = [Windows.Controls.StackPanel]::new()
     foreach ($l in ($run.Log | Select-Object -First 40)) {
         $row = [Windows.Controls.Grid]::new()
@@ -598,11 +792,18 @@ function Sync-MbtGuiRunPage {
     if ((Get-MbtGuiScreen) -ne 'run' -or -not $g.Run -or -not $g.ContainsKey('RunHeadHolder')) { return }
     $now = [datetime]::UtcNow
     if (-not $Force -and ($now - $g.LastEtaPaint).TotalMilliseconds -lt 400) { return }
+    # a press of the mouse button is not interrupted by building the buttons again
+    if (-not $Force -and [Windows.Input.Mouse]::LeftButton -eq 'Pressed') { return }
     $g.LastEtaPaint = $now
     $run = $g.Run
+    $controlHadFocus = [bool]($g.ContainsKey('RunStepControl') -and $g.RunStepControl -and $g.RunStepControl.IsKeyboardFocused)
     $g.RunHeadHolder.Content = New-MbtGuiRunHead
     $g.RunDecisionHolder.Content = New-MbtGuiDecisionPanel
     $g.RunStepsHolder.Content = New-MbtGuiStepsColumn
+    if ($controlHadFocus -and $g.RunStepControl) {
+        $control = $g.RunStepControl
+        [void]$control.Dispatcher.BeginInvoke([Windows.Threading.DispatcherPriority]::Input, [Action] { [void]$control.Focus() }.GetNewClosure())
+    }
     $g.RunMidHolder.Content = New-MbtGuiStepDetailsColumn
     $g.RunDetailHolder.Content = New-MbtGuiObjectDetailsColumn
     $run.Dirty = $false
@@ -650,8 +851,11 @@ function Invoke-MbtGuiContinue {
     if (Test-Path -LiteralPath $job.StopPath) { Remove-Item -LiteralPath $job.StopPath -Force }
     $job.StopAsked = $null; $job.PartExit = $null
     $req = New-MbtGuiRequest -Task $s.Task
-    foreach ($c in (Get-MbtGuiCommand -Task $s.Task -S $s -Job $job)) { $job.Queue.Enqueue($c) }
+    # a job of the command line runs again by its name; the others are built again from the state of the console
+    if ($job.ContainsKey('ResumeArguments') -and $job.ResumeArguments) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = $job.ResumeArguments }) }
+    else { foreach ($c in (Get-MbtGuiCommand -Task $s.Task -S $s -Job $job)) { $job.Queue.Enqueue($c) } }
     $g.Run = New-MbtGuiRun -Task $s.Task -Title (Get-MbtGuiRunTitle)
+    $g.Run.Resumed = $true
     $s.RStep = $null; $s.RObj = $null
     $null = Start-MbtGuiProcess -Job $job
     Set-MbtGuiStep ($script:Flows[$s.Task].IndexOf('run'))
@@ -699,7 +903,7 @@ function Build-MbtGuiDonePage {
     $k = $s.Task
     $o = $run.State
     $outcome = switch ($o) { 'complete' { 'complete' } 'decision-final' { 'decision' } 'error' { 'error' } 'refused' { 'refused' } default { 'partial' } }
-    $verb = switch ($k) { 'import' { 'imported' } 'repair' { 'repaired' } 'copy' { 'copied' } default { 'exported' } }
+    $verb = switch ($k) { 'import' { 'imported' } 'repair' { 'repaired' } 'copy' { 'copied' } 'mailcopy' { 'copied' } default { 'exported' } }
     $head = switch ($outcome) {
         'complete' { @{ Pill = 'ok'; Text = "Done. Everything was $verb."; Icon = 'check'; Label = 'Complete' } }
         'refused' { $n = Get-MbtGuiCount $run 'refused' (Get-MbtGuiCount $run 'failed' 0); @{ Pill = 'warn'; Text = "Finished. $(Format-MbtGuiQuantity $n 'item') could not be $verb."; Icon = 'warn'; Label = 'Finished, with refused items' } }
@@ -712,7 +916,7 @@ function Build-MbtGuiDonePage {
         $head.Text = "Repair finished. $(Format-MbtGuiCount ($kept + $part)) of $(Format-MbtGuiQuantity ($kept + $part + $lost) 'message') kept."; $head.Label = 'Finished'
     }
     if ($k -eq 'repair' -and $outcome -eq 'partial') { $head.Text = 'Stopped. No file was written.' }
-    $body = switch ($k) { 'repair' { New-MbtGuiRepairDone $outcome } 'import' { New-MbtGuiImportDone $outcome } 'copy' { New-MbtGuiCopyDone $outcome } default { New-MbtGuiExportDone $outcome } }
+    $body = switch ($k) { 'repair' { New-MbtGuiRepairDone $outcome } 'import' { New-MbtGuiImportDone $outcome } 'copy' { New-MbtGuiCopyDone $outcome } 'mailcopy' { New-MbtGuiMailCopyDone $outcome } default { New-MbtGuiExportDone $outcome } }
     $title = New-GuiStack @((New-GuiIcon $head.Icon 18 $(switch ($head.Pill) { 'ok' { 'MbtSuccess' } 'bad' { 'MbtCritical' } default { 'MbtCaution' } })), (New-GuiText $head.Text 'Big' -NoWrap)) -Orientation Horizontal
     $title.Children[0].Margin = [Windows.Thickness]::new(0, 0, 8, 0)
     $pill = New-GuiPill $head.Label $head.Pill
@@ -723,6 +927,17 @@ function Build-MbtGuiDonePage {
     Set-MbtGuiActions -Back $false -Label 'Start another task' -Secondary -OnClick { $g = $script:Gui; $g.S.Task = $null; $g.S.Sel = $null; $g.S.Step = 1; $g.Run = $null; $g.Job = $null; Show-MbtGuiPage }
     return (New-GuiStack @($card, (New-MbtGuiNextCard -Task $k -Outcome $outcome), (New-MbtGuiCommandLineCard -Task $k -Job $g.Job), (New-MbtGuiReportsCard)))
 }
+function Start-MbtGuiOpenOf {
+    <# An export store goes to the Open task: its source is already chosen and read. #>
+    param([Parameter(Mandatory)][string]$Path)
+    $g = $script:Gui; $s = $g.S
+    $s.OpSrc = 'store'; $s.OpPath = $Path; $s.OpInfo = $null
+    $s.Task = 'open'; $s.Sel = 'open'
+    $s.Step = $script:Flows.open.IndexOf('opFrom')
+    Initialize-MbtGuiTask
+    Open-MbtGuiSource -Use open
+}
+
 function Start-MbtGuiImportOf {
     <# What a task made (a PST, an export store) goes to the Import task: its source is already chosen and checked. #>
     param([Parameter(Mandatory)][ValidateSet('pst', 'store')][string]$Kind, [Parameter(Mandatory)][string]$Path)
@@ -756,6 +971,15 @@ function Get-MbtGuiNextSteps {
         'import/refused' { return @{ Text = 'The job is finished. The refused items cannot be imported as they are: the list above says why, item by item.'; Buttons = @() } }
         'repair/complete' { return @{ Text = 'The repaired file is a new PST; your original was not touched. Open it in Outlook, or put what it holds into a mailbox.'; Buttons = @($importPst, $howTo) } }
         'repair/partial' { return @{ Text = 'Start the repair again whenever you want.'; Buttons = @($again) } }
+        'mailcopy/complete' {
+            $ends = Get-MbtGuiMailCopyEnds
+            $store = (New-MbtGuiRequest -Task mailcopy).StorePath
+            $open = @{ Text = 'Open the store'; Icon = 'open'; Action = { Start-MbtGuiOpenOf -Path $store }.GetNewClosure() }
+            return @{ Text = "The items are in the mailbox $($ends.To). Open Outlook, or Outlook on the web, and look in $(if ($s.TgtMode -eq 'new') { "the folder **$($s.TgtName)**" } else { 'the folders of the same names' }): nothing that was there before was changed. The store of the copy stays on this PC as proof and as a resume point; you can look inside it, or delete its folder when you no longer need it."; Buttons = @($open) }
+        }
+        'mailcopy/partial' { return @{ Text = 'Press Continue: a part that is finished is not done again, and no item is copied twice.'; Buttons = @($again) } }
+        'mailcopy/decision' { return @{ Text = 'Decide for each uncertain item above. When every one is decided, the job is finished.'; Buttons = @() } }
+        'mailcopy/refused' { return @{ Text = 'The job is finished. The refused items cannot be added as they are: the list above says why, item by item.'; Buttons = @() } }
         'copy/complete' { return @{ Text = 'The new PST is ready; your original was only read. Open it in Outlook, or put what it holds into a mailbox.'; Buttons = @($importPst, $howTo) } }
         'copy/refused' { return @{ Text = 'The new PST is ready except for the items listed above.'; Buttons = @($howTo) } }
         'copy/partial' { return @{ Text = 'Start the copy again whenever you want.'; Buttons = @() } }
@@ -789,7 +1013,7 @@ function New-MbtGuiReportsCard {
         if ($g.ReportState -eq 'writing') { Show-MbtGuiDialog -Title 'The report is being written' -Body 'The report of a big job takes about a minute. Press the button again in a moment: the line under the buttons goes away when it is ready.' -Buttons @(@{ Text = 'Close'; Accent = $true }); return }
         & $open (Get-MbtGuiReportPath -Reports @($g.Reports) -Folder $folder)
     }.GetNewClosure()
-    $dir = switch ($s.Task) { 'repair' { Split-Path $s.RpDest -Parent } 'import' { $folder } default { $s.OutFolder } }
+    $dir = switch ($s.Task) { 'repair' { Split-Path $s.RpDest -Parent } { $_ -in 'import', 'mailcopy' } { $folder } default { $s.OutFolder } }
     $bar = [Windows.Controls.WrapPanel]::new()
     $bar.Children.Add((New-GuiButton -Text 'Open the report' -Small -Icon doc -OnClick { & $openReport }.GetNewClosure())) | Out-Null
     $bar.Children.Add((New-GuiButton -Text 'Open the log' -Small -Icon clip -OnClick { & $open $logPath }.GetNewClosure())) | Out-Null
@@ -819,9 +1043,25 @@ function New-MbtGuiErrorBlock {
     return @((New-GuiMessage -Kind bad -Icon x -Text $text -After @($tech)))
 }
 
+function New-MbtGuiPeriodNote {
+    <# What the period did, from the result of the job: the items kept, the ones outside it (skipped, not an error), the ones without a date that were kept. $null for an export without a period. #>
+    param($Run)
+    $s = $script:Gui.S
+    $outside = [long](Get-MbtGuiCount $Run 'outsidePeriod' -1)
+    $period = Get-MbtGuiPeriod $s
+    if ($outside -lt 0 -and -not $period.Active) { return $null }
+    $kept = [long](Get-MbtGuiCount $Run 'kept' (Get-MbtGuiCount $Run 'done' 0))
+    $undated = [long](Get-MbtGuiCount $Run 'withoutDate' 0)
+    $text = "**Period: items that $($period.Text).** $(Format-MbtGuiQuantity $kept 'item') kept"
+    if ($outside -ge 0) { $text += ", $(Format-MbtGuiCount $outside) outside the period (skipped, not an error)" }
+    if ($undated -gt 0) { $text += ". $(Format-MbtGuiQuantity $undated 'item') had no date and $(Get-MbtGuiPlural $undated 'was' 'were') kept" }
+    return (New-GuiMessage -Kind info -Icon info -Text ($text + '.'))
+}
+
 function New-MbtGuiExportDone {
     param([string]$Outcome)
     $g = $script:Gui; $s = $g.S; $run = $g.Run
+    $periodNote = New-MbtGuiPeriodNote $run
     $done = Get-MbtGuiCount $run 'done' (Get-MbtGuiCount $run 'exported' $run.Done)
     $failed = Get-MbtGuiCount $run 'failed' 0; $pending = Get-MbtGuiCount $run 'pending' 0
     $pst = $s.Dest -eq 'pst'
@@ -832,7 +1072,7 @@ function New-MbtGuiExportDone {
             $size = Format-MbtGuiBytes $real
             $t = New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @($(if ($pst -and $parts) { "$size in $(Format-MbtGuiQuantity $parts 'PST file')" } else { $size }), $(if ($pst) { 'written' } else { 'in the store' }), 'ok'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
             $facts = New-GuiFacts @(@('Saved to', $s.OutFolder), @('Files', $(if ($pst) { "$($s.OutName) and its parts + manifest" } else { 'the export store' })), @('Checked', $(if ($pst -and -not $s.CheckEach) { 'not checked (you turned it off)' } else { 'every file checked: clean' })))
-            return @($t, $facts)
+            return @($t, $periodNote, $facts)
         }
         'partial' {
             $notReady = @($run.Objects | Where-Object { $_.State -in 'notready', 'not-ready' })
@@ -840,7 +1080,7 @@ function New-MbtGuiExportDone {
             $msg = if ($notReady.Count) { "**$($notReady[0].Key)** is not ready at Microsoft yet. It was not exported as empty, and it stays on the list." } else { "**$(Format-MbtGuiStillToDo $pending)**" }
             $extra = @()
             if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
-            return @($t, (New-GuiMessage -Kind warn -Icon warn -Text $msg)) + @($extra)
+            return @($t, $periodNote, (New-GuiMessage -Kind warn -Icon warn -Text $msg)) + @($extra)
         }
         'decision' { return @((New-MbtGuiTiles @(@((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' exported'), 'ok'), @('1', 'needs a decision', 'warn'), @((Format-MbtGuiCount $failed), 'failed', 'ok'))), (New-GuiMessage -Kind warn -Icon warn -Text 'One item could not be read twice. See the list and choose.')) }
         default {
@@ -932,6 +1172,40 @@ function New-MbtGuiCopyDone {
     }
 }
 
+function New-MbtGuiMailCopyDone {
+    <# The end of a copy to another mailbox: what was read, what was added, what is left; both parts in one card. #>
+    param([string]$Outcome)
+    $g = $script:Gui; $s = $g.S; $run = $g.Run
+    $mid = [char]0x00B7
+    $read = Get-MbtGuiCount $run 'exported' 0; $done = Get-MbtGuiCount $run 'done' $run.Done; $pending = Get-MbtGuiCount $run 'pending' 0; $failed = Get-MbtGuiCount $run 'failed' 0; $folders = Get-MbtGuiCount $run 'foldersCreated' 0
+    $ends = Get-MbtGuiMailCopyEnds
+    $periodNote = New-MbtGuiPeriodNote $run
+    $readTile = @((Format-MbtGuiCount $read), ((Get-MbtGuiPlural $read 'item') + ' read'), 'ok')
+    switch ($Outcome) {
+        'complete' {
+            $t = New-MbtGuiTiles @($readTile, @((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $folders), ((Get-MbtGuiPlural $folders 'folder') + ' created'), 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'))
+            $facts = New-GuiFacts @(@('From', "$($ends.From) $mid $($ends.FromKind) $mid **not changed**"), @('Into', "$($ends.To) $mid $($ends.ToKind)$(if ($s.TgtMode -eq 'new') { " $mid folder **$($s.TgtName)**" })"), @('Store', "$((New-MbtGuiRequest -Task mailcopy).StorePath) (kept)"), @('Final check', 'every item of the job is done'))
+            return @($t, $periodNote, $facts)
+        }
+        'refused' {
+            $refused = Get-MbtGuiCount $run 'refused' $failed
+            $t = New-MbtGuiTiles @($readTile, @((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $folders), ((Get-MbtGuiPlural $folders 'folder') + ' created'), 'ok'), @((Format-MbtGuiCount $refused), 'refused for good', 'bad'))
+            return @($t) + @(New-MbtGuiRefusedBlock -Verb 'copied')
+        }
+        'partial' {
+            $t = New-MbtGuiTiles @($readTile, @((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $pending), 'still to do', 'warn'), @((Format-MbtGuiCount $failed), 'failed', $(if ($failed) { 'bad' } else { 'ok' })))
+            $extra = @(); if ($run.Result -and $run.Result.Reason -eq 'signin-required') { $extra = New-MbtGuiErrorBlock $run '' }
+            $left = if ($run.ImportHalf) { "**$(Format-MbtGuiStillToDo $pending)** The part that was read is kept in the store." } else { '**The reading is not finished.** What was read is kept in the store; the part that adds the items to the mailbox follows it.' }
+            return @($t, $periodNote, (New-GuiMessage -Kind warn -Icon warn -Text "$left Press **Continue**: a part that is finished is not done again, and no item is added twice.")) + @($extra)
+        }
+        'decision' { return (New-MbtGuiImportDone 'decision') }
+        default {
+            $t = New-MbtGuiTiles @($readTile, @((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @('0', 'still to do', ''), @('1', 'error', 'bad'))
+            return @($t) + @(New-MbtGuiErrorBlock $run 'The copy stopped.')
+        }
+    }
+}
+
 function Show-MbtGuiBulkDialog {
     Show-MbtGuiDialog -Title 'Send again every item that was not found?' -Body 'For each uncertain item that is not in the folder, the item is sent again. An item for which the folder holds a candidate stays as it is. If an item did arrive after all, the mailbox will hold it twice.' -Buttons @(
         @{ Text = 'Cancel' }
@@ -976,10 +1250,10 @@ function New-MbtGuiRepairDone {
 #endregion
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDcruVEm1/Pxewt
-# I1bwO4FmT88pUBL5SucmZbvXGAVChaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC0CHtdc5KkjZwE
+# SmWhk6P/OMBGbM+pxUTXiIEhld1uzaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -1051,28 +1325,28 @@ function New-MbtGuiRepairDone {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCh6myoJGbJ
-# q508Ck2Wlf4LUE96KiTtPzb/NUGZh8QnFDANBgkqhkiG9w0BAQEFAASCAgAsZUGe
-# F7SwJxyFbFETK+xBUNH5ogozxp7O76dI4SXyk71pPNuFFWY6w6uVWym8A/+0Vohv
-# DI5UtL6oL1kVaMl6LKyP+TBa0B0K9vvKYtKE8kAODAj8jZ1tlyfSppubmNZeL0ei
-# nY1r/3W0QiGgpwb7SrkqlKb8mYkR9nH7oys76BeDjvssQoA66kQpObMBmIMqKo19
-# mwrqQC1TOe/MgPp16eamRd+QOcH1iMXv5TJB+uM5I7p+LfVMtp+tgMZeeCxnhqQX
-# Kn5K76xw2ZHqLanG7rADOdLaBwOtjNw/Uww3wpzSbRjncFleRLX3uj/8axXXMEje
-# IOfZ47oFYJE2bbK0lVekhHrzrL2D38VkeQ9bAS0LJTteOOHiyKGD4zChIj3ia/Y7
-# 3aYkgu13bljp2mKovdoyvMWyjRY8q8lT12mkqO9y34ia5kkcKnKsF5qTEOVrvzbY
-# ublhaVWvgPWjnmspKpIJenLsHVN3mjK/vic30EvBq/BH8gzKuAV/4K5gu7RL9ASY
-# gluLi7Qj2/IDlyspCYO8ACaFQqUtp4qfDXTXpr0n4k/WiQFELvY/AszfTXSO0Nvt
-# ujw5QlwSGC3r1se+4oVOJoWw3hACdLgS6qyoUOD3F9iVS2mPLrtliL8Uqhy7yMyp
-# qgQGdPDN3/k9LNWy2We939ZnRQbGUNqNW3r1MKGCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDgD3FXdujZ
+# e1uY6L8nIo+MdRrFFfLTXM1UOrAbb4NyjjANBgkqhkiG9w0BAQEFAASCAgCdeAil
+# 7PBzDRa3VyWdtG06w1GaIKiESFEPOsTazze1RbgwMBuoT5RD5ehO7ZmZv9CmLMNF
+# Ikmo94WSB9jobvpT3dfmfPYqm+NItfZ0PgmvLfAn/u2Lpwu9NyykjZLUbHfZXZWg
+# PajhtsCFK7tz8jrGnWJG1FKCTBXoAn2CmPszWxJY2ROQRfyZxT90wm0ehiDVA3id
+# G8eKONrylKPBpeMzCxWRKmJKggoICsbheoboVUhzhx/zTsYqt//5i0kg8+fFrycj
+# 6ai6BJFKacIUR1x+FMEaZPCGntGRC54ZneIAtfTQyTqT1ealE87nA0zUlwI4Sw6P
+# aUapGETh3L7aN5kI2sxPmDilWSwIrCU9WgSu9uob88v5K/mriOCzduPaX4cJrGXg
+# SpzkdL9WjN8MKKqUCQZ513SiYnpkNGstMTciBXmAifGMRdB7WnVliVfy0wYdQzEj
+# 2x3szHBfoa9Xfv3mWvkqVk5gOqeXz/+8dlg8gJRl+LDKo22hcNtJk6fQreCJfV06
+# xAH9scPxpoM0PYxyutaSVFerA9uLCOWRXFjD2T0YGh6D/9wtgfY2W4MTWU5SKTY+
+# B9MfHa7ZKfKaGbYNDoNyPV10HDy8zDQQuHFJu6u3Hqd19Sb2yT7y0GLPUOd8ux1f
+# E7GjkydUlyFqUANGv+ZI8fhaQzT3kyEs9Z+2AqGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIDiJ79cy4Cd+NE8AyTn5Y2EwEwRmxuBCiDaNKmtSlx4cAggdOzfvw9H2
-# wRgPMjAyNjExMTUxNDM1MjZaMAMCAQECEA9tO0R/jpzVpzsF6YVzScegghGnMIIE
+# BAIBBQAEIBjcSEhO6AwvOkNuo0QeX9CSV/gd62+MeIh/SAe2R4aIAghwpJks9a66
+# rBgPMjAyNjExMjUxNTM3MTFaMAMCAQECECvdooGkngMhV0fNJ/wdufWgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -1167,17 +1441,17 @@ function New-MbtGuiRepairDone {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUyNlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINsI
-# qejoPBpkqyQLaoX9ha9EiR0hpV6zHkZFZKyPQC6yMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcxMVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIGjb
+# HznAaLxClD2lfmeVTVVvVuR70OoKGMqDfc9dxPwbMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEAr3XACD9wjlChUC+FlcVjRz/D27B0DJW4bfJeiQ0xwQMCIQDb
-# NJkyQCuVzV8MoISTGQs1hLm3UOALIeguypMqq4gpJQ==
+# zj0EAwIERzBFAiArd+XH9ricf/ITb6OBeVkN2oPoQAAYFGnIJhvMv5mcFAIhAK4n
+# RB2D/AFCdL7HKWYqK94WRAdnxb2zoIzO35JdWJiH
 # SIG # End signature block

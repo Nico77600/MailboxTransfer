@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the retention of the job folders (Invoke-MbtJobRetention, the configuration key Jobs.RetentionDays, the command line and the
@@ -214,6 +214,47 @@ Describe 'Removing the folders of old jobs' {
         Join-Path $dir 'x' | Should -Not -Exist
     }
 
+    It 'follows a link inside a job folder only when its reparse tag is a cloud tag: a tag that redirects or is not known is a link, a cloud folder is an ordinary one' {
+        $w = Join-Path $TestDrive 'tags'
+        $cloudTarget = Join-Path $TestDrive 'tags-cloud-target'
+        $otherTarget = Join-Path $TestDrive 'tags-other-target'
+        foreach ($target in $cloudTarget, $otherTarget) { $null = New-Item -ItemType Directory -Force -Path $target; [IO.File]::WriteAllText((Join-Path $target 'data.txt'), 'data') }
+        $cloud = New-OldJob $w 'old-cloud' 400 -Files 'temp\x.bin'
+        $other = New-OldJob $w 'old-other' 400 -Files 'temp\y.bin'
+        New-Item -ItemType Junction -Path (Join-Path $cloud 'temp\link') -Target $cloudTarget | Out-Null
+        New-Item -ItemType Junction -Path (Join-Path $other 'temp\link') -Target $otherTarget | Out-Null
+        Mock -ModuleName MailboxTransfer Get-PathReparseTag { [uint32]0x9000001Au } -ParameterFilter { $Path -like '*\old-cloud\temp\link' }
+        Mock -ModuleName MailboxTransfer Get-PathReparseTag { [uint32]0x8000001Bu } -ParameterFilter { $Path -like '*\old-other\temp\link' }
+        @((Invoke-MbtJobRetention -WorkFolder $w -RetentionDays 30).Removed | Sort-Object) | Should -Be @('old-cloud', 'old-other')
+        Join-Path $cloudTarget 'data.txt' | Should -Not -Exist
+        Join-Path $otherTarget 'data.txt' | Should -Exist
+    }
+
+    It 'judges a folder entry by its reparse tag: a normal folder and a cloud folder are not links; a tag that redirects, an unknown tag and a tag that cannot be read are' {
+        $target = Join-Path $TestDrive 'entry-target'
+        $null = New-Item -ItemType Directory -Force -Path $target
+        $plain = Join-Path $TestDrive 'entry-plain'
+        $null = New-Item -ItemType Directory -Force -Path $plain
+        $link = Join-Path $TestDrive 'entry-link'
+        New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+        InModuleScope MailboxTransfer -Parameters @{ Plain = $plain; Link = $link } {
+            param($Plain, $Link)
+            Test-MbtFolderLink ([IO.DirectoryInfo]::new($Plain)) | Should -BeFalse
+            Test-MbtFolderLink ([IO.DirectoryInfo]::new($Link)) | Should -BeTrue -Because 'a junction has a tag that redirects'
+        }
+        foreach ($case in @(@{ Tag = 0x9000001Au; Link = $false }, @{ Tag = 0x9000F01Au; Link = $false }, @{ Tag = 0x80000013u; Link = $false }, @{ Tag = 0xA000000Cu; Link = $true }, @{ Tag = 0x8000001Bu; Link = $true })) {
+            Mock -ModuleName MailboxTransfer Get-PathReparseTag ([scriptblock]::Create('[uint32]0x' + $case.Tag.ToString('X8') + 'u'))
+            InModuleScope MailboxTransfer -Parameters @{ Link = $link; Expected = $case.Link } {
+                param($Link, $Expected)
+                Test-MbtFolderLink ([IO.DirectoryInfo]::new($Link)) | Should -Be $Expected
+            }
+        }
+        Mock -ModuleName MailboxTransfer Get-PathReparseTag { throw 'cannot be read' }
+        InModuleScope MailboxTransfer -Parameters @{ Link = $link } {
+            param($Link)
+            Test-MbtFolderLink ([IO.DirectoryInfo]::new($Link)) | Should -BeTrue
+        }
+    }
     It 'says what it would remove with -WhatIf and removes nothing' {
         $w = Join-Path $TestDrive 'whatif'
         $null = New-OldJob $w 'old' 400

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - the fake engine (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -16,6 +16,8 @@ Set-StrictMode -Version Latest
 $script:FakePstState = 'damaged'
 # How many of the jobs of the Continue list the fake engine gives (all of them when it is $null): the scenarios with one job, or none.
 $script:FakeJobCount = $null
+# The number of extra folders of the fake PST (0: the short tree of the documentation).
+$script:FakePstExtraFolders = 0
 
 function New-MbtGuiFakeRandom {
     <# A small deterministic generator, so the screenshots are the same every time. #>
@@ -60,11 +62,25 @@ function Get-MbtGuiFakeTree {
 
 function Get-MbtGuiFakePstTree {
     $f = { param($id, $name, $glyph, $count, $gib, $kids = @()) New-MbtGuiFakeNode -Id $id -Name $name -Glyph $glyph -Count $count -SizeGiB $gib -Kids $kids }
-    $root = New-MbtGuiFakeNode -Id 'r-o' -Name 'archive-2019.pst' -Glyph pst -Count 0 -SizeGiB 0 -Root -Kind pst -Sub '4 parts - 47.3 GiB - read only' -Kids @(
-        (& $f 'o-in' 'Inbox' mail 1180 6.2)
-        (& $f 'o-proj' 'Projects' folder 0 0 @((& $f 'o-p1' 'Contoso Rollout' folder 4300 21), (& $f 'o-p2' 'Fabrikam Pilot' folder 780 4.1)))
-        (& $f 'o-old' 'Old Mail' folder 0 0 @((& $f 'o-19' '2019' folder 3120 12)))
-        (& $f 'o-fin' 'Finance' folder 0 0 @((& $f 'o-bud' 'Budgets' folder 480 4))))
+    # extra folders in groups of 20 (every fifth folder of a group has two folders below it), up to the number asked
+    $extra = @()
+    $made = 0; $group = 0
+    while ($made -lt $script:FakePstExtraFolders) {
+        $group++; $made++
+        $kids = @()
+        for ($i = 1; $i -le 19 -and $made -lt $script:FakePstExtraFolders; $i++) {
+            $made++
+            $sub = @()
+            if ($i % 5 -eq 0) { for ($j = 1; $j -le 2 -and $made -lt $script:FakePstExtraFolders; $j++) { $made++; $sub += (& $f "o-x$group-$i-$j" ('Case {0:00}.{1:00}.{2}' -f $group, $i, $j) folder 12 0.01) } }
+            $kids += (& $f "o-x$group-$i" ('Project {0:00}.{1:00}' -f $group, $i) folder 40 0.05 $sub)
+        }
+        $extra += (& $f "o-x$group" ('Archive {0:00}' -f $group) folder 0 0 $kids)
+    }
+    $root = New-MbtGuiFakeNode -Id 'r-o' -Name 'archive-2019.pst' -Glyph pst -Count 0 -SizeGiB 0 -Root -Kind pst -Sub '4 parts - 47.3 GiB - read only' -Kids (@(
+            (& $f 'o-in' 'Inbox' mail 1180 6.2)
+            (& $f 'o-proj' 'Projects' folder 0 0 @((& $f 'o-p1' 'Contoso Rollout' folder 4300 21), (& $f 'o-p2' 'Fabrikam Pilot' folder 780 4.1)))
+            (& $f 'o-old' 'Old Mail' folder 0 0 @((& $f 'o-19' '2019' folder 3120 12)))
+            (& $f 'o-fin' 'Finance' folder 0 0 @((& $f 'o-bud' 'Budgets' folder 480 4)))) + $extra)
     # a PST gives no folder size before the import, and the engine takes folders by their path below the top folder (-IncludeFolder)
     $walk = $null
     $walk = { param($node, $path) foreach ($k in @($node.Children)) { if ($k.Id -eq "`0placeholder") { continue }; $p = if ($path) { "$path/$($k.Name)" } else { $k.Name }; $k.Tag.FolderPath = $p; $k.Tag.Nid = [uint32]0x8000; $k.SizeBytes = -1; & $walk $k $p } }
@@ -134,7 +150,7 @@ function New-MbtGuiFakeEngine {
         State = @{ Signed = $false }
     }
     $engine.Readiness = { $work = $script:Gui.S.WorkFolder; [pscustomobject]@{ Lights = @(
-                @{ Name = 'PowerShell 7.5 or later'; Detail = '7.5.4'; Ok = $true },
+                @{ Name = 'PowerShell 7.6 or later'; Detail = '7.6.10'; Ok = $true },
                 @{ Name = 'Sign-in component (MSAL)'; Detail = 'found in Microsoft.Graph.Authentication 2.41.1; the Windows sign-in window is available'; Ok = $true },
                 @{ Name = 'Work folder'; Detail = "$work - 412 GiB free"; Ok = $true },
                 @{ Name = 'Network connection'; Detail = 'login.microsoftonline.com answers'; Ok = $true },
@@ -177,12 +193,80 @@ function New-MbtGuiFakeEngine {
     $engine.SaveSelection = { param($Root, $Entries, $Path, $OnDone, $OnError) & $OnDone $Path }
     $engine.SaveSelections = { param($Groups, $Path, $OnDone, $OnError) & $OnDone $Path }
     $engine.Jobs = { param($Work)
+        $mid = [char]0x00B7; $arrow = [char]0x2192
+        $line = {
+            param($Name, $Task, $Title, $Sub, $Sub2, $State, [bool]$Finished, [bool]$CanContinue, [bool]$Alive, $Demo, $ResumeDemo)
+            [pscustomobject]@{ Task = $Task; Kind = 'job'; Name = $Name; Title = $Title; Sub = $Sub; Sub2 = $Sub2; State = $State; Button = $(if ($CanContinue) { 'Continue' } else { 'Open' }); Folder = ''; Finished = $Finished; CanContinue = $CanContinue; Alive = $Alive; Demo = $Demo; ResumeDemo = $ResumeDemo }
+        }
+        # the jobs that are not finished first, the finished ones after them (the real adapter lists them the same way)
         $jobs = @(
-            [pscustomobject]@{ Task = 'import'; Title = 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' Adele Vance (Archive)'; Sub = '5,120 of 9,860 items done ' + [char]0x00B7 + ' stopped yesterday 22:41 ' + [char]0x00B7 + ' 3 items to check'; State = 'run'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'RunImportStopped' } }
-            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' Primary + Archive ' + [char]0x2192 + ' D:\Exports\adele'; Sub = 'Not finished: 2 folders are not ready at Microsoft yet. Nothing is lost.'; State = 'warn'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'DoneExportPartial' } }
-            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } })
+            (& $line '20261124-2241-import-3fa2' 'import' "Import $mid archive-2019.pst $arrow Adele Vance (Archive)" 'Interrupted on 2026-11-24 22:41: the PC was shut down or restarted, or the tool was closed, while it was running. What was done is kept.' 'Step 3 of 5, Send the items, 5,120 of 9,860 done' 'run' $false $true $false { Set-MbtGuiScenario 'ResumeImport' } { Set-MbtGuiScenario 'RunImportStopped' })
+            (& $line '20261123-1630-mailcopy-7c1e' 'mailcopy' "Copy $mid Adele Vance (Primary) $arrow projects@contoso.com (Archive)" 'Stopped by you on 2026-11-23 17:05 (Stop and keep progress). Nothing is lost.' 'Step 3 of 9, Download the items (reading the source mailbox), 12,400 of 31,000 done' 'run' $false $true $false { Set-MbtGuiScenario 'ResumeCopy' } { Set-MbtGuiScenario 'RunCopyMailbox' })
+            (& $line '20261122-0912-export-b8f8' 'export' "Export $mid Primary + Archive $arrow D:\Exports\adele" 'Stopped by an error on 2026-11-22 09:12: The disk is full. Free some space and press Try again. What was downloaded is kept.' 'Step 3 of 4, Download the items, 2,300 of 4,100 done' 'warn' $false $true $false { Set-MbtGuiScenario 'ResumeExport' } { Set-MbtGuiScenario 'RunExport' })
+            (& $line '20261124-2300-export-5a90' 'export' "Export $mid Archive $arrow D:\Exports\fabrikam" 'Running now, in another window or process.' 'Step 3 of 4, Download the items, 640 of 8,200 done' 'run' $false $false $true $null $null)
+            (& $line '20261110-0915-mailcopy-9b1c' 'mailcopy' "Copy $mid projects@contoso.com (Primary) $arrow Adele Vance (Primary)" 'Finished on 2026-11-10 11:48.' '14,200 items done' 'ok' $true $false $false $null $null)
+            (& $line '20261102-1000-export-0d44' 'export' "Export $mid finished 2026-11-02 $mid 3 PST files" 'Finished on 2026-11-02 11:00.' '' 'ok' $true $false $false $null $null))
         if ($null -ne $script:FakeJobCount) { $jobs = @($jobs | Select-Object -First $script:FakeJobCount) }
         $jobs }
+    # what Delete says for each fake job: the one that runs is refused, a copy that is complete can delete its store, a copy that is not complete cannot
+    $engine.JobDeleteInfo = { param($Work, $Name, $OnDone, $OnError)
+        $jobs = @(& $engine.Jobs $Work)
+        $job = @($jobs | Where-Object { $_.Name -eq $Name })
+        if (-not $job.Count) { & $OnError "The job $Name is not there any more."; return }
+        $job = $job[0]
+        $at = { param($text) [datetime]::SpecifyKind([datetime]::Parse($text, [cultureinfo]::InvariantCulture), [DateTimeKind]::Local).ToUniversalTime() }
+        $times = @{ '20261124-2241-import-3fa2' = @('2026-11-24 20:10', '2026-11-24 22:41'); '20261123-1630-mailcopy-7c1e' = @('2026-11-23 16:30', '2026-11-23 17:05'); '20261122-0912-export-b8f8' = @('2026-11-22 08:40', '2026-11-22 09:12'); '20261124-2300-export-5a90' = @('2026-11-24 22:30', '2026-11-24 23:00'); '20261110-0915-mailcopy-9b1c' = @('2026-11-10 09:15', '2026-11-10 11:48'); '20261102-1000-export-0d44' = @('2026-11-02 10:00', '2026-11-02 11:00') }
+        $store = $null
+        if ($job.Task -eq 'mailcopy') {
+            $complete = [bool]$job.Finished
+            $store = [pscustomobject]@{ Path = 'D:\MailboxTransfer\stores\copy-projects-contoso.com-1a2b3c4d'; Offered = $true; Allowed = $complete; Reason = $(if ($complete) { '' } else { 'The copy is not complete: its second part, adding the items to the target mailbox, is not finished, and it reads this store. Finish the copy first.' }); Bytes = [long](4.2GB) }
+        }
+        $plan = [pscustomobject]@{
+            Name = $job.Name; Folder = "D:\MailboxTransfer\jobs\$($job.Name)"; Title = $job.Title; Source = ''; Destination = ''; Started = (& $at $times[$job.Name][0]); Updated = (& $at $times[$job.Name][1]); State = $(if ($job.Finished) { 'complete' } else { 'resumable' }); Unfinished = (-not $job.Finished)
+            Allowed = (-not $job.Alive); Reason = $(if ($job.Alive) { "The job '$($job.Name)' is running now, in another window or process. Stop it first (Stop and keep progress), then delete it." } else { '' })
+            Warnings = @($(if (-not $job.Finished) { 'This job is not finished. After it is deleted you can no longer continue it from the console or with -ResumeJob.' })); Store = $store
+        }
+        & $OnDone $plan
+    }.GetNewClosure()
+    $engine.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError) & $OnDone ([pscustomobject]@{ Name = $Name; Removed = $true; StoreRemoved = [bool]$WithStore }) }
+    # what Continue says for each fake job, in the words of the engine (Get-MbtJobResumeText; the tests compare the two)
+    $engine.JobResume = { param($Work, $Name)
+        $reading = 'The folder tree and the list of the items are read again from the source mailbox, so that what arrived or changed since is taken. An item that changed since is read again.'
+        $uncertain = 'Items that were being sent when it stopped may or may not have reached the mailbox. They are looked up in the target folder first, after a short wait so that Microsoft can finish creating them: an item found there counts as done, an item that is not found is sent again, and when several items could be it you are asked.'
+        $at = { param($text) [datetime]::SpecifyKind([datetime]::Parse($text, [cultureinfo]::InvariantCulture), [DateTimeKind]::Local).ToUniversalTime() }
+        $times = @{ '20261124-2241-import-3fa2' = @('2026-11-24 20:10', '2026-11-24 22:41'); '20261123-1630-mailcopy-7c1e' = @('2026-11-23 16:30', '2026-11-23 17:05'); '20261122-0912-export-b8f8' = @('2026-11-22 08:40', '2026-11-22 09:12') }
+        $pair = if ($times.ContainsKey($Name)) { $times[$Name] } else { $times['20261122-0912-export-b8f8'] }
+        $common = @{ Started = (& $at $pair[0]); Updated = (& $at $pair[1]); Problem = '' }
+        switch ($Name) {
+            '20261124-2241-import-3fa2' {
+                [pscustomobject]($common + @{ Name = $Name; Title = 'Import - archive-2019.pst to Adele Vance (Archive)'; Kind = 'interrupted'
+                        Why = 'Interrupted on 2026-11-24 22:41: the PC was shut down or restarted, or the tool was closed, while it was running. What was done is kept.'; Progress = 'Step 3 of 5, Send the items, 5,120 of 9,860 done'
+                        Heading = 'Import from a PST file'
+                        Already = @('The messages already added to the mailbox, as the journal of the import records them (D:\MailboxTransfer\jobs\20261124-2241-import-3fa2\work\pstimport.db), are not added again, even when the same PST file is given again.')
+                        Again = @('The PST files are checked again.', $uncertain.Replace('Items', 'Messages').Replace('an item', 'a message').Replace('items', 'messages'), 'Messages that failed are tried again, up to 3 tries in all. A message that Microsoft refused for good is not tried again.')
+                        From = 'It restarts from step 1, Check the PST files, then sends only the messages that are left. Before it stopped it had reached step 3 of 5, Send the items.'
+                        Notes = @('The PC was shut down, or the tool was closed, while it ran: it could not finish the item it was working on, and an item that was being sent is uncertain until it is looked up.') })
+            }
+            '20261123-1630-mailcopy-7c1e' {
+                [pscustomobject]($common + @{ Name = $Name; Title = 'Copy - Adele Vance (Primary) to projects@contoso.com (Archive)'; Kind = 'stopped'
+                        Why = 'Stopped by you on 2026-11-23 17:05 (Stop and keep progress). Nothing is lost.'; Progress = 'Step 3 of 9, Download the items (reading the source mailbox), 12,400 of 31,000 done'
+                        Heading = 'Copy to another mailbox'
+                        Already = @('The items already read into the store are not read again.')
+                        Again = @($reading, 'Items that failed are tried again, up to 3 tries in all.', 'When the reading is complete, the second part follows: adding the items to the target mailbox.')
+                        From = 'It resumes the first part, reading the source mailbox: from step 1 of 9, Read the folder tree. Before it stopped it had reached step 3 of 9, Download the items.'
+                        Notes = @('A copy has two parts: reading the source mailbox into the store on this PC, then adding the items to the target mailbox. The source mailbox is only read.') })
+            }
+            default {
+                [pscustomobject]($common + @{ Name = $Name; Title = 'Export - Primary + Archive to D:\Exports\adele'; Kind = 'error'
+                        Why = 'Stopped by an error on 2026-11-22 09:12: The disk is full. Free some space and press Try again. What was downloaded is kept.'; Progress = 'Step 3 of 4, Download the items, 2,300 of 4,100 done'
+                        Heading = 'Export to an export store'
+                        Already = @('The items already downloaded and checked in the export store are not downloaded again.')
+                        Again = @('The folder tree and the list of the items are read again from the mailbox, so that what arrived or changed since is taken. An item that changed since is downloaded again.', 'Items that failed are tried again, up to 3 tries in all.', 'Then the PST files: the parts already written and checked are kept; the part that was being written when it stopped is written again from its start.')
+                        From = 'It restarts from step 1, Read the folder tree, and downloads only what is left. Before it stopped it had reached step 3 of 4, Download the items.'
+                        Notes = @() })
+            }
+        }
+    }.GetNewClosure()
     # the demonstration writes no overview and removes no folder
     $engine.JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null }
     $engine.BatchReport = { param($Work, $Id, $OnDone, $OnError) & $OnDone $null }
@@ -198,10 +282,10 @@ function New-MbtGuiFakeEngine {
 }
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCiQKUYyH24t5Hv
-# ZQWJbu7lyOPoi+Jg4lr4B1g11cNPK6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBKExMwUjmJS6vc
+# Sswzmwobgf1KjJEcsECYprn7elZAeaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -273,28 +357,28 @@ function New-MbtGuiFakeEngine {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDPvCM5i2xP
-# 6f38Zwqdd067JqFqPGNunlo97rW4rHyAOzANBgkqhkiG9w0BAQEFAASCAgCT24+A
-# 1Tb+DyxAWt0Worw+/6ansFj/QxqYtOJlvBW39lGmdatIVgD8VB2y5sImcI8TaRKD
-# Dm2HWdVux6GmRadw4NKgu65I1VCZjisINeWf9kmi7GWbfn/+YU/iybZ+2tyXd0vM
-# XUlFSPyCNWmjqs7AorSkaEeE1q4ct9w3A6oUj5unc9IYKXP3PZTYvo7FrJRPZO9N
-# gM0b2qgbUdcmzW3/wUv21wmdfiyZsXUZkqNK/aVMjfJL5Iazrrmz5N2mk3MhF+b0
-# lnfEBDZlExZFqbB/2d95L+HJ6DUtq4wKguUsJ5FICDtwZDAudwRztw1gp6mIgTYb
-# 1qJ6mOoBL3r/e6aNvkMLrHt+onJtaOIIzPLX9p97jdsSZHUWxHwn4sxLKmP+oCbG
-# kLgJ2bT+BSHRodpom294MHwxykgusDkFFjx81gFINp9bjrOjtHBkPjZm2GSl9ECp
-# YGUeubcPYE+K2Bm1sgReo7ecd2WJp9mfv/YAHfpI/ZSOZUi5xDYUBcGkuyfbI9Nr
-# NhkCYQvUs24ueMlZEh92DPYTAQxr9tbMhrcH+2Ma+gZGM9MU9geIawd+ca54M/4i
-# S628tWsZFpcgot8NGdRs9PBcuXX+zOyTeOEKnygOEbdzgaTvq4HWgnVZ/6dSqllN
-# lvyiIyX0FOJlDhShhiMp6k0YU0ssmIi5M4TWo6GCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBpwD55jNma
+# aZn6RqcHP2Nth0o6m6SOM7NnmLMX/V7SITANBgkqhkiG9w0BAQEFAASCAgAkdiyd
+# MyEFIWxhEHEGVQJTjn3gEKGA+yRSGVJ6VQsLBezvcZArPB+/A4jxSqlpwf8pcSFI
+# XesJWKjrTnILilbKeUvj75vUiduZb3dTUnOMsL5MSnDqSKMdBkO6zFVledpVBhLU
+# CYrTo298DEhxJjzFxxo28c5g3fG2IkEGrr2h7pTzidcPy+NfH8aRR09UqHPvMA55
+# wrjQqgh7jTUR4X4wD54F5yZhVU8YSuf2Yd+S7LjBwUXU0iXKMVHwJkwHQ4w5FMBg
+# cb2Gw+z/pHz6cN7frTJtjTDFLbsqZc7ahv2rUkOymekkaIkuPGCE7KmL3Y/wQp+N
+# US/aLHxDRZoL0uPcXLK+d3XJW+WMkLUClZcXBe9vQ5jfFDtf2sl+z3B9QzzcUj02
+# DPKE8d4diJ6zipWB3q9RS7Yk0C6DNXeZ7Y3oKNM1SVgrYuJq4zFJZxZ2KUbSZdcC
+# 2Pc4ULmNSaOMnwNUOOKFYkMkCK3Y0Qe0Iwybz4sTtISdKdoVT0F82htC1VTyXVsP
+# M4H2UxHJe+d8UJWWpDQBKgvTeLzVNYCc9taq8nLPXaTJo6g7iRkaobHOoh+7PmDi
+# YnGW/WqRWJnL8/FpEOPLAIQ/10NgK2arQAyS/4rd4yvlrCYkHhofpqDuPSF9Tgr4
+# sTRNxLTWOZZmDKWHbC4unYXwFXTga4BV0rVGFaGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEICAQ+Bt4x+jqqZ4AFxfSw0taeWqWDmUWI13lUtLEbiLsAghVSeWtLdsZ
-# shgPMjAyNjExMTUxNDM1MTBaMAMCAQECEDOrD4snJOOhyHa+xVvMQoygghGnMIIE
+# BAIBBQAEIPrVirecSFCgiUWs7awuJ8/NeNEfFtA6GbfaLYGAHevHAggxv49qqCX4
+# 7BgPMjAyNjExMjUxNTM3MDhaMAMCAQECEHvaL+ONBQpJ0RedzbTmdbqgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -389,17 +473,17 @@ function New-MbtGuiFakeEngine {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUxMFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIOE9
-# kys0SXmD3VUB9eGGjuoR95jlJc4ISip0Rc2uEeN5MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcwOFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHfW
+# p8EM6iBhOOmaTKyupdR8KwJl5YO3bdjEmadjt7H9MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBmzRjz3zHrMPcqnujwlf/MdJ+urfryXszaU0OlPSdKHgIgBlY7
-# lxRKHCQrfPR0HfziH9PqR7zlevGn12nRvlF1wYM=
+# zj0EAwIERzBFAiB1SDSs9EiHAHQ3rT4mQ9hqzweEidkyruCtvwk7X0r6wQIhAIv3
+# bFigee42y+3SUcOM+4UKFHsZ5Eao1rY27cHwgA2A
 # SIG # End signature block

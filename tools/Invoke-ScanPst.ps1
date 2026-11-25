@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     OPTIONAL DEVELOPER COMPARISON TOOL. Runs Microsoft's Inbox Repair Tool (SCANPST.EXE) on a COPY of a PST file, without any click

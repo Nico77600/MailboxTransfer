@@ -44,5 +44,7 @@ $global:PSDefaultParameterValues['Invoke-MailboxTransfer.ps1:DevelopmentMode'] =
 $global:PSDefaultParameterValues['Start-MailboxTransferConsole.ps1:DevelopmentMode'] = $true
 # The log file of the runs goes to a folder of the temp, never to out\logs of the repository (the jobs that a test starts inherit the variable).
 $env:MAILBOXTRANSFER_LOG_FOLDER = Join-Path ([IO.Path]::GetTempPath()) 'MailboxTransfer-test-logs'
+# The job folder of a job started from the command line goes to a folder of the temp, never to the work folder of the developer.
+$env:MAILBOXTRANSFER_WORK_FOLDER = Join-Path ([IO.Path]::GetTempPath()) 'MailboxTransfer-test-work'
 # The icons of the console are the ASCII ones, whatever the terminal of the developer is: the tests look for them (+ ok, ! warning, x failure).
 $env:MBT_ICONS = 'Ascii'

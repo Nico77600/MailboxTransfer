@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer - the overview of all the jobs of a work folder (dot-sourced by MailboxTransfer.psm1 and by MailboxTransfer.Gui.Jobs.ps1).
@@ -31,7 +31,7 @@ $script:MbtOverviewResults = @(
     @{ Code = 7; Name = 'Unknown'; Tone = 'wait' }
 )
 $script:MbtOverviewRank = @{ 1 = 0; 3 = 1; 4 = 2; 2 = 3; 6 = 4; 5 = 5; 7 = 6; 0 = 7 }
-$script:MbtOverviewColumns = @('id', 'started', 'seconds', 'task', 'source', 'destination', 'result', 'code', 'done', 'failed', 'bytes', 'link', 'batch')
+$script:MbtOverviewColumns = @('id', 'started', 'seconds', 'task', 'source', 'destination', 'result', 'code', 'done', 'failed', 'bytes', 'link', 'batch', 'outside')
 
 function Read-MbtOverviewStatus {
     <#
@@ -54,7 +54,7 @@ function Read-MbtOverviewStatus {
                 'counts' {
                     if ($kind -eq [Text.Json.JsonValueKind]::Object) {
                         foreach ($c in $p.Value.EnumerateObject()) {
-                            if ($c.Name -in 'done', 'failed', 'bytes', 'fileBytes') { $n = [long]0; if ($c.Value.ValueKind -eq [Text.Json.JsonValueKind]::Number -and $c.Value.TryGetInt64([ref]$n)) { $s.counts[$c.Name] = $n } }
+                            if ($c.Name -in 'done', 'failed', 'bytes', 'fileBytes', 'outsidePeriod') { $n = [long]0; if ($c.Value.ValueKind -eq [Text.Json.JsonValueKind]::Number -and $c.Value.TryGetInt64([ref]$n)) { $s.counts[$c.Name] = $n } }
                         }
                     }
                 }
@@ -257,7 +257,7 @@ function Get-MbtJobOverviewModel {
             }
             $seconds = if ($hasStatus -and $code -ne 7) { [math]::Max(0L, [long][math]::Floor(($endTicks - $startTicks) / 10000000)) } else { 0L }
 
-            $done = -1L; $failed = -1L; $bytes = -1L
+            $done = -1L; $failed = -1L; $bytes = -1L; $outside = -1L
             $counts = $status['counts']
             if ($counts -isnot [hashtable]) { $counts = @{} }
             if ($hasStatus -and $code -ne 7 -and -not $counts.ContainsKey('done')) {
@@ -269,6 +269,7 @@ function Get-MbtJobOverviewModel {
             }
             $v = $counts['done']; if ($null -ne $v) { $done = [long]$v }
             $v = $counts['failed']; if ($null -ne $v) { $failed = [long]$v }
+            $v = $counts['outsidePeriod']; if ($null -ne $v) { $outside = [long]$v }
             $v = $counts['bytes']; if ($null -eq $v) { $v = $counts['fileBytes'] }
             if ($null -ne $v) { $bytes = [long]$v }
 
@@ -278,7 +279,7 @@ function Get-MbtJobOverviewModel {
             $taskKey = "$task|$mode"
             $taskName = $taskMemo[$taskKey]
             if ($null -eq $taskName) { $taskName = Get-MbtReportTaskName -Task $task -Mode $mode; $taskMemo[$taskKey] = $taskName }
-            $row = @($stamp, $name, $started, $seconds, $taskName, $source, $destination, $text, $code, $done, $failed, $bytes, $link, ([string]$status['batch']))
+            $row = @($stamp, $name, $started, $seconds, $taskName, $source, $destination, $text, $code, $done, $failed, $bytes, $link, ([string]$status['batch']), $outside)
             # a job that is running changes without its folder changing: it is read again every time
             if ($code -ne 5) { $cacheRows.Add($row) }
             $known[$name] = $row
@@ -294,7 +295,7 @@ function Get-MbtJobOverviewModel {
         if ($null -eq $r -or $r.Count -lt 3) { continue }
         $jobBatch = [string]$r[13]
         if ($batchText -and $jobBatch -ine $batchText) { continue }
-        $row = [object[]]::new(13)
+        $row = [object[]]::new(14)
         $row[0] = $r[1]; $row[1] = [long]$r[2]; $row[2] = [long]$r[3]
         $i = 3
         foreach ($s in $r[4], $r[5], $r[6], $r[7]) {
@@ -304,6 +305,7 @@ function Get-MbtJobOverviewModel {
         }
         $row[7] = [int]$r[8]; $row[8] = [long]$r[9]; $row[9] = [long]$r[10]; $row[10] = [long]$r[11]; $row[11] = [int]$r[12]
         $row[12] = -1
+        $row[13] = if ($r.Count -gt 14) { [long]$r[14] } else { -1L }
         if ($jobBatch) { $at = $index[$jobBatch]; if ($null -eq $at) { $at = $strings.Count; $strings.Add($jobBatch); $index[$jobBatch] = $at }; $row[12] = $at }
         $rows.Add($row)
         $keys.Add([long]$r[2])
@@ -361,7 +363,7 @@ function ConvertTo-MbtOverviewJson {
     $lines = [string[]]::new($Model.Rows.Count)
     for ($n = 0; $n -lt $lines.Length; $n++) {
         $r = $Model.Rows[$n]
-        $lines[$n] = '["' + [Text.Json.JsonEncodedText]::Encode([string]$r[0]).ToString() + '",' + ($r[1..12] -join ',') + ']'
+        $lines[$n] = '["' + [Text.Json.JsonEncodedText]::Encode([string]$r[0]).ToString() + '",' + ($r[1..13] -join ',') + ']'
     }
     [void]$sb.Append([string]::Join(',', $lines))
     [void]$sb.Append(']}')
@@ -493,10 +495,10 @@ function Write-MbtJobOverview {
 }
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDkYWO7S7wzKV4J
-# J0PTpX53eGSygEt+XeiPYvdM0mOQrqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAEfKwB+RWT2f5y
+# e/KplseQMxcP3JkD2SdhcPXBADiWeKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -568,28 +570,28 @@ function Write-MbtJobOverview {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAwMZJFlJ9C
-# hXcqtuNIZfLyp1JsSBGlQT9at9wfPPkVoDANBgkqhkiG9w0BAQEFAASCAgA6+5T3
-# LcCFusZSc9AAsR1OaLPV2aIdAZs7exm/wDYd0mKQdlyFI/M//C0JGn/Gl+kILaSB
-# jNqwF8I+ym/6xJGEe6RfZ+PIHXr9M7EzUTrpK1bVJHGaRRaKjPupLXd/Btq70V5n
-# c1nk6m6wE7y2X6LS50E24iyy6y5WSIXSqvnQBm9aF2ux+60QUijeAzUeC8tw+rIy
-# GMwHzzzqk6Ewi7t6WaTFpZ/omcyVe441VgKYLOjSHbyPgmmk2AEcQmNqubX6bYuI
-# MrPGTLZCYQsPW/HpSrUiH/dEAybgv4OK5zrnwtEhB+TKoUF2X1DpC250R0NdFRXK
-# jfMDlKVNuXTOm3AWZMRisSw8sAwT0IuAymCldQRyH+nuIEmarmRB4zS3WQle7U/D
-# Mq2U5yIgDQR5TnMD68hpOLTO5TdfGAuJx1hP7Tdfj24UMK7/o9RzCoXWc4j9pSWv
-# jtPfbfECjeiSk0p5JsK4m0WkZSs+52bhDj5CHs6GkqnmRfeF14MGwQ83gLksA54S
-# RAyBy5bQ6Bb5cS7av9fui2hEW/88N+aNlU/+y4JN6uc7T1sK5yhduV3dbXztfBbY
-# aIryREfoHCrEjc+kjdFTVWIKhrYo+pXQ9qu5DV+O+N7OoW14X/SxDqEAMZO6jmeL
-# 8zm44E34v+dai94ePRvPpVtEZ4GwLSaIci7yJaGCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCD2mK01iFfp
+# +or7L3/j6S4iSMDe12yDTH10S5vqGyAkyDANBgkqhkiG9w0BAQEFAASCAgCVnK9I
+# /Jm6CGHeDxgd8LbFot20oisgRtWiyLKiN5aDBqIyvJ8Ft5NM+nQmAFzbyIDaacUt
+# UHnwC37Y6ubYHdxqp21mD6qcGL64phX5KkD4iDpOcuO167q1JgqDcM4QLJbm8Iu+
+# JnJZHcccfryF6um1oGyVzSmUv12R8mpch2b0jrWSy90vscVI1AGZqVLHc9gE3c1y
+# CS9+WosdQ3g1Oq0sGKQqUgBku5Dpfh35VY15dF/p6SNkm0Td7cz083+iTtd+mVVw
+# jVWhjO1QTSjvQ4eZSyPySg9Go0Qtd/kdbwqUW7DMTgeUEJ96p0NKfm7Krb+bRHVR
+# mFnKpmdlVUzbqYy+dVUszZbK666ABy7ij9jJ5aY4uo85hbMWdlgU6/NBaqiTrEzl
+# SglCJC4IMsz9BVQO0rQCAvokE+idvzDDKhpUYnrS8K/yzwi5I7htWXWMN/ge/DN4
+# d1jR+2mjUkUneta6hBAY2w1YgY3266YDhWoiI6clZXyQPCQXBUBKQyc+7gxXxORx
+# SH2yv0URYL1a+OJY+XicL0YyhZ8qh+SuO5h7D4w0b18ADgulFSsv51Z9pnjjkkEz
+# SseD+sKNg0wIwLCh4RRf5pp2oMcfIJmy3JuLsHYr8mS/d79EplKvT1xgWyvDjzfz
+# tCOeubxUn2VYbiNSYjTlcSWmlEjitRJhS5wzNaGCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIEPf8ITB/7+FbU0VvKTvqkPMOWxfyiZUjH8Do1u8uv7LAgguclW6YLi7
-# 8hgPMjAyNjExMTUxNDM0NDFaMAMCAQECEHOQmHc+a7OU/tiXHmbv9figghGnMIIE
+# BAIBBQAEINFhBYI/dTzXtXQt/wQlXBnmLtxgjOr2tTMO8THkwgO1AggVmiSNOcIG
+# VxgPMjAyNjExMjUwODAyNDNaMAMCAQECEBv3MjaqTw8ZFuU3ZEpgkumgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -684,17 +686,17 @@ function Write-MbtJobOverview {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQ0MVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIA0W
-# uEJfbisqPyB0kmXkZwhw9fu/pPWPo4x6u51puSg2MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDI0M1owKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIFdz
+# /r8j5Gb4oVjwATL/QrtjSvodB8lrUqNXCKDWF/erMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBvGWyvcYWHxn2MhF6foWUuH9sLBjtr3ws04X2KdoyHnAIgHFjV
-# SEtTEZn51ealjQ7vGRihvmXoV+7qTU4/e92D/Fo=
+# zj0EAwIESDBGAiEAgGRG2Q8MQ02y4070F8BwGAlCZm1TASWOuMX1p4sTkJMCIQCr
+# 8kkRvaUELCZSukM7EgZEyTUF9N4IYi/rRXfBS04bnA==
 # SIG # End signature block

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the EML export and import (Engine.Mime.cs, Engine.EmlMapi.cs, Engine.Eml.cs, Engine.EmlImport.cs,
@@ -578,6 +578,21 @@ Describe 'Export from a live mailbox (Mail API $value)' {
         $r = [MailboxTransfer.EmlExporter]::Run((New-Source $w), $o)
         $r.Exported | Should -Be 1
         (Get-ChildItem $dir -Recurse -Filter *.eml).Directory.Name | Should -Be 'Projects'
+    }
+    It 'with a period writes only the messages that arrived inside it, both bounds included, and counts the others without calling them skipped' {
+        $w = New-World
+        $dir = Join-Path $script:Tmp 'live-period'
+        $src = New-Source $w
+        $src.Period = [MailboxTransfer.ArrivalPeriod]::Parse('2026-10-02T08:00:00Z', '2026-10-03T08:00:00Z')
+        $r = Invoke-Export $src $dir
+        $r.Exported | Should -Be 2
+        $r.OutsidePeriod | Should -Be 3 -Because 'M1, P1 and A1 arrived on other days'
+        $r.WithoutDate | Should -Be 0
+        $r.Failed | Should -Be 0
+        $all = Invoke-Export (New-Source $w) (Join-Path $script:Tmp 'live-period-all')
+        $r.Skipped | Should -Be $all.Skipped -Because 'what is skipped for its class is the same with a period: a date never makes a skipped item'
+        @((Get-ChildItem $dir -Recurse -Filter *.eml).Name | Sort-Object).Count | Should -Be 2
+        (Get-Content -LiteralPath (Join-Path $dir 'manifest.jsonl') -Raw) | Should -Not -Match 'Project one'
     }
 }
 

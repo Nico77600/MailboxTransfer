@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - jobs (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -135,6 +135,33 @@ function Write-MbtGuiFolderFiles {
     if (@($Choice.Nids).Count) { $Job.ItemsFile = "$base.items.txt"; Set-Content -LiteralPath $Job.ItemsFile -Value @($Choice.Nids | ForEach-Object { [string]$_ }) -Encoding utf8 }
 }
 
+function Get-MbtGuiPeriod {
+    <#
+        The period the operator asked for an export, from the state: Chosen (the second choice is on), Active (and it is valid: it holds a date and the first date is not after the last),
+        From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("arrived between 2026-03-01 and 2026-03-31", "all dates").
+    #>
+    param([hashtable]$S)
+    $chosen = ((Get-MbtGuiProp $S 'Task' '') -in 'export', 'mailcopy') -and ((Get-MbtGuiProp $S 'Period' 'all') -ieq 'between')
+    $from = [string](Get-MbtGuiProp $S 'ArrFrom' ''); $to = [string](Get-MbtGuiProp $S 'ArrTo' '')
+    $problem = $null
+    if ($chosen) {
+        if (-not $from -and -not $to) { $problem = 'Pick at least one date, or choose All dates.' }
+        elseif ($from -and $to -and [string]::CompareOrdinal($from, $to) -gt 0) { $problem = 'The first date is after the last date. Swap them, or pick other dates.' }
+    }
+    $text = if (-not $chosen -or $problem) { 'all dates' } elseif ($from -and $to) { "arrived between $from and $to" } elseif ($from) { "arrived from $from" } else { "arrived until $to" }
+    [pscustomobject]@{ Chosen = $chosen; Active = ($chosen -and -not $problem); From = $(if ($chosen) { $from } else { '' }); To = $(if ($chosen) { $to } else { '' }); Problem = $problem; Text = $text }
+}
+
+function Get-MbtGuiPeriodStoreSuffix {
+    <# A store keeps one period for a mailbox: an export with a period has its own store, named after it ('' for every date). #>
+    param([hashtable]$S)
+    $p = Get-MbtGuiPeriod $S
+    if (-not $p.Active) { return '' }
+    if ($p.From -and $p.To) { return "-arrived-$($p.From)_$($p.To)" }
+    if ($p.From) { return "-arrived-from-$($p.From)" }
+    return "-arrived-until-$($p.To)"
+}
+
 function Get-MbtGuiCommonArguments {
     param([hashtable]$S, [hashtable]$Job, [switch]$WhatIf)
     $a = [Collections.Generic.List[string]]::new()
@@ -152,7 +179,7 @@ function Get-MbtGuiCommand {
         several locations is one command: the selection file holds one selection per location, and the PST files are written by the same command.
     #>
     param(
-        [Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'check', 'copy')][string]$Task,
+        [Parameter(Mandatory)][ValidateSet('export', 'import', 'repair', 'check', 'copy', 'mailcopy')][string]$Task,
         [Parameter(Mandatory)][hashtable]$S, [Parameter(Mandatory)][hashtable]$Job, [switch]$Plan
     )
     $common = Get-MbtGuiCommonArguments -S $S -Job $Job -WhatIf:$Plan
@@ -168,6 +195,10 @@ function Get-MbtGuiCommand {
             # the temporary files of the export are in the job folder, not below the folder of the script
             $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox))
             foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            # the period: the days as ISO text (the same whatever the language of Windows); a day left empty is no limit on that side
+            $period = Get-MbtGuiPeriod $S
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
             $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
             $a.AddRange([string[]]$tuning)
             if ($pst) {
@@ -213,6 +244,28 @@ function Get-MbtGuiCommand {
             $a.AddRange([string[]]$common)
             $out.Add([pscustomobject]@{ Title = 'Import'; Arguments = $a.ToArray() })
         }
+        'mailcopy' {
+            # a mailbox into another in one job: the engine reads it into the store, then imports the store; one command, so that Pause and Continue work across the two parts
+            $a = [Collections.Generic.List[string]]::new()
+            $a.AddRange([string[]]@('-Mode', 'Copy', '-UserPrincipalName', $S.Mailbox))
+            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $period = Get-MbtGuiPeriod $S
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
+            $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc))
+            # the application has no mailbox of its own: it names the one that receives; a delegated sign-in writes into its own
+            if ($S.AuthMode -eq 'app' -and $S.McTarget) { $a.AddRange([string[]]@('-TargetMailboxId', $S.McTarget.Trim())) }
+            if ($S.TgtMode -eq 'new' -and $S.TgtName) {
+                $problem = Test-MbtGuiFolderName $S.TgtName
+                if ($problem) { throw "The target folder name is refused: $problem" }
+                $a.AddRange([string[]]@('-TargetRoot', $S.TgtName))
+            }
+            if ($S.Mapping) { $a.AddRange([string[]]@('-MappingFile', $S.Mapping)) }
+            $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt', '-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
+            $a.AddRange([string[]]$tuning)
+            $a.AddRange([string[]]$common)
+            $out.Add([pscustomobject]@{ Title = 'Copy'; Arguments = $a.ToArray() })
+        }
         'copy' {
             # the ticks of an open PST written into new PST files: -Mode ExportPst reads a PST instead of a store
             $a = [Collections.Generic.List[string]]::new()
@@ -245,7 +298,7 @@ function Get-MbtGuiCommand {
 # What the console passes for its own sake: not an operator's choice, so not in the line that is shown.
 $script:MbtGuiInternalParameter = @('NoPrompt', 'EventsFile', 'StopFile', 'JobId', 'TempPath', 'ConfigPath', 'LogFolder', 'DevelopmentMode')
 # The value a parameter of Invoke-MailboxTransfer.ps1 has when it is not given (the tests compare this table with the parameter block of the script).
-$script:MbtGuiCliDefault = @{ Mailbox = 'Primary'; Concurrency = '4'; MaxAttempts = '3'; ReconcileDelaySeconds = '300'; ReconcileRounds = '3'; PstMaxSizeGB = '50'; Level = 'Automatic'; RepairLevel = 'Rebuild' }
+$script:MbtGuiCliDefault = @{ Mailbox = 'Primary'; TargetMailbox = 'Primary'; Concurrency = '4'; MaxAttempts = '3'; ReconcileDelaySeconds = '300'; ReconcileRounds = '3'; PstMaxSizeGB = '50'; Level = 'Automatic'; RepairLevel = 'Rebuild' }
 
 function Split-MbtGuiArgument {
     <# The flat arguments of a command as pairs: Name (without the dash), Value ($null for a switch). #>
@@ -508,6 +561,15 @@ function Write-MbtGuiRunReport {
     foreach ($s in $Run.Steps) { $rows.Add([pscustomobject]@{ Kind = 'step'; Step = $s.Id; Key = $s.Title; State = $s.State; Done = $s.Done; Total = $s.Total; Message = $s.Msg }) }
     foreach ($o in $Run.Objects) { $rows.Add([pscustomobject]@{ Kind = 'folder'; Step = $o.Step; Key = $o.Key; State = $o.State; Done = $o.Done; Total = $o.Total; Message = $o.Msg }) }
     foreach ($i in $Run.Items) { $rows.Add([pscustomobject]@{ Kind = 'item'; Step = $i.Step; Key = $i.Key; State = $i.State; Done = ''; Total = $i.Total; Message = (($i.Msg, $i.Detail | Where-Object { $_ }) -join ' - ') }) }
+    # an export with a period: the items it left out, said once in the CSV (skipped is not a failure)
+    $periodCounts = if ($Run.Result) { $Run.Result.Counts } else { $null }
+    $outside = Get-MbtGuiProp $periodCounts 'outsidePeriod' $null
+    if ($null -ne $outside) {
+        $text = '{0} items kept; {1} items outside the period were skipped (not an error)' -f (Get-MbtGuiProp $periodCounts 'kept' 0), $outside
+        $undated = [long](Get-MbtGuiProp $periodCounts 'withoutDate' 0)
+        if ($undated -gt 0) { $text += "; $undated items without a date were kept" }
+        $rows.Add([pscustomobject]@{ Kind = 'period'; Step = 'list'; Key = 'items outside the period'; State = 'skipped'; Done = $outside; Total = ''; Message = $text })
+    }
     foreach ($w in $Run.Warnings) { $rows.Add([pscustomobject]@{ Kind = 'warning'; Step = $w.Step; Key = $w.Key; State = $w.Code; Done = ''; Total = ''; Message = $w.Msg }) }
     foreach ($d in $Run.Decisions) { $rows.Add([pscustomobject]@{ Kind = 'decision'; Step = ''; Key = $d.Key; State = 'needs a decision'; Done = ''; Total = ''; Message = $d.Msg }) }
     if ($Run.Error) { $rows.Add([pscustomobject]@{ Kind = 'error'; Step = ''; Key = $Run.Error.Code; State = 'error'; Done = ''; Total = ''; Message = $Run.Error.Msg }) }
@@ -565,10 +627,10 @@ function Get-MbtGuiReportPath {
 }
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCJ+M48ZqqfGzFz
-# bjo7SHNte0DRzuZP4lX2fI6iOtPmdqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC+2A/Cg5FjJqg4
+# taHIfxJo/ZslgQyd/ZufDKVY4n69NKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -640,28 +702,28 @@ function Get-MbtGuiReportPath {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBznngP0j5n
-# g68KzrHh2exsFFI8s9dfVTKku8Pc64ThfjANBgkqhkiG9w0BAQEFAASCAgBLIgOv
-# BDo/F6/QLZjxLQVY4Qki4UzWQ4Q2aV8hSHwfzCeVH452VqIzHDf6e3n58WE+oGiB
-# w1UhF6q4rY7NADGks4dCRmS9eJXIUVg7+F+LtGyODFCey7iqo0oJxiOfAvrLccQ7
-# JXANYTeSebN53vBKoJWmkmf2Czc+o7tZjAvzzVMBtftE7ut/hKVxYRIKUidU3/EC
-# lAjANxIusGXvSfUwF/QpKRA++ejwZ6WJGUzLfuBVeULr9HpQZ3pemlRWt/Y/Qdda
-# yQbt+WpXjc2DFrApSf5x34ULMpLXZl4YQOgYdLXHY5eCje0DP3JYhX/0RCFgqVcA
-# 2KE8lYspkKyWUV9DpZVCn7YJurtTeAMREqwnPOVvVNPMrTM8EjV6Jl1ZQtr986xz
-# 2K+p70ig2qMFSnX0LK5FLj0sA1wUGS6QnKwU3UEIFXt13DjotE5un0HGYAuj9YZ7
-# ZKZLvTSBHYrmBhjsIHFTJb8BSZeeMWpu3/zh3CdkdNB2mK1JaUpaUFH0n9Wk6btk
-# DwC9oGw/EEG7J2f1Pwj/R97ayXMG81CAaC30Y/8Fy46+alwhfI8cpABKvaQeTMEO
-# HOjB6cCSm+icgjCz+oDv3vMHUShQF16weP1GZvt5Ke5fZod69KryTc9hCGVsaFWs
-# 9bPcYeZpLibqARaqrB0H7XUg5add4AUA4c1GTKGCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBqpKcKUXlE
+# HniimTo5toz6hE3xhFnbvVgKGuhzB0e92jANBgkqhkiG9w0BAQEFAASCAgB5EoQU
+# wGxxVVbwBZ3UXPmKUjWf0Qt3v/rwYgt4XB5aDkwFNWSBVi4YCf9P9j0Nyf78mA2z
+# AM/xN8OL1xmlXYvXaEmD8V7s4/bfeprHrQPgtONFr8RzSAofQQAXsNL9C2LEQYVE
+# m1LJ389C32MoStq2Oxat+xZLcjJFaKJqCKtmAKTcSuIQ1YNI1gbMJSGgg6WmNDM2
+# guO3KywjMh8IiXXegflgjLVhtRF/+QAw97rwKXxdSaVWBM1FYK/pVQhx/HGQlIg9
+# evdwt+2uFO62at8/bYzK0QJcSIWjc+aOTTqnoF5/lRH3vO1zBHJbaeGc6r8G8hsP
+# 7zICZwfMZfABGznffaWb/6r9Er03zPZlCo+/5rDzCAroVcKDLEmdZ/eRlNvKFAbV
+# lRat+o2/J033NPxkHu4iCUqQik71FkVF/conyZ1VXCK8d7Z93w29zi54n7c3FWtW
+# a26mOJau5u0gX9DZj303KHREYaglTl0QaZrKrEFsuPWbCulXsWC/uQyB+2SrtVGm
+# Yx0w9ay3HuafhYD+ij+a55dINdHF22jT/6us5yWw+lqgTDvWjJKBpcaR2VPIm3RS
+# GM8PkdEpTAJ7D7NHBaCxho8z/3w1HJ3BR6FS6KnF+I/KBKXAT2g5pXz1zvEV/Riw
+# Shn+jj80Pf7dLFwhkxz/0i8hwdXPLLUL9E3736GCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEICILgoG/4Y9Xouy+SFIFgzT1H1CmApGX6oCWV5sOVkxqAggOhAjvoQCH
-# gRgPMjAyNjExMTUxNDM1MTZaMAMCAQECEFU1E2TDP7b0mQ5f8y6R4KqgghGnMIIE
+# BAIBBQAEIE4Qj9m1g4eX39W2PBhHwXIAub7B8l25o0YLbtL5orbzAgg3TlYywPt/
+# 4xgPMjAyNjExMjUwODAzMDRaMAMCAQECEF0OEA3NGX/+DdcUOWWI6ImgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -756,17 +818,17 @@ function Get-MbtGuiReportPath {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzUxNlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINcJ
-# wdWQfpE8Fw2S5kRpOtPZI5XQieuQY3oq9yP3BvKNMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDMwNFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHfA
+# 0W7UPz2B3wVBs9GBJZXDzmpUqG5n95GpfkklbFEXMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEA80Smuu1zCDgOrHpX0dlheceFP/6Jg3KvjamVI0vJugICIE0t
-# /tcENh8L870osGwDkpz93etxWTGbNlYQhT6/bnFU
+# zj0EAwIESDBGAiEAgo8Ybcu+yEle6TVdOPjaB7k5Pdnn7UCagXpZZJrF7qoCIQDX
+# ugArOlMTeR+PobsmAM/p4n8Cs1S480hxzKFcgwHzpg==
 # SIG # End signature block

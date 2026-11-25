@@ -290,11 +290,6 @@ namespace MailboxTransfer
             }
         }
 
-        public uint NextNid(uint type)
-        {
-            return PstFormat.Nid(type, ++Rgnid[(int)type]);
-        }
-
         // ---------------------------------------------------------------- allocation sections
         void StartSection()
         {

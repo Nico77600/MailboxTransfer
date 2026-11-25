@@ -31,6 +31,8 @@ namespace MailboxTransfer.Tests
         public byte[] Data;
         /// <summary>createdDateTime / lastModifiedDateTime of the listing: items added by a test are old, items created by importItem carry the time of the import (as on the real service).</summary>
         public DateTime CreatedUtc = new DateTime(2026, 10, 28, 9, 0, 0, DateTimeKind.Utc);
+        /// <summary>The listing gives no createdDateTime for this item.</summary>
+        public bool OmitCreated;
     }
 
     /// <summary>A listing of the items of a folder that fails on purpose (see <see cref="FakeMailboxService.ListingFailures"/>).</summary>
@@ -363,11 +365,12 @@ namespace MailboxTransfer.Tests
             var all = source.Where(i => i.FolderId == folderId).ToList();
             var page = all.Skip(skip).Take(PageSize).ToList();
             var sb = new StringBuilder("{\"value\":[");
-            sb.Append(string.Join(",", page.Select(i => JsonSerializer.Serialize(new Dictionary<string, object>
+            sb.Append(string.Join(",", page.Select(i =>
             {
-                { "id", i.Id }, { "type", "IPM.Note" }, { "changeKey", i.ChangeKey }, { "size", i.Data.Length },
-                { "createdDateTime", i.CreatedUtc.ToString("o") }, { "lastModifiedDateTime", i.CreatedUtc.ToString("o") }
-            }))));
+                var row = new Dictionary<string, object> { { "id", i.Id }, { "type", "IPM.Note" }, { "changeKey", i.ChangeKey }, { "size", i.Data.Length }, { "lastModifiedDateTime", i.CreatedUtc.ToString("o") } };
+                if (!i.OmitCreated) row["createdDateTime"] = i.CreatedUtc.ToString("o");
+                return JsonSerializer.Serialize(row);
+            })));
             sb.Append("]");
             if (skip + PageSize < all.Count)
                 sb.Append(",\"@odata.nextLink\":\"https://graph.microsoft.com/v1.0/admin/exchange/mailboxes/" + mailbox + "/folders/" + Uri.EscapeDataString(folderId) + "/items?%24skip=" + (skip + PageSize) + "\"");

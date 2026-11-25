@@ -1,6 +1,6 @@
 # Mailbox Transfer
 
-Exports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified local store or to PST files, imports PST files, stores and `.eml` files into a mailbox, and checks and repairs PST files. A guided Windows console and a PowerShell 7 command line. Author: Nicolas Fabert. Version 1.2.0.
+Exports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified local store or to PST files, imports PST files, stores and `.eml` files into a mailbox, copies a mailbox into another, and checks and repairs PST files. A guided Windows console and a PowerShell 7 command line. Author: Nicolas Fabert. Version 1.3.0.
 
 This folder contains everything needed to run the tool: the command line (`Invoke-MailboxTransfer.ps1`), the console (`Start-MailboxTransferConsole.ps1` and `.cmd`, `module\`), the C# engine (`src\`), SQLite (`lib\sqlite\`), the configuration and the two guides (user guide and reference guide, HTML with their pictures). Tests and build tools stay outside it, in the repository.
 
@@ -16,7 +16,7 @@ This folder contains everything needed to run the tool: the command line (`Invok
 ## Requirements
 
 - Windows 10 or 11 (x64 or arm64).
-- PowerShell 7.5 or later (7.6 works) (`pwsh.exe`) for the console, 7.4 for the command line. Windows PowerShell 5.1 is refused. PowerShell 7 is not part of this folder: `winget install Microsoft.PowerShell`.
+- PowerShell 7.6 or later (`pwsh.exe`), for the console and for the command line. Windows PowerShell 5.1 and older PowerShell 7 releases are refused. PowerShell 7 is not part of this folder: `winget install Microsoft.PowerShell`.
 - The module `Microsoft.Graph.Authentication` (the tool borrows its MSAL library to sign you in): `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`.
 - For a mailbox: one app registration for your company with the minimum permission of each task, listed in the [user guide, chapter 2](docs/MailboxTransfer-UserGuide.html). Checking and repairing a PST, and opening an export, need no right.
 - Free disk: about twice the size of the data.
@@ -36,7 +36,7 @@ Your own tenant id and application id go in the `Tenant` section of `config\Mail
 
 ## Package integrity
 
-The tool runs only from a package signed by its owner. `src\Test-PackageIntegrity.ps1` and `PackageIntegrity.psd1` must carry a valid, timestamped signature of `0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6`; every PowerShell file must be signed by the same owner; every other file must match the signed manifest. The entry scripts and the module check this first. A changed, missing, unlisted or reparse-point file stops the tool before anything runs. There is no unsigned mode; do not disable your execution policy or this check to clear an error: download the release again.
+The tool runs only from a package signed by its owner. `src\Test-PackageIntegrity.ps1` and `PackageIntegrity.psd1` must carry a valid, timestamped signature of `0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6`; every PowerShell file must be signed by the same owner; every other file must match the signed manifest. The entry scripts and the module check this first. A changed, missing or unlisted file, or a link that is not accepted, stops the tool before anything runs. A link is judged by its type: symbolic links, junctions and unknown types are refused; OneDrive files, deduplicated files and CompactOS files are accepted and still hashed, so the tool can run from a OneDrive folder. If OneDrive has not downloaded a file and the computer is offline, the message says so: reconnect, or install the tool outside OneDrive. There is no unsigned mode; do not disable your execution policy or this check to clear an error: download the release again.
 
 Edit only `config\MailboxTransfer.config.psd1` and `config\MailboxTransfer.config.local.psd1`: they are data, outside the check, like the generated `out\` and `logs\` folders.
 
@@ -44,7 +44,7 @@ Edit only `config\MailboxTransfer.config.psd1` and `config\MailboxTransfer.confi
 
 | Item | Role |
 |---|---|
-| `Invoke-MailboxTransfer.ps1` | The command line: `Export`, `ExportPst`, `Import`, `ImportPst`, `ExportEml`, `ImportEml`, `Browse`, `Status`, `CheckPst`, `RepairPst`. |
+| `Invoke-MailboxTransfer.ps1` | The command line: `Export`, `ExportPst`, `Import`, `ImportPst`, `ExportEml`, `ImportEml`, `Copy`, `Browse`, `Status`, `CheckPst`, `RepairPst`. |
 | `Start-MailboxTransferConsole.ps1`, `Start-MailboxTransferConsole.cmd` | The console (WPF) and its double-click launcher. |
 | `MailboxTransfer.psd1`, `MailboxTransfer.psm1` | The module: sign-in, configuration, mailbox tree, export, import, store, PST, EML. |
 | `module\` | The console (pages, state, jobs), the events file of a job, the EML commands. |

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Measures the memory used to move large items between FastTransfer streams and PST files with the streaming code of the engine:

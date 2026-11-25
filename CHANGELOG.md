@@ -2,6 +2,22 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
+## 1.3.0 — 2026-11-25
+
+### Added
+- **Copy a mailbox into another, in one task**: `-Mode Copy` (console: **Copy to another mailbox**) reads a mailbox, some folders or one period into a store, then adds the store to another mailbox; resumable, nothing created twice, a list of copies with `-MailboxCsv`.
+- **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` (console: the **Period** line under the browser) keep the items that arrived between two days; the report says how many were left out.
+- **Import many mailboxes from a list**: `-MailboxCsv` with `-Mode Import`, `ImportPst` or `ImportEml`, one ordinary import job for each, up to 4 at a time, resumable.
+- **Continue a job is complete and clear**: the jobs that are not finished come first, all of them, in a list that scrolls; the finished ones are in a fold. Each line says why the job stopped (the PC was shut down or the tool was closed, you stopped it, an error, a decision is waited for), when, and the step it reached. **Continue** first shows what is already done and will not be redone, what is checked again and where the job restarts.
+- **Delete a job** from the console (**Delete**, with a dialog that says what goes) or with `-RemoveJob <name>` (`-WhatIf`, `-Confirm`): only the folder of the job; your stores, PST files and mailboxes are never touched. A finished copy can delete its copy store too (`-RemoveCopyStore`).
+- **A job started from the command line is listed in the console** and continued with `-ResumeJob <name>` (from any folder); `-Mode Status` lists the jobs, and a run that is not complete says this command in its Next steps.
+
+### Changed
+- **PowerShell 7.6 or later is the minimum**, for the console and the command line (`winget install Microsoft.PowerShell`).
+- **Runs from a OneDrive-synced folder**: the package check accepts OneDrive, deduplicated and CompactOS files; symbolic links and junctions are still refused.
+- **The browser fits the window**: the folder tree and the message list are no longer cut off in a small window.
+- **Pause and Resume** on the running step of a job.
+
 ## 1.2.0 — 2026-11-14
 
 ### Added

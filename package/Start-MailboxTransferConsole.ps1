@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 
 <#
 .SYNOPSIS
@@ -28,7 +28,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.2.0 (console)
+    Version : 1.3.0 (console)
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -62,6 +62,57 @@ $mbtCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
 [Threading.Thread]::CurrentThread.CurrentUICulture = $mbtCulture
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+function Get-PathReparseTag {
+    <#
+        The tag of the reparse point at Path, or $null when Path is not one. WIN32_FIND_DATAW.dwReserved0 holds the tag when FILE_ATTRIBUTE_REPARSE_POINT
+        is set; FindFirstFileW reads it from the directory entry without opening the item, so a cloud placeholder is not downloaded. The two calls are
+        declared with Reflection.Emit: no C# is compiled, because this runs before the engine exists. Layout of the 592-byte structure: dwFileAttributes
+        at offset 0, dwReserved0 at offset 36. The same text is in the verifier, the module, both entry scripts and the two tools of the repository.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $api = Get-Variable -Name FindFileApi -Scope Script -ValueOnly -ErrorAction Ignore
+    if ($null -eq $api) {
+        $module = [Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('ReparseTag'), [Reflection.Emit.AssemblyBuilderAccess]::Run).DefineDynamicModule('ReparseTag')
+        $native = $module.DefineType('Native', 'Public, Abstract, Sealed')
+        foreach ($call in @(@('FindFirstFileW', [IntPtr], @([string], [IntPtr])), @('FindClose', [bool], @([IntPtr])))) {
+            $method = $native.DefinePInvokeMethod($call[0], 'kernel32.dll', $call[0], 'Public, Static, PinvokeImpl', 'Standard', $call[1], [type[]]$call[2], 'Winapi', 'Unicode')
+            $method.SetImplementationFlags('PreserveSig')
+        }
+        $api = $native.CreateType()
+        Set-Variable -Name FindFileApi -Scope Script -Value $api
+    }
+    $full = [IO.Path]::GetFullPath($Path)
+    $full = if ($full.StartsWith('\\?\', [StringComparison]::Ordinal)) { $full } elseif ($full.StartsWith('\\', [StringComparison]::Ordinal)) { '\\?\UNC\' + $full.Substring(2) } else { '\\?\' + $full }
+    $data = [Runtime.InteropServices.Marshal]::AllocHGlobal(592)
+    try {
+        $handle = $api::FindFirstFileW($full, $data)
+        if ($handle -eq [IntPtr]::new(-1)) { throw "Package integrity: the reparse tag of this path cannot be read (Windows error $([Runtime.InteropServices.Marshal]::GetLastSystemError())): $Path" }
+        [void]$api::FindClose($handle)
+        if (([Runtime.InteropServices.Marshal]::ReadInt32($data, 0) -band 0x400) -eq 0) { return $null }
+        return [uint32]([long][Runtime.InteropServices.Marshal]::ReadInt32($data, 36) -band 0xFFFFFFFFL)
+    }
+    finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($data) }
+}
+function Test-ReparseTagAllowed {
+    <#
+        The rule for the tag of a reparse point, not for the bare attribute. Refused: every tag that redirects to another path, that is every tag with the
+        name-surrogate bit 0x20000000 (symbolic link 0xA000000C, junction and mount point 0xA0000003, and the others), and every tag that is not in the closed
+        list below (fail closed). Accepted, the Microsoft types that do not redirect: the cloud files of OneDrive (0x9000001A and its variants 0x9000101A to
+        0x9000F01A, that is the tag with the bits 0x0000F000 cleared), data deduplication 0x80000013 and WOF (Windows Overlay Filter, CompactOS) 0x80000017.
+        The SHA256 of the signed manifest still detects any change of content, including one made by a synchronisation.
+    #>
+    param([Parameter(Mandatory)][uint32]$Tag)
+    if ($Tag -band 0x20000000u) { return $false }
+    return (($Tag -band 0xFFFF0FFFu) -eq 0x9000001Au) -or $Tag -eq 0x80000013u -or $Tag -eq 0x80000017u
+}
+function Get-RefusedReparseTag {
+    <# $null when the item (from Get-Item -Force) is not a reparse point or its tag is accepted by Test-ReparseTagAllowed; otherwise the refused tag as eight hexadecimal digits. #>
+    param([Parameter(Mandatory)]$Item)
+    if (-not ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $null }
+    $tag = [uint32](Get-PathReparseTag $Item.FullName)
+    if (Test-ReparseTagAllowed $tag) { return $null }
+    return $tag.ToString('X8')
+}
 # The package is verified before any of its code runs: the verifier must carry the owner signature, then it checks the signed manifest.
 # A tree without a manifest (a source checkout) is accepted only with -DevelopmentMode.
 $integrityManifest = Join-Path $PSScriptRoot 'PackageIntegrity.psd1'
@@ -70,7 +121,8 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     $integrityCursor = [IO.Path]::GetFullPath($integrityVerifier)
     while ($integrityCursor) {
         $integrityItem = Microsoft.PowerShell.Management\Get-Item -LiteralPath $integrityCursor -Force -ErrorAction Stop
-        if ($integrityItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Package integrity: reparse point: $integrityCursor" }
+        $integrityRefused = Get-RefusedReparseTag $integrityItem
+        if ($integrityRefused) { throw "Package integrity: reparse point that is not accepted (tag 0x$integrityRefused): $integrityCursor" }
         $integrityCursor = [IO.Path]::GetDirectoryName($integrityCursor)
     }
     $integritySignature = Microsoft.PowerShell.Security\Get-AuthenticodeSignature -LiteralPath $integrityVerifier -ErrorAction Stop
@@ -87,7 +139,7 @@ if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $integrityManifest) {
     # The module does not repeat this warning in the same process.
     [AppDomain]::CurrentDomain.SetData('MailboxTransfer.UnverifiedTreeWarned', $true)
 }
-$script:ConsoleVersion = '1.2.0'
+$script:ConsoleVersion = '1.3.0'
 $packageRoot = $PSScriptRoot
 foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') {
     . (Join-Path $packageRoot "module\MailboxTransfer.Gui.$f.ps1")
@@ -97,7 +149,7 @@ $script:GuiDevelopmentMode = [bool]$DevelopmentMode
 
 if ($DocScenario) { $Demo = $true }
 $entry = Join-Path $packageRoot 'Invoke-MailboxTransfer.ps1'
-if (-not $WorkFolder) { $WorkFolder = Join-Path $env:LOCALAPPDATA 'MailboxTransfer' }
+if (-not $WorkFolder) { $WorkFolder = if ($env:MAILBOXTRANSFER_WORK_FOLDER) { $env:MAILBOXTRANSFER_WORK_FOLDER } else { Join-Path $env:LOCALAPPDATA 'MailboxTransfer' } }
 Initialize-MbtGuiTypes
 if ($Demo) {
     $engine = New-MbtGuiFakeEngine -Capability @{ PstImport = $true; EmlExport = $true; EmlImport = $true; SharedMailbox = $true; FolderChoice = $true; PstCopy = $true; PstPreview = $true }
@@ -116,8 +168,8 @@ if ($Demo) {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBzPBwgghzzR1s6
-# 8h/XTIu2izDL76rIU2OjvilMPxxll6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBfyp504BZhgI/6
+# 4ZZDFBW0JiKKLcFoSMdXHwaBWapWtqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -194,23 +246,23 @@ if ($Demo) {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCD216OLBgZk
-# tOMKUmBZmxUoyoFy40XzXwTa/8CRx8DH7TANBgkqhkiG9w0BAQEFAASCAgBrTusQ
-# XM4cxoVJQSzH9HbGkyImvGkvRcz9mORb8gejhY2WkKSHgF2sbsIlY27prG3sVkjA
-# pGbymZRvcgN5Gkjvu1M6CRcRZnI7YTvoPO7a4S2crZZBGt6p0ZxW62b+RttnJAvE
-# 0Gd8VUlh58CWYrqjbmAnd/JVF+Oxh+W5QyN8dc6IOggwBYzZu2HL22UQG4vBvvqp
-# PN2/qe/Rk1gAAnBFmt9/YaqxWFm8VUn2LLHp2WupsQ7K0G4ZARZOpur9tYTuGb+5
-# PivXZvnDQIgEaygB29vZHY6cJGTPSZaQTofiDSz9B32Ies5y3a+k+4QLfVpjwWid
-# vSR4/bQrEtpKcADqe5K6E3Sa3RA7iPpgeyXHSeMfCw+cIWjQqIRTU7U6EMD85zXd
-# KItksgnmb1vwBay9rdDnCgHISTU63UjXnzDL4F3HrL3IRtv7BPiyToiswIBsnDGL
-# N1v5aEB7nTTKyBB81slnJB7N8ZeQhxfFKxLcegI878UnpvRGT5wdjFk0KUs9e+vN
-# R0GwbL8LKAxJvz/UWH08/9BEFal4gwLZoyAAaC6ZzjAFFNbRPzJX/b37XFTNDd1Y
-# +nuTsC6429KbF5CZuA54AL3v/UwqjHI199ee1HZ78/QU4j476Kw1UyqpOX9Yktxg
-# DpAXuU1qLlZ/D4YmaFHvShv9H6CpFc5VVx2kEaGCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCsL0VovHci
+# YiDfeS3ON3eCp3X/eHeNirjh0k0f99bZjzANBgkqhkiG9w0BAQEFAASCAgCFY6Fm
+# UKsA2QNUF0v+l3Um0uioUecv6KGpdSeVnV8PBg40bTi6ouDGds49Dh8SvS/Yti80
+# tieLo0MN5n3ITW2KP843tetgZPumLdbPGfkz4N733o7m+A9CELWbYplHyqrZkTM4
+# Ndq31mr4+lJBLz2USwDmwzfvh1iZLYTJto9c+sJTS49UviXHZ+13bfhLze7XdZeP
+# BJsPDAP/dKX0xHz9ZQBLAIgM/IE/9aSPOmeDxirCAN91RaukxvhMAXLM4qC3C3d1
+# l2QEm1j4XpyGErOBtWnC5npvaQOVOw9XPT9gpP+pQKvOTUodUc1HVuSrqTtQzZFJ
+# PB2AioO2tihC12SrZrpJwLLovFlGbBkuszG7YhkcDvUY+LUnlLj4H239Ita7QpxA
+# O3Hw3Mkcs4XZBg2Y/BZDbje7MyEUxZjrL+4J+qArjyboAF0oGFXdXuwIsok2Pk6J
+# OpqU+zmuQ2nAhKd+JxMr3u26PQsIK2gAxDcFxmOfI9wy2+D2zfcsUs1QJ9CK99/V
+# xZ1CDmh+AYhPhJ+X+V7bD/Yzw2kNL96NxadfYJHGNimp85AT3zpHy8eBtXF/lrys
+# 7p9LwglMTqxljVTxn+jyEdHkPgWX+hhZj+69jaupLlOXBrwTTXhREHEP/oXdZC6w
+# FP+yFgZs+cCD2qnJiSY1HnSgNKXHQ0xtRUf2DqGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIFXUcjSESjfNvCAMZlOUc7cduSjbXuFFa6MJzz1RQ1oQAghnTLsmlYEe
-# YhgPMjAyNjExMTUxNDM0MDhaMAMCAQECEHMxImRcM8SOKMNwbDw8X9ugghGnMIIE
+# BAIBBQAEIBu7UPMhL/y/W2nT7fLNBVc5/RBAOJrCvELK4HRcK6wEAggg3HkdQEXU
+# 9RgPMjAyNjExMjUxNTM2NTJaMAMCAQECEBkIVBQZuI+BTjdLQ14JTZygghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -309,13 +361,13 @@ if ($Demo) {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQwOFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINrw
-# iR8K641ivyk2Z9Ff6xhJOslNipZyK+GvruyCXBxtMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzY1MlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINRJ
+# SSqTGk5oI3DadmwHriFvCgp+SdfiIApe7zAphuDXMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEAsMH+gOcCncPQwXADbdE6+s111s0NKFvO/6oco89TVP0CIElU
-# a+x2Oe7cm3wkmcqLsCfbR5ROB+btMCYS//SZ1XYo
+# zj0EAwIERzBFAiEA2LCQeWAZpQ9GAc+b+Pyv0dRimKp40NzTOOGguwKfkewCIDzF
+# zpm2iC/WgzUvm6lMz+2FLXfwUwRkn+73/i7dDkXI
 # SIG # End signature block

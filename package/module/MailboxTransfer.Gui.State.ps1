@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - window, flow and state (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -17,13 +17,14 @@ Set-StrictMode -Version Latest
 $script:Flows = @{
     export = @('setup', 'start', 'exFrom', 'exTo', 'exPlan', 'run', 'done')
     import = @('setup', 'start', 'imFrom', 'imTo', 'imPlan', 'run', 'done')
+    mailcopy = @('setup', 'start', 'exFrom', 'mcTo', 'mcPlan', 'run', 'done')
     repair = @('setup', 'start', 'rpFrom', 'rpTo', 'rpPlan', 'run', 'done')
     open   = @('setup', 'start', 'opFrom')
     copy   = @('setup', 'start', 'opFrom', 'cpTo', 'cpPlan', 'run', 'done')
 }
 # The five steps of the stepper, and the sub-steps shown under Task.
-$script:StepGroups = @{ setup = 'Setup'; start = 'Task'; exFrom = 'Task'; imFrom = 'Task'; rpFrom = 'Task'; opFrom = 'Task'; exTo = 'Task'; imTo = 'Task'; rpTo = 'Task'; cpTo = 'Task'; exPlan = 'Verify'; imPlan = 'Verify'; rpPlan = 'Verify'; cpPlan = 'Verify'; run = 'Run'; done = 'Next steps' }
-$script:SubStepLabels = @{ start = 'What'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To' }
+$script:StepGroups = @{ setup = 'Setup'; start = 'Task'; exFrom = 'Task'; imFrom = 'Task'; rpFrom = 'Task'; opFrom = 'Task'; exTo = 'Task'; imTo = 'Task'; rpTo = 'Task'; cpTo = 'Task'; mcTo = 'Task'; exPlan = 'Verify'; imPlan = 'Verify'; rpPlan = 'Verify'; cpPlan = 'Verify'; mcPlan = 'Verify'; run = 'Run'; done = 'Next steps' }
+$script:SubStepLabels = @{ start = 'What'; exFrom = 'From'; imFrom = 'From'; rpFrom = 'From'; opFrom = 'From'; exTo = 'To'; imTo = 'To'; rpTo = 'To'; cpTo = 'To'; mcTo = 'To' }
 $script:Tasks = [ordered]@{
     export = @{ Title = 'Browse and export'; Eyebrow = 'BROWSE ' + [char]0x00B7 + ' EXPORT'; Icon = 'down'; Context = 'Browse and export'
         Text = 'Look inside a mailbox, tick what to keep, and save it on this computer as PST files or as an export store. Nothing is changed in the mailbox.'
@@ -33,6 +34,10 @@ $script:Tasks = [ordered]@{
         Text = 'Put a PST file or an export into a mailbox. Items are added. Nothing is deleted and nothing is overwritten.'
         Will = @('Pick the PST file or the export.', 'Pick the mailbox (and where in it).', 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
         Safe = 'This task adds items to a mailbox. It never deletes or overwrites.' }
+    mailcopy = @{ Title = 'Copy to another mailbox'; Eyebrow = 'COPY ' + [char]0x00B7 + ' MAILBOX'; Icon = 'send'; Context = 'Copy to another mailbox'
+        Text = 'Read a mailbox, or part of it, into a store on this PC, then add it to another mailbox. One task, and you can stop and continue. Items are added, nothing is deleted.'
+        Will = @('Sign in and pick the mailbox to copy from, then tick what to copy (and the days, if you want only some).', 'Pick the mailbox that receives the copy, and the folder.', 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. The two parts run one after the other; the second is slow (Microsoft limits it). You can stop and continue.')
+        Safe = 'The first mailbox is only read. The second one only gets new items. The store stays on this PC as proof.' }
     repair = @{ Title = 'Check and repair a PST'; Eyebrow = 'PST'; Icon = 'wrench'; Context = 'Check and repair a PST'
         Text = 'Test a PST file for damage. If it is damaged, write a repaired copy. Your original file is never changed.'
         Will = @('Pick the PST file. The check starts at once and only reads.', 'Read the result in plain words.', 'If needed, choose to write a repaired copy.', 'Compare before and after.')
@@ -53,14 +58,15 @@ function New-MbtGuiState {
         Task = $null; Sel = $null; Step = 0
         Mailbox = ''; AuthMode = 'user'; AppTenant = ''; AppClient = ''; AppThumb = ''; TenantId = ''; ClientId = ''; Shared = ''; ImShared = ''; Signed = $false; SigningIn = $false; CodeShown = $false; Code = $null; SignInCts = $null; SwitchToCode = $false; SignInError = ''; Account = ''; Token = $null
         Locations = @(); LocationChecked = @{}; Reading = $false; LocationsFile = ''; RecoverableItems = $false
+        Period = 'all'; ArrFrom = ''; ArrTo = ''; PeriodOpen = $false
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
         Conc = 4; Retry = 2; Tries = 3; Reconcile = 5; Awake = $false; WorkFolder = $WorkFolder; Changed = @{}
-        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; Confirmed = $false; ConfirmKey = ''
+        ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; McTarget = ''; McFromKind = ''; Confirmed = $false; ConfirmKey = ''
         SetupReturn = -1; AuthEdit = $false; ConfigPath = ''
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
         PlanState = 'idle'; PlanMsg = ''; PlanKey = ''; PlanTotals = $null; CpFor = ''
-        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''; JobName = ''
+        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''; JobName = ''; Resume = $null
     }
 }
 
@@ -97,7 +103,7 @@ function New-MbtGuiWindow {
         -Engine: the adapter (real or fake). -Theme: System (like Windows), Light, Dark.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.2.0')
+    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.3.0')
 
     $look = Initialize-MbtGuiTheme -Theme $Theme
     $xaml = Get-Content -LiteralPath (Join-Path $script:GuiRoot 'module\MailboxTransfer.Gui.xaml') -Raw
@@ -112,7 +118,7 @@ function New-MbtGuiWindow {
     $c.Primary.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'AccentButtonStyle')
     $window.TaskbarItemInfo = [Windows.Shell.TaskbarItemInfo]::new()
 
-    if (-not $WorkFolder) { $WorkFolder = Join-Path $env:LOCALAPPDATA 'MailboxTransfer' }
+    if (-not $WorkFolder) { $WorkFolder = if ($env:MAILBOXTRANSFER_WORK_FOLDER) { $env:MAILBOXTRANSFER_WORK_FOLDER } else { Join-Path $env:LOCALAPPDATA 'MailboxTransfer' } }
     $timer = [Windows.Threading.DispatcherTimer]::new([Windows.Threading.DispatcherPriority]::Background)
     $timer.Interval = [TimeSpan]::FromMilliseconds(100)
     $script:Gui = @{
@@ -157,6 +163,7 @@ function Get-MbtGuiScreen {
     $s = $script:Gui.S
     if ($s.Step -le 0) { return 'setup' }
     if (-not $s.Task) { return 'start' }
+    if ($s.Resume) { return 'resume' }
     return $script:Flows[$s.Task][$s.Step]
 }
 
@@ -168,6 +175,12 @@ function Show-MbtGuiPage {
     $g.PageName = $screen
     $page = & $fn
     $g.C.Page.Content = $page
+    # a fill page is exactly as tall as the visible page area (and never shorter than its panes need); any other page takes the height of its content
+    if ($page -is [Windows.FrameworkElement] -and $page.Tag -eq 'MbtFill') {
+        $binding = [Windows.Data.Binding]::new('ViewportHeight'); $binding.Source = $g.C.PageScroll; $binding.Mode = 'OneWay'
+        [void]$g.C.Page.SetBinding([Windows.FrameworkElement]::HeightProperty, $binding)
+        $g.C.Page.MinHeight = 392
+    } else { $g.C.Page.ClearValue([Windows.FrameworkElement]::HeightProperty); $g.C.Page.ClearValue([Windows.FrameworkElement]::MinHeightProperty) }
     Update-MbtGuiStepper
     $g.C.PageScroll.ScrollToTop()
     if ($g.Timer -and -not $g.Timer.IsEnabled) { $g.Timer.Start() }
@@ -224,7 +237,7 @@ function Update-MbtGuiStepper {
         $panel.Children.Add($cell) | Out-Null
     }
     $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } elseif ($screen -eq 'setup') { 'Setup' } else { 'Choose a task' }
-    if ($s.Task -in 'export', 'import' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
+    if ($s.Task -in 'export', 'import', 'mailcopy' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
     $g.C.StepperContext.Text = $ctx
 }
 
@@ -284,6 +297,7 @@ function Set-MbtGuiStep {
     param([int]$Index)
     $s = $script:Gui.S
     if ($Index -lt 0) { $Index = 0 }
+    $s.Resume = $null
     $s.Step = $Index
     if ($Index -le 1) { $s.Task = $null }
     Show-MbtGuiPage
@@ -309,6 +323,8 @@ function Show-MbtGuiDialog {
     <# The console's own dialog. Buttons: @{ Text; Accent; Danger; Action } (Action runs after the dialog closes). #>
     param([Parameter(Mandatory)][string]$Title, $Body, [object[]]$Buttons)
     $g = $script:Gui; $c = $g.C
+    # the card of a dialog is opaque: the page under the scrim does not show through the text of the dialog
+    $c.DialogCard.Background = New-MbtGuiBrush $(if ($g.Theme.Dark) { '#FF2B2B2B' } else { '#FFFFFFFF' })
     $c.DialogTitle.Text = $Title
     $c.DialogBody.Content = $(if ($Body -is [string]) { New-GuiText $Body 'Body' } else { $Body })
     $c.DialogButtons.Children.Clear()
@@ -395,10 +411,10 @@ function Step-MbtGuiTick {
 #endregion
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCCMedHKQ7cXNKV
-# LFSsrSlE6qaU1wpFD3lUDA6VQEp5m6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBnbhnsmSMHs536
+# WRd4IJYOYeXitsrK59/UaI0bL2RQ5KCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -470,28 +486,28 @@ function Step-MbtGuiTick {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAapkNhmfCb
-# Lf5zgZKaF3W+AvHRmaD1NaReFdFfo6X1YDANBgkqhkiG9w0BAQEFAASCAgCvq706
-# sOHAN3D6WkWDMmYHtM37AkkVQVeOBgDW0vBckZ8jVlGZ0CSxI5xdy9J1oQfjS59y
-# L8RT22Y58xMdaq6edBFwPO/8tfxU7FCIW4yKCop9sDkOUddBsquD9Nmos8Xo1m9R
-# ucMyqSadbmgIx9K3/S40osP81b5931/cKlPH9MDks69+4um6NkoZJZ4kmi/OOW95
-# cHyrXa3Y8z4pli9a/6hmHMi0TuozeLYwfuU6w1l71cy0v41eXfcEH/9n0DNLOhLN
-# Qpwc19zHhmkh3w/F6i3SRbTbv9QKG3u65G5FkU1wCdOp4spDoW6tLy8cQaPt6FTn
-# LDerK6ZWt/eHF2TWsi2U0G1NM7vmg3f1KynllXZQiyz46rR2hUcJriNgTem5goEg
-# 64OD0mMM5D9l4/JhBCCDOmWVtdw/0vwDfPKTGT21K4yI+HF0IBugN7BaxMnfI+3g
-# +Z0tnTtPSoHbwrsqbEccdxiqaykMUICoEq0AIE+5Vr9HPXivDlIXaQocxV0K0nvc
-# fKOdxo5jNvQr3HsrRP/9ouv4R9jFVoAn2NTTtlIf5/u53vYMNC2kxLjJHq0cCwvZ
-# 77aNzxOb6IyL7sY+hUTjzHpH9BTNKdmia4cq0G6O3jkSJIR7K3l8k6QVnWNSiLkg
-# fQnar2cmwjUEc67xleuEmiRYRXBguTT4S3hHJ6GCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAyA1yURoBy
+# fwok/kXUtgoeE5kIPsBQ5VXcusQGZIF3njANBgkqhkiG9w0BAQEFAASCAgCigwys
+# 29IFGO+o97agSc6XisZO+SknQKS/z0GFYBFkNm1yojuwDbvshMx78KbxLjE5Mq3O
+# VSF9vf2KGZmzGrzZ9+4P2ZSZ+O3ki1RVt6OVxzMiml1QDLShiyDv74IUMxE9F936
+# fIwOTfhA87pSnjh4mKpJqlKDLUhaN2L9xVTDHpUVrgWNMTZIpaHIu/bI8GdV1dN2
+# 1vBHBODrdhbTFciJU1tri2pnKdpacdNUCCDQgx2fhQ5iGf6FFFkIj25a/yz0TQWM
+# nXpJ4OjfmFLB/tWE0BW5E22jjOU3v9GR3+RKrMSE0n0cEMtWMoJx1c73sC8wUagv
+# xkTpnRdQhI4VeZ/i6ksijUJvStyGztVCkGf1YMB9ZCwROqvSOeES9UAXP9G9I3m7
+# dwxdt1SGGsEeWAiVmSidLFt71yA2M0zbnC3MXf4m7AnpiVbuxVu6qGWZzo7uoZzv
+# sS04MeoVy1MGIM/j7xJtk/i4Nj97rU+b5830Bd5RZdodRvVhgn5PW1gsyXbjThlA
+# 2ONEAwPFV6X0GYl5ibmy1sts2lzDXfhcSk3JMetfaw4IuE4HTWeQbzKBt4f+DjQC
+# nqcZzkLsmfueSGgXHJj6gl4YXUYUYnul16ZdF1AYoN79MTG8vGz2mpU+b878sK2m
+# MnYxAJztcKq8IZknzHwnzW4VZKoKTwh2Ee1l0aGCFM0wghTJBgorBgEEAYI3AwMB
+# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEILKsxoDfOhWk5ZK4Bjazj7UuRxICnWolrHg2TXuU0XtGAggp3XGYhaSb
-# qxgPMjAyNjExMTUxNDM1NDlaMAMCAQECEEHqSO3zyUgBVT0zXq9/fXegghGnMIIE
+# BAIBBQAEIHKJ9KlJ09PYoBBivKNsgM4mK2UaAqgmL4cWfLSS8CnJAghBuqI/CAfo
+# 5xgPMjAyNjExMjUxNTM3MjJaMAMCAQECEFUK2vXRrC2249LwooGi7LCgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -586,17 +602,17 @@ function Step-MbtGuiTick {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzU0OVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIOaK
-# JwvNg7Hj5/z9RS10rtkc+FSsmWlYWINm4oXX/815MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcyMlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICh1
+# /3EdEdTgXflMFj1PWAdv8VBdBcDXHoHvj7i+rJcaMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEA2nGipyF84ELtWSxQndV0fMDFHajsFTHrKExLn3+XlWQCIQCQ
-# JmiKhtgcUVcZUaqIxEzZN9XIuiQfxwHL+y+yZsw7ew==
+# zj0EAwIERjBEAiATjLmD4lEOzCsYtDzuJ4i3U+hUdn2z37vM99OLlkq2awIgPFdX
+# 5p60lAcpaKawJ2FbQjGb8eF5ONQ5jr4RCgc8P1M=
 # SIG # End signature block

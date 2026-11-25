@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Renders the pages of the console from the real WPF window (synthetic data, fake engine) into PNG files, light and dark.
@@ -35,6 +35,12 @@ if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
 }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# The console writes every number and date in en-US, whatever the language of Windows (Start-MailboxTransferConsole.ps1): the pictures do the same.
+$mbtCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
+[Globalization.CultureInfo]::DefaultThreadCurrentCulture = $mbtCulture
+[Globalization.CultureInfo]::DefaultThreadCurrentUICulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentCulture = $mbtCulture
+[Threading.Thread]::CurrentThread.CurrentUICulture = $mbtCulture
 $package = Join-Path (Split-Path $PSScriptRoot -Parent) 'package'
 if (-not $Version) { $Version = (Import-PowerShellDataFile -LiteralPath (Join-Path $package 'MailboxTransfer.psd1')).ModuleVersion }
 $Scenario = @($Scenario | ForEach-Object { $_ -split ',' } | Where-Object { $_ }); $Theme = @($Theme | ForEach-Object { $_ -split ',' } | Where-Object { $_ })

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Lab tool: creates varied mail, calendar and contact items in the PRIMARY mailbox of the lab user with Microsoft Graph v1.0

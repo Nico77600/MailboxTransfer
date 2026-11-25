@@ -45,16 +45,33 @@ function Open-MbtEventLog {
         # the batch this job belongs to (status.json: batch): the overview lists the jobs of a batch together; left out, the job belongs to none
         [string]$Batch,
         # period of the heartbeat that detects a sleep (milliseconds, 0 = none)
-        [int]$HeartbeatMs = 5000
+        [int]$HeartbeatMs = 5000,
+        # the period of an export (a [MailboxTransfer.ArrivalPeriod]): written in the plan event and in status.json; left out when there is none
+        $Period
     )
     Initialize-MbtEngine
     Close-MbtEventLog
     $full = [IO.Path]::GetFullPath($Path)
+    # a folder whose events file already holds lines is a job that runs again: the run begins with a step that reads what the earlier run did
+    $resumed = [IO.File]::Exists($full) -and ([IO.FileInfo]::new($full)).Length -gt 0
     $script:EventLog = [MailboxTransfer.EventLog]::new($full, $null, $HeartbeatMs, 120)
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
-    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false }
+    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false; Period = $null; PeriodOutside = 0L; Phase = $null; Resumed = $resumed; PlanSteps = @(); Current = $null; Failure = $null }
     $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch
+    $script:JobInfo.Period = ConvertTo-MbtPeriodField $Period
+    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch -Period $script:JobInfo.Period -NewRun
+}
+
+function ConvertTo-MbtPeriodField {
+    <# The period of an export as the field of the events and of status.json: from and to (UTC, ISO 8601, a bound left out is open) and text (in words, local time zone); $null for no period. #>
+    param($Period)
+    if (-not $Period -or $Period.IsEmpty) { return $null }
+    $iso = { param($d) $d.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture) }
+    $field = [ordered]@{}
+    if ($Period.From) { $field.from = & $iso $Period.From }
+    if ($Period.To) { $field.to = & $iso $Period.To }
+    $field.text = [string]$Period.Describe()
+    return $field
 }
 
 function Close-MbtEventLog {
@@ -107,9 +124,15 @@ function Write-MbtJobPlan {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable[]]$Steps)
     if (-not $script:EventLog) { return }
+    # a job that runs again begins with a step that reads what the earlier run did (the store, the journal, the manifest): the events show it at once
+    if ($script:JobInfo.Resumed) { $Steps = @(@{ Id = 'resume'; Title = 'Resume: reading what is already done' }) + @($Steps) }
+    $script:JobInfo.PlanSteps = @($Steps | Where-Object { $_.Id -ne 'resume' } | ForEach-Object { @{ Id = [string]$_.Id; Title = [string]$_.Title } })
     $list = @($Steps | ForEach-Object { [ordered]@{ id = $_.Id; title = $_.Title } })
     foreach ($s in $Steps) { $script:JobInfo.Steps[$s.Id] = 'waiting' }
-    Write-MbtEvent plan ([ordered]@{ job = $script:JobInfo.Id; task = $script:JobInfo.Task; mode = $script:JobInfo.Mode; steps = $list })
+    $plan = [ordered]@{ job = $script:JobInfo.Id; task = $script:JobInfo.Task; mode = $script:JobInfo.Mode; steps = $list }
+    if ($script:JobInfo.Period) { $plan.period = $script:JobInfo.Period }
+    Write-MbtEvent plan $plan
+    if ($script:JobInfo.Resumed) { Write-MbtJobStep -Id resume -State running -Msg 'Looking at what the earlier run already did' }
 }
 
 function Update-MbtJobStatusTick {
@@ -127,9 +150,10 @@ function Update-MbtJobStatusTick {
     $script:JobInfo.StatusAt = $now
     $counts = $null
     if ($Done -ge 0) { $counts = @{ done = $Done }; if ($Total -ge 0) { $counts.total = $Total } }
-    try {
-        if ($counts) { Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -Counts $counts } else { Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running }
-    } catch { Write-Verbose "status.json not refreshed: $($_.Exception.Message)" }
+    $write = @{ JobFolder = $script:JobInfo.Folder; State = 'running' }
+    if ($counts) { $write.Counts = $counts }
+    if ($script:JobInfo.Current) { $write.Step = $script:JobInfo.Current }
+    try { Write-MbtJobStatus @write } catch { Write-Verbose "status.json not refreshed: $($_.Exception.Message)" }
 }
 
 function Write-MbtJobStep {
@@ -141,9 +165,27 @@ function Write-MbtJobStep {
         [long]$Done = -1, [long]$Total = -1, [long]$Bytes = -1, [long]$BytesTotal = -1, [string]$Msg
     )
     if (-not $script:EventLog) { return }
+    # the step that reads what an earlier run did ends when the next step begins
+    if ($Id -ne 'resume' -and $State -eq 'running' -and $script:JobInfo.Steps.ContainsKey('resume') -and $script:JobInfo.Steps['resume'] -eq 'running') {
+        $script:JobInfo.Steps['resume'] = 'done'
+        $script:EventLog.Step('resume', 'done', -1, -1, -1, -1, $null)
+    }
     $script:JobInfo.Steps[$Id] = $State
     $script:EventLog.Step($Id, $State, $Done, $Total, $Bytes, $BytesTotal, $(if ($Msg) { $Msg }))
-    if ($State -eq 'running') { Update-MbtJobStatusTick -Done $Done -Total $Total }
+    if ($State -ne 'running' -or $Id -eq 'resume') { return }
+    # the step that works is written to status.json at once when it changes (the console says "step 3 of 5" from it), and with the counts while it runs
+    $current = $script:JobInfo.Current
+    if (-not $current -or $current.id -ne $Id) {
+        $plan = @($script:JobInfo.PlanSteps)
+        $index = 0; for ($i = 0; $i -lt $plan.Count; $i++) { if ($plan[$i].Id -eq $Id) { $index = $i + 1; break } }
+        $title = if ($index) { $plan[$index - 1].Title } else { $Id }
+        $current = @{ id = $Id; title = $title; index = $index; of = $plan.Count }
+        $script:JobInfo.Current = $current
+        $script:JobInfo.StatusAt = [DateTime]::MinValue
+    }
+    if ($Done -ge 0) { $current.done = $Done } else { $null = $current.Remove('done') }
+    if ($Total -ge 0) { $current.total = $Total } else { $null = $current.Remove('total') }
+    Update-MbtJobStatusTick -Done $Done -Total $Total
 }
 
 function Write-MbtJobObject {
@@ -167,10 +209,16 @@ function Write-MbtJobResult {
     if (-not $script:EventLog) { return }
     if (-not $Next) { $Next = switch ($ExitCode) { 0 { 'done' } 2 { 'continue' } 3 { 'decide' } default { 'retry' } } }
     $isComplete = [bool]$Complete -or ($ExitCode -eq 0)
+    # a job that never got to a step of its own (a check, a repair) ends the step that reads what an earlier run did with the result
+    if ($script:JobInfo.Steps.ContainsKey('resume') -and $script:JobInfo.Steps['resume'] -eq 'running') { $script:JobInfo.Steps['resume'] = 'done'; $script:EventLog.Step('resume', 'done', -1, -1, -1, -1, $null) }
     $script:EventLog.Result($ExitCode, $isComplete, $(if ($Counts) { $Counts } else { @{} }), $Next, $(if ($Reason) { $Reason }))
     $state = if ($ExitCode -eq 0 -or ($ExitCode -eq 1 -and $Reason -eq 'refused-items')) { 'complete' } elseif ($ExitCode -eq 3) { 'needs-decision' } elseif ($ExitCode -eq 2) { if ($Reason -eq 'stopped') { 'stopped' } else { 'resumable' } } else { 'error' }
     $script:JobInfo.Finished = $true
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State $state -Counts $Counts -ExitCode $ExitCode -Next $Next -Reason $Reason
+    $write = @{ JobFolder = $script:JobInfo.Folder; State = $state; ExitCode = $ExitCode; Next = $Next; Reason = $Reason }
+    if ($Counts) { $write.Counts = $Counts }
+    if ($script:JobInfo.Current) { $write.Step = $script:JobInfo.Current }
+    if ($script:JobInfo.Failure -and $state -eq 'error') { $write.Failure = $script:JobInfo.Failure }
+    Write-MbtJobStatus @write
 }
 
 function ConvertTo-MbtPlainError {
@@ -198,6 +246,7 @@ function Write-MbtJobError {
     if (-not $Code) { $Code = $p.Code }
     if (-not $Plain) { $Plain = $p.Message }
     if ($script:EventLog) { $script:EventLog.Error($Code, $Plain, $Message) }
+    if ($script:JobInfo) { $script:JobInfo.Failure = @{ code = $Code; message = $Plain } }
     [pscustomobject]@{ Code = $Code; Message = $Plain }
 }
 
@@ -221,14 +270,22 @@ function Write-MbtJobStatus {
         Writes (or updates) status.json in a job folder: what the Continue list of the console reads.
     .DESCRIPTION
         Fields: v, jobId, task, title, mode, store, source, destination, batch (when the job belongs to one), state (running | stopped | resumable | needs-decision | complete | error), exitCode,
-        counts, next, reason, started, updated, lastEvent, pid. A call updates the fields it is given and keeps the others.
+        counts, next, reason, step (the step that works: id, title, index, of, done, total), error (code and plain message of the failure that ended the job), started, runStarted (the start of the
+        process that writes the file: a job that runs again has a new one), updated, lastEvent, pid. A call updates the fields it is given and keeps the others; -NewRun starts a run: the
+        process start is written and the reason, the next step and the error of the run before are cleared.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$JobFolder,
         [Parameter(Mandatory)][ValidateSet('running', 'stopped', 'resumable', 'needs-decision', 'complete', 'error')][string]$State,
         [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store, [string]$Source, [string]$Destination, [string]$Batch,
-        [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason
+        [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason,
+        # the period of an export (see ConvertTo-MbtPeriodField); a job without one has no period field
+        [System.Collections.IDictionary]$Period,
+        # the step that works (id, title, index, of, done, total) and the failure that ended the job (code, message)
+        [System.Collections.IDictionary]$Step,
+        [System.Collections.IDictionary]$Failure,
+        [switch]$NewRun
     )
     if (-not (Test-Path -LiteralPath $JobFolder)) { New-Item -ItemType Directory -Path $JobFolder -Force | Out-Null }
     $file = Join-Path $JobFolder 'status.json'
@@ -239,9 +296,14 @@ function Write-MbtJobStatus {
     $now = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z')
     if (-not $s.started) { $s.started = $now }
     $s.state = $State; $s.updated = $now; $s.pid = $PID
+    if ($NewRun -or -not $s.Contains('runStarted') -or -not $s.runStarted) { $s.runStarted = $now }
+    if ($NewRun) { $s.reason = $null; $s.next = $null; $s.error = $null }
     $s.lastEvent = if ($script:EventLog) { [MailboxTransfer.EventLog]::Iso($script:EventLog.LastEventUtc) } else { $now }
     foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('source', $Source), @('destination', $Destination), @('batch', $Batch), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
     if ($Counts) { $s.counts = $Counts }
+    if ($Period) { $s.period = $Period }
+    if ($Step) { $s.step = $Step }
+    if ($Failure) { $s.error = $Failure }
     if ($PSBoundParameters.ContainsKey('ExitCode') -and $null -ne $ExitCode) { $s.exitCode = [int]$ExitCode }
     $json = $s | ConvertTo-Json -Depth 6
     $tmp = "$file.$PID.tmp"
@@ -252,19 +314,20 @@ function Write-MbtJobStatus {
 function Get-MbtJob {
     <#
     .SYNOPSIS
-        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job". -ExcludeFolder: names of job folders that are left out without being read.
+        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job". -ExcludeFolder: names of job folders that are left out without being read. -Name: only the job whose folder has that name (whatever the case).
     .DESCRIPTION
         A job whose state is running but whose process is gone (crash, power loss, killed) is reported with EffectiveState resumable and
         Interrupted = $true; if the process is still there, Alive is $true ("running elsewhere").
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50, [string[]]$ExcludeFolder)
+    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50, [string[]]$ExcludeFolder, [string]$Name)
     $jobs = Join-Path $WorkFolder 'jobs'
     if (-not (Test-Path -LiteralPath $jobs)) { return }
     # the newest folders only (a status.json is replaced with every update, which touches its folder), and not the ones the caller already knows about (the jobs of a batch that is complete)
     $skip = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($n in $ExcludeFolder) { if ($n) { [void]$skip.Add($n) } }
-    $newest = @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { -not $skip.Contains($_.Name) } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([math]::Max($Limit * 4, 200)))
+    $newest = if ($Name) { @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { $_.Name -ieq $Name }) }
+    else { @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { -not $skip.Contains($_.Name) } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([math]::Max($Limit * 4, 200))) }
     $found = foreach ($dir in $newest) {
         $file = Join-Path $dir.FullName 'status.json'
         if (-not (Test-Path -LiteralPath $file)) { continue }
@@ -273,20 +336,29 @@ function Get-MbtJob {
         $parse = { param($v, $fallback) if ($v -is [datetime]) { $v.ToUniversalTime() } elseif ($v) { [DateTime]::Parse([string]$v, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal) } else { $fallback } }
         $started = & $parse (& $get 'started') $dir.CreationTimeUtc
         $updated = & $parse (& $get 'updated') $dir.LastWriteTimeUtc
+        $runStarted = & $parse (& $get 'runStarted') $started
         $state = [string](& $get 'state'); $jobPid = & $get 'pid'
         $alive = $false
         if ($state -eq 'running' -and $jobPid) {
             $proc = Get-Process -Id ([int]$jobPid) -ErrorAction SilentlyContinue
-            if ($proc) { try { $alive = $proc.StartTime.ToUniversalTime() -le $started.AddSeconds(30) } catch { $alive = $true } }
+            if ($proc) { try { $alive = $proc.StartTime.ToUniversalTime() -le $runStarted.AddSeconds(30) } catch { $alive = $true } }
         }
         $effective = if ($state -eq 'running' -and -not $alive) { 'resumable' } else { $state }
         [pscustomobject]@{
             JobId = & $get 'jobId'; Task = & $get 'task'; Title = & $get 'title'; Mode = & $get 'mode'; Store = & $get 'store'; State = $state; EffectiveState = $effective
             Alive = $alive; Interrupted = ($state -eq 'running' -and -not $alive); ExitCode = & $get 'exitCode'; Counts = & $get 'counts'; Next = & $get 'next'; Reason = & $get 'reason'; Batch = & $get 'batch'
+            Source = & $get 'source'; Destination = & $get 'destination'; Step = & $get 'step'; Failure = & $get 'error'; Name = $dir.Name
             Started = $started; Updated = $updated; Folder = $dir.FullName; EventsFile = (Join-Path $dir.FullName 'events.jsonl')
         }
     }
     @($found | Sort-Object Updated -Descending | Select-Object -First $Limit)
+}
+
+function Test-MbtFolderLink {
+    <# True when a folder entry is a link that must not be followed: a reparse point that redirects to another path, or whose type is not known. A cloud file or folder (OneDrive), a deduplicated or a compressed item is an ordinary entry. #>
+    param([Parameter(Mandatory)][IO.FileSystemInfo]$Entry)
+    if (-not ($Entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+    try { return [bool](Get-RefusedReparseTag $Entry) } catch { return $true }
 }
 
 function Remove-MbtFolderTree {
@@ -294,7 +366,7 @@ function Remove-MbtFolderTree {
     param([Parameter(Mandatory)][string]$Path, [string]$KeepFirst)
     foreach ($entry in [IO.DirectoryInfo]::new($Path).EnumerateFileSystemInfos()) {
         if ($KeepFirst -and $entry.Name -ieq $KeepFirst) { continue }
-        $link = [bool]($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        $link = Test-MbtFolderLink $entry
         if ($entry -is [IO.DirectoryInfo]) {
             if (-not $link) { Remove-MbtFolderTree -Path $entry.FullName }
             [IO.Directory]::Delete($entry.FullName)
@@ -352,7 +424,7 @@ function Invoke-MbtJobRetention {
     $old = [Collections.Generic.List[IO.DirectoryInfo]]::new()
     $planFolder = [regex]::new('-plan-[0-9a-fA-F]{4}$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($dir in [IO.DirectoryInfo]::new($jobsFolder).EnumerateDirectories()) {
-        if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $dir.Name -ieq $keepName) { continue }
+        if ((Test-MbtFolderLink $dir) -or $dir.Name -ieq $keepName) { continue }
         if ($dir.LastWriteTimeUtc -ge $planLimit) { continue }
         $isPlan = $planFolder.IsMatch($dir.Name)
         if (-not $isPlan -and $dir.LastWriteTimeUtc -ge $limit) { continue }
@@ -528,8 +600,24 @@ function Get-MbtCapability {
 
 #region Progress of the long jobs -----------------------------------------------------------------
 
+function Set-MbtJobPhase {
+    <# A job that does two jobs in one process (a copy: the export, then the import) says which one it is in: the progress of the engine then follows that half, its steps and its counters. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidateSet('export', 'import')][string]$Phase)
+    if (-not $script:JobInfo) { return }
+    $script:JobInfo.Phase = $Phase
+    $p = $script:JobProgress
+    $p.Step = ''; $p.Detail = ''; $p.ThrottleSeen = 0; $p.WindowsSeen = 0
+}
+
+function Get-MbtJobPhase {
+    <# export or import for the progress of the job: the half a copy is in, else the task of the job. #>
+    if ($script:JobInfo.Phase) { return [string]$script:JobInfo.Phase }
+    return [string]$script:JobInfo.Task
+}
+
 function Get-MbtJobStepOrder {
-    switch ($script:JobInfo.Task) {
+    switch (Get-MbtJobPhase) {
         'export' { @('tree', 'list', 'download', 'verify', 'pst', 'pstcheck') }
         'import' { @('check', 'folders', 'send', 'reconcile', 'final') }
         default { @() }
@@ -548,7 +636,7 @@ function Update-MbtJobProgress {
     $p = $script:JobProgress
     $snap = $Job.Snapshot()
     $order = @(Get-MbtJobStepOrder)
-    $export = $script:JobInfo.Task -eq 'export'
+    $export = (Get-MbtJobPhase) -eq 'export'
     $current = switch -Regex ($snap.Phase) {
         '^tree$' { 'tree' } '^inventory$' { 'list' } '^export$' { 'download' }
         '^check$' { 'check' } '^folders$|^plan$' { 'folders' } '^import$' { 'send' } '^reconcile$' { 'reconcile' }
@@ -557,7 +645,15 @@ function Update-MbtJobProgress {
     if ($current -and $order -contains $current -and $current -ne $p.Step) {
         $i = [array]::IndexOf($order, $current)
         # the steps before the current one are done (a reconcile pass is a side step of the send step)
-        if ($current -ne 'reconcile' -and $i -gt 0) { foreach ($s in @($order[0..($i - 1)])) { if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') { Write-MbtJobStep -Id $s -State done } } }
+        if ($current -ne 'reconcile' -and $i -gt 0) {
+            foreach ($s in @($order[0..($i - 1)])) {
+                if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') {
+                    # the listing is over: with a period it says how many items were left out (all the locations of the run together)
+                    $note = if ($s -eq 'list') { Get-MbtPeriodListNote -Job $Job } else { $null }
+                    if ($note) { Write-MbtJobStep -Id $s -State done -Msg $note } else { Write-MbtJobStep -Id $s -State done }
+                }
+            }
+        }
         Write-MbtJobStep -Id $current -State running
         $p.Step = $current
     }
@@ -603,9 +699,30 @@ function Update-MbtJobProgress {
                 if ($s -eq $counting) { Write-MbtJobStep -Id $s -State done -Done $snap.Items -Total $snap.TotalItems -Bytes $snap.Bytes -BytesTotal $snap.TotalBytes } else { Write-MbtJobStep -Id $s -State done }
             }
         }
+        if ($export) { $result = Get-MbtJobPeriodResult -Job $Job; if ($result) { $script:JobInfo.PeriodOutside = [long]$script:JobInfo.PeriodOutside + [long]$result.ItemsOutsidePeriod } }
         if ($export -and $done) { Write-MbtJobStep -Id verify -State done -Msg 'Each item is checked against its fingerprint as it arrives.' }
         if ($Job.Error) { if ($p.Step) { Write-MbtJobStep -Id $p.Step -State failed -Msg $Job.Error.Message } }
     }
+}
+
+function Get-MbtJobPeriodResult {
+    <# The result of an export job that has a period (the engine's ExportResult), or $null. #>
+    param($Job)
+    if (-not $Job -or -not $Job.PSObject.Properties['Result'] -or -not $Job.Result) { return $null }
+    if (-not $Job.Result.PSObject.Properties['Period'] -or -not $Job.Result.Period) { return $null }
+    return $Job.Result
+}
+
+function Get-MbtPeriodListNote {
+    <# "25 items outside the period left out" (the items of the earlier locations of the run included), or $null when the job has no period or has not counted yet. #>
+    param($Job)
+    $result = Get-MbtJobPeriodResult -Job $Job
+    if (-not $result) { return $null }
+    $before = [long]$script:JobInfo.PeriodOutside
+    $outside = $before + [long]$result.ItemsOutsidePeriod
+    $text = '{0} {1} outside the period left out' -f $outside.ToString('N0', [Globalization.CultureInfo]::InvariantCulture), $(if ($outside -eq 1) { 'item' } else { 'items' })
+    if ([long]$result.ItemsWithoutDate -gt 0) { $text += '; {0} without a date kept' -f ([long]$result.ItemsWithoutDate).ToString('N0', [Globalization.CultureInfo]::InvariantCulture) }
+    return $text
 }
 
 function Get-MbtPstProgressHook {
@@ -696,10 +813,10 @@ function Write-MbtPstExportEvent {
 #endregion
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD2RIyps03zhRPy
-# WM9jB1Z5t3kMPo8C3+/n+r0WcuaBOqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBA6TaB4OgHpyF7
+# aV3BEnLNiTj/cT5Fti8sSNWbnzK75KCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -771,28 +888,28 @@ function Write-MbtPstExportEvent {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCB15LorvGLU
-# C/WRuyBwFkvidSZFiKfm3KCZKI3l1BFkvzANBgkqhkiG9w0BAQEFAASCAgBw1VpS
-# dZmZ4fFg4yBI3TprWlfgokqfiW5e+65CHQ6+tObkr9WQV+ASyOfSFw9HvWjo8g8V
-# PUkZydHAMseS/BRtgJBm3aflJ6NY07+eeCq7MSx0rju5P6HdEJ2yP4qidwPzZyHE
-# Z1eWu/7avu3N4fjbAEvDUxpBHeYUrFgh/0E87Wg9n8HYUClnP4d2NK8+cpvP0amU
-# 6vxTfKHPfrHCD8qa8kvOBGA0lUD0yJVo4RlvCZYCCOJ2ZtFQIOebG8ETRyEdqkOB
-# MWxJZV9z8RbZTuglAwdF7D4IbyxnTmAuivM9fq1hEn3XnfUt4RASMV7JsA+eEw8v
-# HkznKujgEKeFTcmlrSMav4cI1JxI5So+5tVa5REEO1/Grx/YF3e0PzbGIprb9NAn
-# lYgli4MQ379D+3QA58eUrZEjEuQzkvjvlqV3d45joFxxTndc37AoX+A4ng0rNHM4
-# J3edWun6lCzrQOVUbs7DwiEae/iYex09zKZSj2Vkd6a0bAUHl8eCP1ws8xjUEpYr
-# qwOfpBuDu7V12HkFkQPtNtpmI6LGna4WaTlvU5DER8i2pROk26BKVV78m6Y69pbl
-# h7ZG6aqjqqxdjYWVbglCOo8Y4rv11Qb7N4iMdXCEI9HLd1zs9oODiPUCLHy9qvXK
-# +3s3yRGhNirmNP8zEH0LL5dx7nuW7tQcaByGvaGCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAtofhOSbq1
+# RcZppmhLzuNC2V8vWvJIlqyYjVf3dubteTANBgkqhkiG9w0BAQEFAASCAgAsFvRe
+# PPmkv1q5d8mT+zHRXVbZNQXnh/tI6T1A9ahLWe/U2yFEi19Iycid7Q0SBL8LYA4B
+# zY0qjxcSeG3Fd5BpoVp5L09G6kGN87RNt8md9eURtuEZeI7rGHr4VgD+tfxgps3E
+# auHO0SYW2eHA+YjAXFHvPAfMJ9SNEo2EdvOQ1TBJpdI17zLEF0DfJ7FqUySBcV5p
+# 2AcyVYQT8LkxkM8/fDoV4iakok3jmBbBfjh9CrKoymOLRN1dHPIClcIr5svpUclA
+# bi4HAKhah+jjPlhtc4/M9VwNfKLdNypsGD5fqyhi4Z9ZMpvs8imQ3r7Yli6RhFYp
+# EcUG2k8623VwgeestMDbKdSeSoz4huDjnsjj1oWGZOnGbuc4F0AJeT7cC6COL1xX
+# 9yTDNGLVlqF1lZZeF69odaHmnW5gxG9JTC+HH55+wrs4Pj42gAaUjm/98Tg3Xs93
+# kZD6qr2HbVhiNKoJGxb3oS42re/I7HNsewtbmEB3/M1IULz6hE/E09hdayuYTM2J
+# mIlprmoqTqG1oBiuWPg6y8JkP3OdFYecwJyiQOI3gy8Q7U4mzDQg35j8Le2MC3Ju
+# THwIWmTzwuGUIprO7Xi8lD4DOa+souFlOuBPRvFVJeN7B+/LpAJS6Jur99maiunA
+# Kbal30rYvWbbxDY6/2lIGU9WL9JVT5i7px2viaGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIAG2H9am/bnIujg4OTQ5lx97dsA9aDTDTi4HdXg4LpqqAghVqsuPrKXE
-# jBgPMjAyNjExMTUxNDM0MjhaMAMCAQECEGM8TzVN+5vkSD/irwUNar+gghGnMIIE
+# BAIBBQAEIHVhQ2vCqINW2AKnbBE1fq2U3LA9hljbQHkHg0Lbvfh6Agh/i/8RCo2h
+# EBgPMjAyNjExMjUxNTM3MDBaMAMCAQECEGnC4nPUC9v8L9EEfF+fuzGgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -887,17 +1004,17 @@ function Write-MbtPstExportEvent {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQyOFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIE6p
-# sIia9Ts+F16cxpBxXtiWY5Kd3gXDvEodP46jKEq8MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcwMFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIGwy
+# VCvuW/1xFTMN2wOK3SSas6nLlbe0ql7D/Pi7eJ3wMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEAigpKQXzoU+R/KQTK4xj6+l4xvp8fkzHVYvOBdSdDKwUCIQDc
-# 5VnaqQsg4IBguwzFxwYNGPnBnPZrlX3gjDor/DWCmA==
+# zj0EAwIERzBFAiBmjOgiDZHLnY5j0q2mX2de6zxyYwxNNnIPgaCBYroYFgIhAJVb
+# sy6YEtgBzZ3J3Z3T/iRlR7HNEqzauyVfpQrqrB3n
 # SIG # End signature block

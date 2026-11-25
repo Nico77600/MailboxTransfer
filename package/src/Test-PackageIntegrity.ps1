@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Verifies the authenticated Mailbox Transfer package before any of its code runs.
@@ -8,7 +8,8 @@
     builder. It requires a valid, timestamped owner signature on this script, on PackageIntegrity.psd1 and on every
     PowerShell file of the package, then compares the SHA256 of every file listed in the signed manifest (C# sources, SQLite
     libraries, window definitions, HTML guides, README, notices, launcher) with the manifest. Missing, changed, unlisted,
-    duplicated or reparse-point files fail closed.
+    duplicated files fail closed, and so does a reparse point whose type redirects to another path or is not known; OneDrive, data
+    deduplication and WOF (CompactOS) reparse points are accepted and still hashed.
 
     Not protected, by design: config\MailboxTransfer.config.psd1 and config\MailboxTransfer.config.local.psd1 (edited by the
     administrator, data that is never executed) and the generated folders bin\, data\, logs\ and out\ (no compiled cache
@@ -27,7 +28,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.2.0
+    Version : 1.3.0
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Root, [switch]$Distribution, [switch]$DevelopmentMode)
@@ -47,6 +48,7 @@ $signed = @(
     'MailboxTransfer.psm1'
     'module\MailboxTransfer.Eml.ps1'
     'module\MailboxTransfer.Events.ps1'
+    'module\MailboxTransfer.JobFolders.ps1'
     'module\MailboxTransfer.Report.ps1'
     'module\MailboxTransfer.Overview.ps1'
     'module\MailboxTransfer.Batch.ps1'
@@ -94,16 +96,100 @@ $editableFiles = @('config\MailboxTransfer.config.psd1', 'config\MailboxTransfer
 # Created at run time, never loaded as code: exact names, at the package root only.
 $generatedFolders = @('bin', 'data', 'logs', 'out')
 
+function Get-PathReparseTag {
+    <#
+        The tag of the reparse point at Path, or $null when Path is not one. WIN32_FIND_DATAW.dwReserved0 holds the tag when FILE_ATTRIBUTE_REPARSE_POINT
+        is set; FindFirstFileW reads it from the directory entry without opening the item, so a cloud placeholder is not downloaded. The two calls are
+        declared with Reflection.Emit: no C# is compiled, because this runs before the engine exists. Layout of the 592-byte structure: dwFileAttributes
+        at offset 0, dwReserved0 at offset 36. The same text is in the verifier, the module, both entry scripts and the two tools of the repository.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    $api = Get-Variable -Name FindFileApi -Scope Script -ValueOnly -ErrorAction Ignore
+    if ($null -eq $api) {
+        $module = [Reflection.Emit.AssemblyBuilder]::DefineDynamicAssembly([Reflection.AssemblyName]::new('ReparseTag'), [Reflection.Emit.AssemblyBuilderAccess]::Run).DefineDynamicModule('ReparseTag')
+        $native = $module.DefineType('Native', 'Public, Abstract, Sealed')
+        foreach ($call in @(@('FindFirstFileW', [IntPtr], @([string], [IntPtr])), @('FindClose', [bool], @([IntPtr])))) {
+            $method = $native.DefinePInvokeMethod($call[0], 'kernel32.dll', $call[0], 'Public, Static, PinvokeImpl', 'Standard', $call[1], [type[]]$call[2], 'Winapi', 'Unicode')
+            $method.SetImplementationFlags('PreserveSig')
+        }
+        $api = $native.CreateType()
+        Set-Variable -Name FindFileApi -Scope Script -Value $api
+    }
+    $full = [IO.Path]::GetFullPath($Path)
+    $full = if ($full.StartsWith('\\?\', [StringComparison]::Ordinal)) { $full } elseif ($full.StartsWith('\\', [StringComparison]::Ordinal)) { '\\?\UNC\' + $full.Substring(2) } else { '\\?\' + $full }
+    $data = [Runtime.InteropServices.Marshal]::AllocHGlobal(592)
+    try {
+        $handle = $api::FindFirstFileW($full, $data)
+        if ($handle -eq [IntPtr]::new(-1)) { throw "Package integrity: the reparse tag of this path cannot be read (Windows error $([Runtime.InteropServices.Marshal]::GetLastSystemError())): $Path" }
+        [void]$api::FindClose($handle)
+        if (([Runtime.InteropServices.Marshal]::ReadInt32($data, 0) -band 0x400) -eq 0) { return $null }
+        return [uint32]([long][Runtime.InteropServices.Marshal]::ReadInt32($data, 36) -band 0xFFFFFFFFL)
+    }
+    finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($data) }
+}
+function Test-ReparseTagAllowed {
+    <#
+        The rule for the tag of a reparse point, not for the bare attribute. Refused: every tag that redirects to another path, that is every tag with the
+        name-surrogate bit 0x20000000 (symbolic link 0xA000000C, junction and mount point 0xA0000003, and the others), and every tag that is not in the closed
+        list below (fail closed). Accepted, the Microsoft types that do not redirect: the cloud files of OneDrive (0x9000001A and its variants 0x9000101A to
+        0x9000F01A, that is the tag with the bits 0x0000F000 cleared), data deduplication 0x80000013 and WOF (Windows Overlay Filter, CompactOS) 0x80000017.
+        The SHA256 of the signed manifest still detects any change of content, including one made by a synchronisation.
+    #>
+    param([Parameter(Mandatory)][uint32]$Tag)
+    if ($Tag -band 0x20000000u) { return $false }
+    return (($Tag -band 0xFFFF0FFFu) -eq 0x9000001Au) -or $Tag -eq 0x80000013u -or $Tag -eq 0x80000017u
+}
+function Get-RefusedReparseTag {
+    <# $null when the item (from Get-Item -Force) is not a reparse point or its tag is accepted by Test-ReparseTagAllowed; otherwise the refused tag as eight hexadecimal digits. #>
+    param([Parameter(Mandatory)]$Item)
+    if (-not ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $null }
+    $tag = [uint32](Get-PathReparseTag $Item.FullName)
+    if (Test-ReparseTagAllowed $tag) { return $null }
+    return $tag.ToString('X8')
+}
+function Test-CloudReadErrorCode {
+    <#
+        Whether a Windows error code (winerror.h) means that a cloud file is not downloaded and cannot be downloaded now: 362 ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING,
+        369 ERROR_FILE_SYSTEM_VIRTUALIZATION_UNAVAILABLE, 386 ERROR_CLOUD_FILE_AUTHENTICATION_FAILED, 388 ERROR_CLOUD_FILE_NETWORK_UNAVAILABLE, 389 ERROR_CLOUD_FILE_UNSUCCESSFUL,
+        393 ERROR_CLOUD_FILE_REQUEST_ABORTED, 398 ERROR_CLOUD_FILE_REQUEST_CANCELED, 404 ERROR_CLOUD_FILE_PROVIDER_TERMINATED, 426 ERROR_CLOUD_FILE_REQUEST_TIMEOUT.
+    #>
+    param([int]$Code)
+    return $Code -in 362, 369, 386, 388, 389, 393, 398, 404, 426
+}
+function Get-ReadFailureCode {
+    <# The Windows error code carried by an exception (NativeErrorCode, or the code of a Win32 HRESULT, 0x8007xxxx), looking through the inner exceptions; 0 when there is none. Never reads message text. #>
+    param($Exception)
+    for ($depth = 0; $null -ne $Exception -and $depth -lt 8; $depth++) {
+        if ($Exception -is [ComponentModel.Win32Exception]) { return [int]$Exception.NativeErrorCode }
+        $hresult = [long]$Exception.HResult -band 0xFFFFFFFFL
+        if (($hresult -shr 16) -eq 0x8007) { return [int]($hresult -band 0xFFFFL) }
+        $Exception = $Exception.InnerException
+    }
+    return 0
+}
+function Get-PackageFileHash([string]$Path) {
+    try { (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash }
+    catch {
+        $code = Get-ReadFailureCode $_.Exception
+        if (Test-CloudReadErrorCode $code) {
+            throw "Package integrity: this cloud file (OneDrive) is not downloaded and cannot be downloaded now (Windows error $code): $Path. Reconnect this computer to the network so that the file can be downloaded, then start the tool again, or install the tool outside OneDrive."
+        }
+        throw
+    }
+}
 function Assert-PlainPath([string]$Path, [bool]$Directory = $false) {
     $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint -or $item.PSIsContainer -ne $Directory) {
+    $refused = Get-RefusedReparseTag $item
+    if ($refused) { throw "Package integrity: reparse point that is not accepted (tag 0x$refused): $Path" }
+    if ($item.PSIsContainer -ne $Directory) {
         throw "Package integrity: unsafe path or unexpected type: $Path"
     }
     $parent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
     while ($parent) {
         $ancestor = Microsoft.PowerShell.Management\Get-Item -LiteralPath $parent -Force -ErrorAction Stop
-        if ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw "Package integrity: reparse-point ancestor: $parent"
+        $refused = Get-RefusedReparseTag $ancestor
+        if ($refused) {
+            throw "Package integrity: reparse-point ancestor that is not accepted (tag 0x$refused): $parent"
         }
         $parent = [IO.Path]::GetDirectoryName($parent)
     }
@@ -131,6 +217,8 @@ Assert-OwnerSignature $PSCommandPath
 $manifestPath = [IO.Path]::Combine($rootPath, 'PackageIntegrity.psd1')
 if (-not [IO.File]::Exists($manifestPath)) { throw "Package integrity: PackageIntegrity.psd1 is missing. $releaseHint" }
 Assert-PlainPath $manifestPath
+# Read first, so that a cloud file that cannot be downloaded is named as such before its signature is judged.
+[void](Get-PackageFileHash $manifestPath)
 Assert-OwnerSignature $manifestPath
 # Authenticate the raw PSD1 before parsing its restricted data language.
 $manifest = Microsoft.PowerShell.Utility\Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
@@ -157,7 +245,7 @@ foreach ($pair in $listed.GetEnumerator()) {
     $path = [IO.Path]::Combine($rootPath, $pair.Key)
     if (-not [IO.File]::Exists($path) -and (($pair.Key -cin $distributionOnly -and -not $Distribution) -or (Test-NotDistributed $pair.Key))) { continue }
     Assert-PlainPath $path
-    $hash = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
+    $hash = Get-PackageFileHash $path
     if ($hash -cne $pair.Value) { throw "Package integrity: SHA256 mismatch: $($pair.Key)" }
     if ($pair.Key -cmatch '\.ps(m1|d1|1)$') { Assert-OwnerSignature $path }
 }
@@ -172,7 +260,8 @@ while ($queue.Count) {
     foreach ($item in Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop) {
         $relative = [IO.Path]::GetRelativePath($rootPath, $item.FullName)
         if ($directory -ceq $rootPath -and $item.PSIsContainer -and $item.Name -cin $generatedFolders) { continue }
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Package integrity: protected reparse point: $relative" }
+        $refused = Get-RefusedReparseTag $item
+        if ($refused) { throw "Package integrity: protected reparse point that is not accepted (tag 0x$refused): $relative" }
         if ($item.PSIsContainer) { $queue.Enqueue($item.FullName); continue }
         # The owner-signed manifest itself (authenticated above, before it was parsed).
         if ($relative -ceq 'PackageIntegrity.psd1') { continue }
@@ -190,10 +279,10 @@ while ($queue.Count) {
 }
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCGP6Zm9JJ4LWsc
-# vSjCP9kvvN943Me72auKWqkW6dTJjKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDdMuzC9pOLeCN2
+# xnNteI2VomsMjlVQ7TXjGsSSyQ3zWqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -265,28 +354,28 @@ while ($queue.Count) {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCC0YEwRLJYW
-# yCsPFiqkaDjPnVWPGxeqQMSaKMiLgLQigTANBgkqhkiG9w0BAQEFAASCAgAdErVj
-# FR9dOGiEuprH5Xoy96unz3LJFLI1fVijZZzb8T8X41oOK+DANJYGrtzYs/1/4k1o
-# 3uEwmoQkjyjfCQnjvYlQLPjCx3hDJvY/o6ijexnQ/lbvgUw577z1A93qD8PItquJ
-# Y76mG62+HoAiUE9szDlC5puiyYNaKAxcEHh8DRQdYv7ra05DX9M1v8iPHlvzlmY2
-# /y+PhWycUJgEiFSu/m1rMBznbZ1zn4OfqovvzGH3VLwjCvweZH/oUwt4b7Wufymq
-# tgy9ogyXTJPTEeWmI4v4cNI+Rd3AxtlUUc4QsJCP1bA9dT/p7RTosrpWIvp0mh0o
-# RVRFnz5bZNt8X10ySl6wIZGAtDnL2Lrdu1WSJxN8CBqP+/1206ACWko4bNeoMBTX
-# lOgy38B+qwHIy1qOzdbtf5+MiYdvn2uiWniPn1gxOWgVK7X+Q46s/nnyGeVOFYqz
-# mjndz6K4gXugOq7M9J4mk9/7ZERyzbLsFC4xesakHyorhTWvuRPkQsYjykACng5u
-# cZWf7vz9l3pHPExP/cLF+2W468l+4wm1C3YMAagCC0iSaWM7yxL8TwUYn7WDC6m1
-# Zr3ax2rJcir8Ft76oiUCSHXK3YaE93WB+Wi5GA8sT86xljvK4AZqvT/83U/9C5Hg
-# OyvdUkex4ROAnjjx2oFoMkqp88raaf1XQfrW6aGCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCqFt1K7D9Y
+# IDKplOiMEF+EO1Eb4bgyMbjeY8QNcAWFDTANBgkqhkiG9w0BAQEFAASCAgBl1caT
+# Du+0jgyDHWwysH5IowUu+aEqivtQ7wT7sY6K5PhPdUY6r/RfmJqKrN9a/O2TIC1Z
+# 9+bhuh2nM/lect0Vv8lEilp9CLb2RO/5yAVNuWDylWdn1seozyASJfmJ+JX/VMjh
+# p67lsHQBZIxTZIOZ0jXYrhvqnmoudn5HmyB7SbHTsrBFjxQE+hejI/z+CBLaOJmX
+# aEQnO5hDGyVXPVcxhNGdMaKE4HEliZ2NNU6mRV520PLXA6DdAXeVVXMBE7Vx9g3L
+# hbHwWZ7pd3BPNc2wnEKV2msQLzC7z1E/kxMMVfDZNOptjZz7fj3xr393VBx+4Hhj
+# Z3JCt8KFohf7zsxfwqmEK+CY7UCL9T4WosFZ4nrpWZje6TZ2DTEcQIP9+w+F0gpZ
+# zyJ0NHCXajrQQHokKY8VRlpbYztJzoZ5lYKuNdG9um+Z6f0IH4AKMsAsAMJ8kmby
+# 0YAJJHOMXkh3Awu0HSu9xrparH4GiLDHAFL1NnBzc/VInTHFWilv62KEGrbW4OwF
+# VyaoGntFVxkdDFvQS/GqXKF77r+FnQiBiaFTCSvKNo0VudxgcBd+HocamdJANYVf
+# u6aPcBrsqkJ6gRGEIhwG+kda8RmdO2cP1kcgEFv4kLFR6hGJUZMdl+m3ZCti+mlR
+# gAiLa38ROnCTyhL2yPQcK2TAj0O4AJom1y4me6GCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIAJ1zCvj59BEdCB1NhAdPSHdZEtB1mLWfKLH1ggN70jIAggd25dsqcO8
-# lBgPMjAyNjExMTUxNDM1NTRaMAMCAQECECGDzXtUTd0ssa9iSlRUGK+gghGnMIIE
+# BAIBBQAEIL53NL09cGCTjncYBJuqTFyYVKrZWiX72marCKijpBgRAgg6rpiJmAyZ
+# 9hgPMjAyNjExMjUxNTM3MjVaMAMCAQECEAFcKWoa5cLKy4E040qpWCegghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -381,17 +470,17 @@ while ($queue.Count) {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzU1NFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIKR1
-# SA3rs07LC5/J+FC53xjWkFUo3c4taNNU10hGTMdRMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcyNVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICti
+# 9wmKCy0tNZdMyWUah02UIh/PSbAkT0QtF1FfG26DMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEAnNIk4y5xBvjdhCSyyXpNJnYoG7ilh7E686C8X+6F5esCIQCV
-# +R3t7AMm4zX9Hb7a12PajJOstUgbv3/oqtzEl5P3fg==
+# zj0EAwIERzBFAiEA+0eCPx+PgRJjjWqMvrXNS2OgiZJAoC5/F7uVkSmD46YCIDt7
+# hTcVcmjEUDEwgDDUTlNLWuYN4rvLo5vmAf94MYDa
 # SIG # End signature block

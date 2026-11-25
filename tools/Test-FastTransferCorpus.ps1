@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Decodes every FastTransfer stream of a folder with the exact decoder (FxCodec), encodes it again and checks that the bytes

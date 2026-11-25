@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Measures the PST repair (level Salvage) on randomly damaged copies of a PST: items kept, partial items, and how many partial items

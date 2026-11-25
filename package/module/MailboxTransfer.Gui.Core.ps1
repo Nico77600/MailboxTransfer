@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer console - WPF foundations (dot-sourced by Start-MailboxTransferConsole.ps1).
@@ -185,9 +185,11 @@ function Format-MbtGuiSelectionSize {
 }
 
 function Format-MbtGuiSelectionItems {
-    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). -WithNoun: "1 item", "at least 1,500 items". #>
-    param([Parameter(Mandatory)]$Selection, [switch]$WithNoun)
+    <# The number of items of a selection: "at least" while a ticked folder has subfolders that are not read yet (they are counted when the plan is checked). -WithNoun: "1 item", "at least 1,500 items". -AtMost: an export with a period takes at most the items of the folders ticked ("at most 1,500 items"; with subfolders not read yet: no bound can be given). #>
+    param([Parameter(Mandatory)]$Selection, [switch]$WithNoun, [switch]$AtMost)
     $n = if ($WithNoun) { Format-MbtGuiQuantity $Selection.Items 'item' } else { Format-MbtGuiCount $Selection.Items }
+    if ($AtMost -and $Selection.SubtreeUnread) { return "$n or more before the period is applied" }
+    if ($AtMost) { return "at most $n" }
     if ($Selection.SubtreeUnread) { return "at least $n" }
     return $n
 }
@@ -233,11 +235,12 @@ function New-GuiText {
     ConvertTo-MbtGuiRuns $t $Text
     $t.TextWrapping = $(if ($NoWrap) { 'NoWrap' } else { 'Wrap' })
     $primary = 'TextFillColorPrimaryBrush'; $secondary = 'TextFillColorSecondaryBrush'
+    # Body and Muted carry the size of the body text (14) themselves: it does not depend on inheritance through the content of a button or an option.
     switch ($Style) {
-        'Body' { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
+        'Body' { $t.FontSize = 14; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
         'Hint' { $t.FontSize = 12; $t.Margin = [Windows.Thickness]::new(0, 6, 0, 0); Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
         'Label' { $t.FontSize = 12; $t.Margin = [Windows.Thickness]::new(0, 10, 0, 4); Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
-        'Muted' { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
+        'Muted' { $t.FontSize = 14; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
         'Small' { $t.FontSize = 12; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
         'Title' { $t.FontSize = 14; $t.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
         'H2' { $t.FontSize = 20; $t.FontWeight = [Windows.FontWeights]::SemiBold; $t.Margin = [Windows.Thickness]::new(0, 2, 0, 10); Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
@@ -398,6 +401,21 @@ function New-GuiTextBox {
     return $t
 }
 
+function New-GuiDatePicker {
+    <# A day to pick (no time): Value is the day as yyyy-MM-dd text, empty for none. OnChange is called when the day changes, also when it is cleared. #>
+    param([string]$Value = '', [string]$Automation, [scriptblock]$OnChange)
+    $d = [Windows.Controls.DatePicker]::new()
+    # the day is written in full ("1 April 2026"): a short date means two days in two languages
+    $d.SelectedDateFormat = [Windows.Controls.DatePickerFormat]::Long
+    # wide enough for the longest day, "Wednesday, September 30, 2026"
+    $d.MinWidth = 260
+    $parsed = [datetime]::MinValue
+    if ($Value -and [datetime]::TryParseExact($Value, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { $d.SelectedDate = $parsed }
+    if ($Automation) { [Windows.Automation.AutomationProperties]::SetName($d, $Automation) }
+    if ($OnChange) { $d.Add_SelectedDateChanged((ConvertTo-MbtGuiHandler $OnChange)) }
+    return $d
+}
+
 function New-GuiRow {
     <# A text box and a button side by side (folder and Browse...). #>
     param([Parameter(Mandatory)][Windows.Controls.TextBox]$Box, [Parameter(Mandatory)][Windows.Controls.Button]$Button)
@@ -546,15 +564,39 @@ function New-GuiTile {
 }
 
 function New-GuiTwoColumns {
-    <# The house window: left column (410 px at most), right area. #>
-    param([Parameter(Mandatory)]$Left, [Parameter(Mandatory)]$Right, [double]$LeftWidth = 410, [string]$RightWidth = '*')
+    <# The house window: left column (410 px at most), right area. -Fill: the two columns take the height they are given (the page is a fill page, see New-GuiFillPage); the left column scrolls by itself when it is taller. #>
+    param([Parameter(Mandatory)]$Left, [Parameter(Mandatory)]$Right, [double]$LeftWidth = 410, [string]$RightWidth = '*', [switch]$Fill)
     $g = [Windows.Controls.Grid]::new()
     $c1 = [Windows.Controls.ColumnDefinition]::new(); $c1.Width = [Windows.GridLength]::new($LeftWidth)
     $c2 = [Windows.Controls.ColumnDefinition]::new(); $c2.Width = [Windows.GridLength]::new(16)
     $c3 = [Windows.Controls.ColumnDefinition]::new(); $c3.Width = [Windows.GridLength]::new(1, 'Star')
     $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2); $g.ColumnDefinitions.Add($c3)
+    if ($Fill) {
+        $scroll = [Windows.Controls.ScrollViewer]::new()
+        $scroll.VerticalScrollBarVisibility = 'Auto'; $scroll.HorizontalScrollBarVisibility = 'Disabled'
+        $scroll.Focusable = $false
+        # the font size of the window, set on the scroll viewer so that the buttons and fields in it use it
+        $scroll.FontSize = 14
+        $scroll.Content = $Left
+        $Left = $scroll
+        if ($Right -is [Windows.Controls.Border]) { $Right.VerticalAlignment = 'Top' }
+    }
     [Windows.Controls.Grid]::SetColumn($Right, 2)
     [void]$g.Children.Add($Left); [void]$g.Children.Add($Right)
+    return $g
+}
+
+function New-GuiFillPage {
+    <# A page that takes the height of the window (a title, then the columns): the console gives it at least the visible height of the page area, so the panes of its columns scroll by themselves and the page does not. #>
+    param([string]$Title, [Parameter(Mandatory)]$Columns)
+    $g = [Windows.Controls.Grid]::new()
+    $g.Tag = 'MbtFill'
+    $r1 = [Windows.Controls.RowDefinition]::new(); $r1.Height = [Windows.GridLength]::Auto
+    $r2 = [Windows.Controls.RowDefinition]::new(); $r2.Height = [Windows.GridLength]::new(1, 'Star')
+    $g.RowDefinitions.Add($r1); $g.RowDefinitions.Add($r2)
+    if ($Title) { [void]$g.Children.Add((New-GuiText $Title 'H2')) }
+    [Windows.Controls.Grid]::SetRow($Columns, 1)
+    [void]$g.Children.Add($Columns)
     return $g
 }
 
@@ -713,10 +755,10 @@ function Stop-MbtGuiWorker {
 #endregion
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC6pZ3Tq1tlfB5E
-# hivTEDOagBOABwSJfiVc2KoZQxmADKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBA65cw2odQj6xY
+# nu6Ysk7eVnwT+JTjICDp0ErctaO+OqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -788,28 +830,28 @@ function Stop-MbtGuiWorker {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBCmg3yKOqs
-# WJfZ4W85D536febXK/69yaAIrHonAY13zzANBgkqhkiG9w0BAQEFAASCAgBgg6eV
-# WgfuBsnt2xlGl6DoUjs6sfgXhSWR2YxhtFLSGwyOVLdUxnv+ekZBXNDprlmW5M6I
-# x1rVD1XGnel9W5erSuh73dKp/rK6vgfe90xj+rxVYgwv12qhzTBMSWXO5NWYTKrJ
-# xLMihdJqi9KgnQ6+MkCu0XSeDtYD9rPz+QkSJwrJ9J5FDhZ6Pw46wX3mAVQ9gRFq
-# JxXsq3o7V88zCW4WOo1m8Ik9xOnkJUjrfoYHbqNVCQysDbpo4gI9LWiUAaVY1VxU
-# ErrPNcZfgSEO+8b+I8dLKbRpwyh3JLjD38ZxsNiyRuVgLilU3MqZDYGfLH6AVVnx
-# WN+Z1H0hsBZcTQcKx+UBa/q9V5GECR8CKt766IiF5uZ7bDGfqs30luO+dzm4/DJC
-# tEEn34DhSEZgmhJNGm0Bgc3JgGqcg0LtJsagE9Ezn5AFpaXUsW5rH5bYr3FkjJ3w
-# /7uJC+MEX9pUW11bNafHG4DYcDrTDaIjGKgBSLgOcMPBSl8MFo4UNffBeLubNKUp
-# AVcqjMoGBt0gUf4QhQpNRrGFiiWqqsHBKIvoUtxDRF9db1nGlwEhMAp1ZCa1qj57
-# ihonMM1plSmhh4+/mzby4LJzp8vmpLQ0ajMaia5X7bj+BXeKKnMz+2rCksCY+9TM
-# J8lmlYJgMaEjHHRLlK9Q7s7HKbl8gaaJFw9+fqGCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDDaDEeuG9D
+# wZRnAXkXVbUUPV16zGXZj5UGfj/JInctXjANBgkqhkiG9w0BAQEFAASCAgAxR54U
+# iU1EvtccVoknbcvo9+L93ZFLc5yMvQEIm8S9GCJzkCQq3B0AnpsXrJb9J/Pr/+h9
+# oVw/kmsDLEOiaeoFkcdMDZ3q6Oey33xNt0ZgClHMBYlno5BS8oR0Z0I+GuBKQWv4
+# fqvQsfOi6M7u4fd3RcrKuu2ODP7T3TmVqoblIzfvvX93kZwSQpWAm7OhV6nA7lUb
+# KXeGU1zkvF7YhrmMVNgIv9hMXAwIS9qW+dxOZgCU9mQg323i2kMheU9cZFGso/oJ
+# XVd/ro3kNhVuHVzk4HWgFuMMsHGHXIfftu/Jz6mZWRupcUrmFWo8ihkDOhOQmS6C
+# G+2iRbIG2JXGBlOWHZjjeGjmGY3Jn4H1sg/CPBJeISxJ93PXfc1O1CA4NvxUq+I8
+# gQzqxA435urF9PKPUkKz7T6jH/ixj6Ug/eatuVV+aXcInrMg0zuwAvGkvxUSkuDI
+# L+NNBHCTZj7uFYgwtOZ0sFaB0oXCqutT7A7nogWdXjmLTqiHmbgnF/0mzmHZ/Djl
+# Ov+JReS6PKtd8GrKnlyYAsPNzvw+E/rQ3UzgER3gwfGKP2B3QaaSDQsA7QP8CkZU
+# 7D2HF+GojkZoH9WEJE7Bu2g8ieijo3E3UfzGEOnhdusAIQkzTkj/BgWLBZytlTXc
+# DBNXp5sMXxWc/vZeV0HtU8aiVxHuslXxZXa/jaGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIOrhcIf10bZeZv+eFjmtYLElOjyDO0CGS6ZOxc1fOyyOAggGWx6W8kyd
-# shgPMjAyNjExMTUxNDM0NTlaMAMCAQECEF2Y0pr1iuiJhMsmp44wtlWgghGnMIIE
+# BAIBBQAEINTnJz99JkV0eQIW867kDq0Y06Dl3KceD89xMjzsapc8Agg3KXQd8A1f
+# ihgPMjAyNjExMjUwODAyNTJaMAMCAQECEFF71Q+9ku4pFZP9MwzGehmgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -904,17 +946,17 @@ function Stop-MbtGuiWorker {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQ1OVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINUC
-# oIn0t2y/+Z2ge1YF/yQ+i87usWxYQx7UMRp4Klp7MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDI1MlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEINKF
+# IWPdHhd7/hnL3PczyUPOupYPdP7ot9HF9uKjo6MKMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEAnNAG7CLiR87V3SitvLkxvwIz4w5HjDBsz9gQrRmaLPQCIQDr
-# 5Q4pMKDPdNtQTwYjdBzVcR6/8X0x1IvhhUvYFsNFnw==
+# zj0EAwIERzBFAiBfNb22rk8WFGZSSNkQtTEQkhd/ntuagBP7/CP69pwvPQIhAJbq
+# kRIQltfr3fdlxuvk7lcE8sYO983HyLsL5SSYw8q9
 # SIG # End signature block

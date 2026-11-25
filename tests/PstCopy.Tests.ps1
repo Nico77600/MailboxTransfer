@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the choice of folders (Engine.FolderFilter.cs), the preview of a PST message (Engine.PstPreview.cs) and the copy of chosen folders and

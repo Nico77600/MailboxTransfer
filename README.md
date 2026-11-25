@@ -21,10 +21,10 @@
 </p>
 
 **Author:** Nicolas Fabert  
-**Version:** 1.2.0 ([changelog](CHANGELOG.md))
+**Version:** 1.3.0 ([changelog](CHANGELOG.md))
 
 > [!TIP]
-> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.2.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
+> **Download the latest release.** Open the [latest release](https://github.com/Nico77600/MailboxTransfer/releases/latest) and download **`MailboxTransfer-1.3.0.zip`** under *Assets* (its SHA-256 is in the release notes). That ZIP is the signed tool, with the HTML guides. Do not use the **Source code** archives or the green **Code** button: they are a copy of the repository, not the release package.
 
 > [!IMPORTANT]
 > Windows marks files downloaded from the Internet. After you extract the ZIP, check the publisher first (right-click a `.ps1`, for example `Invoke-MailboxTransfer.ps1`, Properties, Digital Signatures: `Nicolas Fabert`), then unblock the extracted folder once:
@@ -36,11 +36,11 @@
 > Replace the example path with the folder where you extracted the ZIP.
 
 > [!IMPORTANT]
-> **Mailbox Transfer requires PowerShell 7.5 or later (`pwsh.exe`) for the console, 7.4 for the command line.** Windows PowerShell 5.1 is refused before any code runs. PowerShell 7 is not bundled in the release: install it once with `winget install Microsoft.PowerShell`.
+> **Mailbox Transfer requires PowerShell 7.6 or later (`pwsh.exe`), for the console and for the command line.** Windows PowerShell 5.1 and older PowerShell 7 releases are refused before any code runs. PowerShell 7 is not bundled in the release: install it once with `winget install Microsoft.PowerShell`, or update it with `winget upgrade Microsoft.PowerShell`.
 
 ## Why
 
-Mailbox Transfer exports Exchange Online mailboxes (**primary, archive and auxiliary archives**) to a verified local store or to **PST files**, imports PST files, stores and `.eml` files into a mailbox, and **checks and repairs PST files**. A guided Windows console for the person who does not want to type commands, a PowerShell 7 command line for the rest.
+Mailbox Transfer exports Exchange Online mailboxes (**primary, archive and auxiliary archives**) to a verified local store or to **PST files**, imports PST files, stores and `.eml` files into a mailbox, copies a mailbox into another, and **checks and repairs PST files**. A guided Windows console for the person who does not want to type commands, a PowerShell 7 command line for the rest.
 
 Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC sleeps. A PST export hides the archive that grew into several archives. A copy that dies at 80 % leaves you guessing what arrived. Mailbox Transfer is made for the big, boring, long job.
 
@@ -64,7 +64,7 @@ Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC slee
   <img alt="The guided path. Get ready once: 1 get your rights, 2 put the tool on the PC, 3 write your two numbers, 4 open the console. Then task A, browse and export: 5 sign in and pick the mailbox, 6 tick, choose where to save, read the checks and the plan, 7 read the result. Or task B, import: 5 pick the file and the mailbox, 6 read the checks and tick the box that names the target, 7 read the result. Or task C, check and repair a PST: 5 pick the file, 6 check then repair into a new file, 7 read before and after" src="package/docs/images/readme-start-light.png">
 </picture>
 
-One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. A fourth task, *Open an export or a PST*, reads a file like a mailbox and needs no step of its own. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
+One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. Two more tasks need no step of their own: *Copy to another mailbox* (a mailbox into another in one task, user guide chapter 8) and *Open an export or a PST*, which reads a file like a mailbox. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
 
 ### Set up once · 1 to 4
 
@@ -72,8 +72,8 @@ One path for everyone. Set the tool up once (**1 to 4**), then take task **A** t
 # 1 · Get your rights. Give your administrator the table "Requirements" below (minimum permission for each task).
 #     Checking and repairing a PST needs no right at all.
 
-# 2 · On the PC, in PowerShell 7.5+: put the tool in its folder and unblock it.
-#     Download MailboxTransfer-1.2.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
+# 2 · On the PC, in PowerShell 7.6+: put the tool in its folder and unblock it.
+#     Download MailboxTransfer-1.3.0.zip from the latest release (under Assets, not Source code) and extract it to C:\Tools\MailboxTransfer
 Get-ChildItem C:\Tools\MailboxTransfer -Recurse -File -Force | Unblock-File
 
 # 3 · Write your two numbers: tenant id and application id, in a file you create (the user guide, chapter 3, shows how)
@@ -91,7 +91,7 @@ cd C:\Tools\MailboxTransfer
 <table>
   <tr>
     <td width="50%" valign="top"><a href="package/docs/images/console-setup-light.png"><img alt="The Setup page of the console: the stepper Setup, Task, Verify, Run, Next steps; 1 the box This computer with its lights, 2 the box Sign-in with Me or The application and the values read from the configuration file, 3 the box Files and folders, 4 the button Choose a task" src="package/docs/images/console-setup-light.png"></a><br><sub><b>Setup</b> &middot; the lights of this computer, the sign-in and the configuration file</sub></td>
-    <td width="50%" valign="top"><a href="package/docs/images/console-task-light.png"><img alt="The Task page of the console: the stepper with What, From and To under Task; the four task cards Browse and export, Import, Check and repair a PST, Open an export or a PST; the jobs you can continue; what will happen" src="package/docs/images/console-task-light.png"></a><br><sub><b>Task</b> &middot; the four tasks and the jobs to continue</sub></td>
+    <td width="50%" valign="top"><a href="package/docs/images/console-task-light.png"><img alt="The Task page of the console: the stepper with What, From and To under Task; the five task cards Browse and export, Import, Copy to another mailbox, Check and repair a PST, Open an export or a PST; the jobs you can continue; what will happen" src="package/docs/images/console-task-light.png"></a><br><sub><b>Task</b> &middot; the five tasks and the jobs to continue</sub></td>
   </tr>
 </table>
 </details>
@@ -180,17 +180,18 @@ cd C:\Tools\MailboxTransfer
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-tasks-dark.png">
-  <img alt="The four tasks: Browse and export (reads only), Import (adds to a mailbox), Check and repair a PST (local files only), Open an export or a PST (reads only)" src="package/docs/images/readme-tasks-light.png">
+  <img alt="The five tasks: Browse and export (reads only), Import (adds to a mailbox), Copy to another mailbox (reads one, adds to the other), Check and repair a PST (local files only), Open an export or a PST (reads only)" src="package/docs/images/readme-tasks-light.png">
 </picture>
 
 | Task | What it does | Writes to a mailbox? |
 |---|---|---|
 | **Browse and export** | Sign in (or open a shared mailbox by its address), look inside a mailbox, tick folders or messages, save them as PST files, EML files or an export store | No |
 | **Import** | Put an export store, a PST file or a folder of EML files into a mailbox: items are added, nothing is deleted or overwritten | Yes, adds only |
+| **Copy to another mailbox** | Read a mailbox, or some of its folders, or one period, into a store on this PC, then add it to another mailbox: one task, resumable, nothing created twice; the store stays as proof | Yes, adds only |
 | **Check and repair a PST** | Test a PST, write a repaired copy; the original is never changed | No |
 | **Open an export or a PST** | Read it like a mailbox | No |
 
-Every task goes through the same five pages: **Setup, Task (What, From, To), Verify, Run, Next steps**. One question per page, the safe choice is the default and says *recommended*, and the checks and the plan are read before anything starts. An import also asks you to tick a box that names the target: the mailbox, the folder and the number of items. The console shows the same job as one command line that you can copy. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
+Every task goes through the same five pages: **Setup, Task (What, From, To), Verify, Run, Next steps**. One question per page, the safe choice is the default and says *recommended*, and the checks and the plan are read before anything starts. An import, and a copy into another mailbox, also ask you to tick a box that names the target: the mailbox, the folder and the number of items. The console shows the same job as one command line that you can copy. The window follows Windows (light or dark) and has a switch in its top right corner; its *User guide* and *Latest release* links open your browser.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-path-dark.png">
@@ -270,7 +271,7 @@ Every run tells you what happened, in the same words on screen and on disk.
 | | |
 |---|---|
 | Windows | 10 or 11, x64 or arm64 |
-| PowerShell | **7.5** or later (7.6 works) for the console, 7.4 for the command line (`pwsh.exe`, not Windows PowerShell 5.1) |
+| PowerShell | **7.6** or later, for the console and the command line (`pwsh.exe`, not Windows PowerShell 5.1) |
 | Module | `Microsoft.Graph.Authentication` (the tool borrows its MSAL library to sign you in) |
 | Disk | about twice the size of the data |
 | Not needed | Outlook, Exchange Online PowerShell, any third-party PST tool |
@@ -295,6 +296,8 @@ cd C:\Tools\MailboxTransfer
 .\Invoke-MailboxTransfer.ps1 -Mode Browse -Mailbox Archive                                   # folder tree, read only
 .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store -OutputPst D:\pst\adele.pst
 .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -PstPath D:\old\archive.pst -TargetRoot Imported/archive -WhatIf   # the plan
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -TargetRoot 'Copy of projects' -WhatIf  # a mailbox into another: the plan
+.\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\lists\mailboxes.csv                  # a list of mailboxes, one job each (also Import, ImportPst, ImportEml, Copy)
 .\Invoke-MailboxTransfer.ps1 -Mode CheckPst  -Path D:\pst\mail.pst                           # read only
 .\Invoke-MailboxTransfer.ps1 -Mode RepairPst -Path D:\pst\mail.pst -Destination D:\pst\mail.repaired.pst
 ```
@@ -303,7 +306,9 @@ Keep exports, PST files and logs outside the tool folder, or in its `out\` and `
 
 ## Package integrity
 
-The tool runs only from a package signed by its owner. `src\Test-PackageIntegrity.ps1` and `PackageIntegrity.psd1` must carry a valid, timestamped Authenticode signature of the certificate `0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6` (Nicolas Fabert); every PowerShell file of the package must be signed by the same certificate; every other file (C# engine, SQLite libraries, window definitions, guides, README, notices, launcher) must match the SHA-256 listed in the signed manifest. The entry scripts and the module check this before anything is compiled or shown. A changed, missing, duplicated, unlisted or reparse-point file stops the tool with a message that names the file.
+The tool runs only from a package signed by its owner. `src\Test-PackageIntegrity.ps1` and `PackageIntegrity.psd1` must carry a valid, timestamped Authenticode signature of the certificate `0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6` (Nicolas Fabert); every PowerShell file of the package must be signed by the same certificate; every other file (C# engine, SQLite libraries, window definitions, guides, README, notices, launcher) must match the SHA-256 listed in the signed manifest. The entry scripts and the module check this before anything is compiled or shown. A changed, missing, duplicated or unlisted file, or a link that is not accepted, stops the tool with a message that names the file.
+
+A link is judged by its type (the reparse tag), not by the bare reparse-point attribute. A symbolic link, a junction or mount point, any other type that redirects to another path and any type the check does not know are refused, for a file and for a folder that holds the package. The files of a OneDrive folder (Files On-Demand), deduplicated files and CompactOS files are accepted, and their SHA-256 is still checked, so the tool can be installed in a folder that OneDrive synchronises. A file that OneDrive has not downloaded while the computer cannot reach OneDrive is named in the message: reconnect the computer, or install the tool outside OneDrive.
 
 There is no unsigned mode. A source checkout of this repository (no manifest) is started on purpose with `-DevelopmentMode`; the tool then says that nothing is verified. Edit only `config\MailboxTransfer.config.psd1` and your own `config\MailboxTransfer.config.local.psd1`: they are data, outside the check, like the generated `out\` and `logs\` folders. A signature detects a change; it does not stop the file system from being written.
 
@@ -344,7 +349,7 @@ An export store and PST files contain **complete mail**: protect them like the m
 ## Tests
 
 ```powershell
-# PowerShell 7.5+ (pwsh); Pester 5 or later (the CI uses 6.1.0) and PSScriptAnalyzer 1.25.0 installed
+# PowerShell 7.6+ (pwsh); Pester 5 or later (the CI uses 6.1.0) and PSScriptAnalyzer 1.25.0 installed
 Invoke-Pester -Path .\tests -Output Detailed        # no network, no tenant, no mailbox needed
 ```
 

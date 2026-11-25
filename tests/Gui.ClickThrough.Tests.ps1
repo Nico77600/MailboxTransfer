@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 # Console: every button, check box, radio button, list, text box, fold, folder and message of every page of every scenario is used in a real window (fake engine), and no
 # handler may raise an exception. A handler that uses a variable of the function that built the page fails at the first click (the function is gone when the control
 # raises its event); this is the test that finds such a handler. Also: no handler is subscribed to a control outside the ways that cover it.
@@ -33,7 +33,7 @@ Describe 'Console click-through (headless WPF, fake engine)' {
     }
     It 'walked every scenario and used every kind of control' {
         $scenarios = ($script:Runs | ForEach-Object { $_.Result.Scenarios } | Measure-Object -Sum).Sum
-        $scenarios | Should -BeGreaterThan 50
+        $scenarios | Should -BeGreaterThan 70
         $controls = ($script:Runs | ForEach-Object { $_.Result.Controls } | Measure-Object -Sum).Sum
         $controls | Should -BeGreaterThan 800
         $kinds = @($script:Runs | ForEach-Object { $_.Result.Invoked.PSObject.Properties.Name } | Sort-Object -Unique)
@@ -44,9 +44,19 @@ Describe 'Console click-through (headless WPF, fake engine)' {
     It 'walked the states with exactly one of something, or none (one folder ticked alone, one message, one location, one finding, one step, one refused item, one incomplete message, one job)' {
         $edge = @($script:Runs | ForEach-Object { @($_.Result.Edge) } | Where-Object { $_ } | Sort-Object -Unique)
         $walked = @($script:Runs | ForEach-Object { @($_.Result.Walked) } | Where-Object { $_ })
-        $edge.Count | Should -BeGreaterThan 12
+        $edge.Count | Should -BeGreaterThan 18
         foreach ($name in $edge) { $walked | Should -Contain $name }
-        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob') { $edge | Should -Contain $name }
+        foreach ($name in 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ExportFromOneLocation', 'ExportFromNoLocation', 'RepairFromOneFinding', 'RunOneStep', 'DoneImportOneRefused', 'DoneRepairOneIncomplete', 'DoneImportOneDecision', 'StartOneJob', 'ImportFromManyFolders', 'CopyMailboxFromSeveralPlaces', 'CopyMailboxToApplication', 'CopyMailboxToSame', 'DoneCopyMailboxError', 'DoneCopyMailboxDecision') { $edge | Should -Contain $name }
+    }
+    It 'walked every page of the copy to another mailbox: From, To (own mailbox, the application, the archive), Verify (grey, ticked, checking), Run (reading, writing), Next steps (complete, not finished)' {
+        $walked = @($script:Runs | ForEach-Object { @($_.Result.Walked) } | Where-Object { $_ })
+        foreach ($name in 'CopyMailboxFrom', 'CopyMailboxTo', 'CopyMailboxToApplication', 'CopyMailboxToArchive', 'CopyMailboxPlan', 'CopyMailboxPlanTicked', 'CopyMailboxPlanChecking', 'RunCopyMailboxReading', 'RunCopyMailbox', 'DoneCopyMailbox', 'DoneCopyMailboxPartial') { $walked | Should -Contain $name }
+    }
+    It 'used the Pause button of the running step (and answered its question) and the Resume button of a stopped job' {
+        $pause = ($script:Runs | ForEach-Object { $_.Result.StepControls.RunStepPause } | Measure-Object -Sum).Sum
+        $resume = ($script:Runs | ForEach-Object { $_.Result.StepControls.RunStepResume } | Measure-Object -Sum).Sum
+        $pause | Should -BeGreaterThan 0
+        $resume | Should -BeGreaterThan 0
     }
     It 'no handler raised an exception, and the tick of the console raised nothing' {
         $errors = @($script:Runs | ForEach-Object { @($_.Result.Errors) } | Where-Object { $_ })
@@ -55,9 +65,9 @@ Describe 'Console click-through (headless WPF, fake engine)' {
 }
 
 Describe 'Console handlers: how they are subscribed' {
-    It 'a handler written in the function that builds a page is subscribed only through Add-MbtGuiHandler, New-GuiButton, New-GuiLink, New-GuiTextBox or New-GuiOption' {
+    It 'a handler written in the function that builds a page is subscribed only through Add-MbtGuiHandler, New-GuiButton, New-GuiLink, New-GuiTextBox, New-GuiOption or New-GuiDatePicker' {
         $allowed = @{
-            'MailboxTransfer.Gui.Core.ps1' = @('New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption')
+            'MailboxTransfer.Gui.Core.ps1' = @('New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption', 'New-GuiDatePicker')
             'MailboxTransfer.Gui.Browse.ps1' = @('Initialize-MbtGuiBrowseEvents')
         }
         $found = [Collections.Generic.List[string]]::new()
@@ -74,7 +84,7 @@ Describe 'Console handlers: how they are subscribed' {
     }
     It 'the functions that subscribe a block to a control by themselves hand it to ConvertTo-MbtGuiHandler' {
         $core = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Core.ps1') -Raw
-        foreach ($function in 'New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption') {
+        foreach ($function in 'New-GuiButton', 'New-GuiLink', 'New-GuiTextBox', 'New-GuiOption', 'New-GuiDatePicker') {
             $body = [regex]::Match($core, "(?s)function $function \{.*?\r?\n\}").Value
             $body | Should -Match 'ConvertTo-MbtGuiHandler' -Because "$function subscribes a handler"
         }

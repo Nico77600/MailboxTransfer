@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     A stand-in for Invoke-MailboxTransfer.ps1 in the tests of a batch: it takes the same arguments, behaves as the local part of the mailbox address says, writes the status.json, the events and the exit code
     of a job, and records what it was given (args.json) and when it ran (run-<n>.txt). Nothing reaches a network.
@@ -6,6 +6,8 @@
         ok-...       complete at once (exit 0)
         slow-...     runs until its stop request appears, then stops (exit 2, reason stopped); with "quick" in the name it ends alone after a second
         partial-...  not complete the first time (exit 2), complete the next time
+        uncertain-.. uncertain items the first time (exit 3), complete the next time
+        refused-...  finished with items refused for good (exit 1, reason refused-items)
         fail-...     an error (exit 1)
         signin-...   needs a sign-in (exit 2, reason signin-required)
         crash-...    ends with exit 1 before it writes anything
@@ -19,8 +21,11 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 }
 $events = [string]$named.EventsFile
 $folder = Split-Path $events -Parent
-$upn = if ($named.ContainsKey('MailboxId')) { [string]$named.MailboxId } else { [string]$named.UserPrincipalName }
+$modeName = if ($named.ContainsKey('Mode')) { [string]$named.Mode } else { 'Export' }
+# a copy behaves as its target says (the application names it; a delegated sign-in is the target); the others as the mailbox they work on
+$upn = if ($modeName -eq 'Copy') { if ($named.ContainsKey('TargetMailboxId')) { [string]$named.TargetMailboxId } else { [string]$named.UserPrincipalName } } elseif ($named.ContainsKey('MailboxId')) { [string]$named.MailboxId } else { [string]$named.UserPrincipalName }
 $local = ($upn -split '@')[0]
+$task = if ($modeName -eq 'Copy') { 'mailcopy' } elseif ($modeName -like 'Import*') { 'import' } else { 'export' }
 $utf8 = [Text.UTF8Encoding]::new($false)
 $now = { [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z') }
 [IO.File]::WriteAllText((Join-Path $folder 'args.json'), (($args | ForEach-Object { [string]$_ }) | ConvertTo-Json), $utf8)
@@ -30,12 +35,12 @@ $began = [DateTime]::UtcNow
 
 $write = {
     param([string]$State, [int]$Exit, [string]$Reason, [hashtable]$Counts)
-    $s = [ordered]@{ v = 1; jobId = [string]$named.JobId; task = 'export'; title = "Export - $upn"; mode = 'Export'; source = $upn; destination = [string]$named.StorePath; batch = $(if ($named.ContainsKey('BatchId')) { [string]$named.BatchId } else { $null })
+    $s = [ordered]@{ v = 1; jobId = [string]$named.JobId; task = $task; title = "$($task.Substring(0, 1).ToUpperInvariant() + $task.Substring(1)) - $upn"; mode = $modeName; source = $upn; destination = [string]$named.StorePath; batch = $(if ($named.ContainsKey('BatchId')) { [string]$named.BatchId } else { $null })
         state = $State; exitCode = $Exit; counts = $Counts; next = $(if ($Exit -eq 0) { 'done' } else { 'continue' }); reason = $Reason; started = $began.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z'); updated = (& $now); lastEvent = (& $now); pid = $PID }
     [IO.File]::WriteAllText((Join-Path $folder 'status.json'), ($s | ConvertTo-Json -Depth 5), $utf8)
     [IO.File]::AppendAllText($events, ((@{ v = 1; t = (& $now); e = 'result'; exit = $Exit; complete = ($Exit -eq 0); counts = $Counts; reason = $Reason } | ConvertTo-Json -Compress -Depth 5) + "`n"), $utf8)
 }
-[IO.File]::AppendAllText($events, ((@{ v = 1; t = (& $now); e = 'plan'; job = [string]$named.JobId; task = 'export'; mode = 'Export'; steps = @(@{ id = 'tree'; title = 'Read the folder tree' }) } | ConvertTo-Json -Compress -Depth 5) + "`n"), $utf8)
+[IO.File]::AppendAllText($events, ((@{ v = 1; t = (& $now); e = 'plan'; job = [string]$named.JobId; task = $task; mode = $modeName; steps = @(@{ id = 'tree'; title = 'Read the folder tree' }) } | ConvertTo-Json -Compress -Depth 5) + "`n"), $utf8)
 
 if ($local -like 'crash-*') { exit 1 }
 if ($local -like 'asker-*') {
@@ -53,6 +58,8 @@ if ($local -like 'slow-*') {
     }
     & $write 'resumable' 2 $null @{ done = 5; failed = 0 }; exit 2
 }
+if ($local -like 'uncertain-*' -and $runs -eq 1) { & $write 'needs-decision' 3 $null @{ done = 3; unknown = 2 }; exit 3 }
+if ($local -like 'refused-*') { & $write 'complete' 1 'refused-items' @{ done = 4; refused = 2 }; exit 1 }
 if ($local -like 'fail-*') {
     [IO.File]::AppendAllText($events, ((@{ v = 1; t = (& $now); e = 'error'; code = 'mailbox-not-found'; msg = 'We cannot find this mailbox. Check the address.'; tech = 'ErrorMailboxNotFound' } | ConvertTo-Json -Compress) + "`n"), $utf8)
     & $write 'error' 1 $null @{ done = 0; failed = 0 }; exit 1
@@ -60,5 +67,7 @@ if ($local -like 'fail-*') {
 if ($local -like 'signin-*') { & $write 'resumable' 2 'signin-required' @{}; exit 2 }
 if ($local -like 'partial-*' -and $runs -eq 1) { & $write 'resumable' 2 $null @{ done = 3; failed = 1 }; exit 2 }
 Start-Sleep -Milliseconds ([int]$(if ($local -like 'ok-pause*') { 700 } else { 50 }))
-& $write 'complete' 0 $null @{ done = 100 * $runs; failed = 0; bytes = 5000 }
+$counts = @{ done = 100 * $runs; failed = 0; bytes = 5000 }
+if ($modeName -eq 'Copy') { $counts.exported = 100 * $runs }
+& $write 'complete' 0 $null $counts
 exit 0

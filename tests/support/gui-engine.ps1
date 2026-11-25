@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     The real adapters of the console (package\module\MailboxTransfer.Gui.Engine.ps1) on a worker that runs inline, over stubs of the engine calls that reach the cloud.
     The fake engine of the other console tests hands the pages ready objects, always several of them, and never calls these adapters; the worker of the console hands
@@ -403,7 +403,7 @@ foreach ($case in @(
         Assert-That ($jobs.Count -eq $case.Count) "expected $($case.Count), got $($jobs.Count)"
         foreach ($j in $jobs) {
             Assert-That ($null -ne $j) 'a job that is nothing'
-            Assert-Reads $j 'Task', 'Title', 'Sub', 'State', 'Button', 'Folder' 'a job'
+            Assert-Reads $j 'Task', 'Title', 'Sub', 'Sub2', 'State', 'Button', 'Folder', 'Name', 'Finished', 'CanContinue' 'a job'
             Assert-That ([bool]$j.Sub) 'a line under the title'
         }
     }
@@ -420,7 +420,7 @@ Check 'jobs: a batch is one line with its numbers and its report; the jobs of a 
     $jobs = @(& $engine.Jobs $w)
     $lines = @($jobs | Where-Object Task -EQ 'batch')
     Assert-That ($lines.Count -eq 2) "two batch lines, got $($lines.Count)"
-    foreach ($l in $lines) { Assert-Reads $l 'Task', 'Title', 'Sub', 'State', 'Button', 'Folder', 'Report', 'Batch' 'a batch line' }
+    foreach ($l in $lines) { Assert-Reads $l 'Task', 'Title', 'Sub', 'Sub2', 'State', 'Button', 'Folder', 'Report', 'Batch', 'Name', 'Finished', 'CanContinue' 'a batch line' }
     $open = $lines | Where-Object Batch -EQ 'Open'
     Assert-That ($open.Sub -like '0 of 3 mailboxes complete, 1 not complete, 1 failed, 1 not started*command line*') "the numbers: $($open.Sub)"
     Assert-That ($open.State -eq 'warn' -and $open.Button -eq 'Open the report') 'a batch that is not complete is a warning with a button that opens the report'
@@ -430,13 +430,57 @@ Check 'jobs: a batch is one line with its numbers and its report; the jobs of a 
     Assert-That (-not @($others | Where-Object { $_.Title -like 'Export done*' }).Count) 'the jobs of a complete batch are left out'
     Assert-That (@($others | Where-Object { $_.Sub -like 'batch Open - *' }).Count -eq 3) 'the jobs of a batch that is not complete: three, with the name of the batch'
     Assert-That (@($others | Where-Object Title -EQ 'Import plain').Count -eq 1) 'the other jobs are listed'
-    Assert-That ($jobs.Count -le 8) 'eight lines at most'
+}
+Check 'jobs: every job that is not finished is listed, before the finished ones, whatever their number; the finished ones are cut at 50' {
+    $w = Join-Path $Work ('jobs-' + [guid]::NewGuid().ToString('N'))
+    foreach ($n in 1..12) { New-TestJobFolder $w ('20261101-10{0:00}-open' -f $n) ('{{"v":1,"jobId":"o{0}","task":"import","title":"Import open {0}","state":"stopped","updated":"2026-11-01T10:{0:00}:00.000Z","counts":{{"done":4}}}}' -f $n) }
+    foreach ($n in 1..55) { New-TestJobFolder $w ('20261102-10{0:00}-done' -f $n) ('{{"v":1,"jobId":"d{0}","task":"export","title":"Export done {0}","state":"complete","updated":"2026-11-02T10:{1:00}:00.000Z"}}' -f $n, ($n % 60)) }
+    $jobs = @(& $engine.Jobs $w)
+    $open = @($jobs | Where-Object { -not $_.Finished })
+    $done = @($jobs | Where-Object { $_.Finished })
+    Assert-That ($open.Count -eq 12) "twelve jobs that are not finished, got $($open.Count)"
+    Assert-That ($done.Count -eq 50) "fifty finished jobs at most, got $($done.Count)"
+    Assert-That (@($jobs[0..11] | Where-Object Finished).Count -eq 0) 'the jobs that are not finished come first'
+    Assert-That (@($open | Where-Object { -not $_.CanContinue }).Count -eq 0 -and @($done | Where-Object CanContinue).Count -eq 0) 'only a job that is not finished can be continued'
+    Assert-That ($open[0].Title -eq 'Import open 12') "newest first: $($open[0].Title)"
 }
 Check 'jobs: a job that stopped with an empty count says when it stopped' {
     $w = Join-Path $Work ('jobs-' + [guid]::NewGuid().ToString('N'))
     New-TestJobFolder $w '20261110-1000-job' '{"v":1,"jobId":"a1","task":"import","title":"t","state":"stopped","updated":"2026-11-10T10:00:00.000Z","counts":{}}'
     $jobs = @(& $engine.Jobs $w)
-    Assert-That ($jobs.Count -eq 1 -and $jobs[0].Sub -like 'stopped *' -and $jobs[0].Button -eq 'Continue') "got: $($jobs[0].Sub)"
+    Assert-That ($jobs.Count -eq 1 -and $jobs[0].Sub -like 'Stopped by you on *' -and $jobs[0].Button -eq 'Continue' -and $jobs[0].CanContinue) "got: $($jobs[0].Sub)"
+}
+Check 'jobs: a job that stopped says why, when and the step reached, in two lines' {
+    $w = Join-Path $Work ('jobs-' + [guid]::NewGuid().ToString('N'))
+    New-TestJobFolder $w '20261110-1000-job' '{"v":1,"jobId":"a1","task":"import","title":"Import t","state":"running","pid":2147483000,"updated":"2026-11-10T10:00:00.000Z","step":{"id":"send","title":"Send the items","index":3,"of":5,"done":5120,"total":9860}}'
+    $jobs = @(& $engine.Jobs $w)
+    Assert-That ($jobs.Count -eq 1 -and $jobs[0].Sub -like 'Interrupted on *the PC was shut down*' -and $jobs[0].Sub2 -eq 'Step 3 of 5, Send the items, 5,120 of 9,860 done') "got: $($jobs[0].Sub) | $($jobs[0].Sub2)"
+}
+Check 'jobs: the answers of Delete and of Continue, as the page reads them' {
+    $w = Join-Path $Work ('jobs-' + [guid]::NewGuid().ToString('N'))
+    $store = Join-Path $w 'stores\copy-a'
+    $null = New-Item -ItemType Directory -Force -Path $store
+    Set-Content -LiteralPath (Join-Path $store 'catalog.db') -Value 'x'
+    New-TestJobFolder $w '20261110-1000-copy' ('{"v":1,"jobId":"c1","task":"mailcopy","mode":"Copy","title":"Copy t","state":"complete","updated":"2026-11-10T10:00:00.000Z","store":' + (ConvertTo-Json $store) + '}')
+    New-TestJobFolder $w '20261110-1100-import' '{"v":1,"jobId":"i1","task":"import","mode":"Import","title":"Import t","state":"stopped","updated":"2026-11-10T11:00:00.000Z"}'
+    $r = Invoke-Call { param($ok, $bad) & $engine.JobDeleteInfo $w '20261110-1000-COPY' $ok $bad }
+    Assert-That ($r.Calls -eq 1 -and $r.Failed -eq 0) "one answer: $($r.Err)"
+    Assert-One $r.Got 'the plan of the deletion'
+    Assert-Reads $r.Got 'Allowed', 'Reason', 'Title', 'Source', 'Destination', 'Started', 'Updated', 'Folder', 'Warnings', 'Store' 'the plan of the deletion'
+    Assert-That ($r.Got.Allowed -and $r.Got.Store.Offered -and $r.Got.Store.Allowed -and $r.Got.Store.Bytes -gt 0) 'a complete copy offers its store, with its size'
+    Assert-Reads $r.Got.Store 'Path', 'Offered', 'Allowed', 'Reason', 'Bytes' 'the store of the plan'
+    $r = Invoke-Call { param($ok, $bad) & $engine.JobDeleteInfo $w 'nothing' $ok $bad }
+    Assert-That ($r.Failed -eq 1 -and $r.Err -like '*not there any more*') "unknown job: $($r.Err)"
+    $c = & $engine.JobResume $w '20261110-1100-IMPORT'
+    Assert-One $c 'what Continue does'
+    Assert-Reads $c 'Name', 'Title', 'Kind', 'Why', 'Progress', 'Heading', 'Already', 'Again', 'From', 'Notes', 'Problem', 'Started', 'Updated' 'what Continue does'
+    Assert-That ($c.Heading -eq 'Import from an export store' -and @($c.Already).Count -eq 1) "the words of the mode: $($c.Heading)"
+    Assert-That ($null -eq (& $engine.JobResume $w 'nothing')) 'no job: nothing'
+    $r = Invoke-Call { param($ok, $bad) & $engine.JobDelete $w '20261110-1000-copy' $true $ok $bad }
+    Assert-That ($r.Calls -eq 1 -and $r.Failed -eq 0 -and $r.Got.Removed -and $r.Got.StoreRemoved) "deleted with its store: $($r.Err)"
+    Assert-That (-not (Test-Path -LiteralPath $store) -and -not (Test-Path -LiteralPath (Join-Path $w 'jobs\20261110-1000-copy')) -and (Test-Path -LiteralPath (Join-Path $w 'jobs\20261110-1100-import'))) 'only the job and its store went'
+    $r = Invoke-Call { param($ok, $bad) & $engine.JobDelete $w '20261110-1100-import' $true $ok $bad }
+    Assert-That ($r.Failed -eq 1 -and $r.Err -like '*-RemoveCopyStore*') "the store of a job that is not a copy is refused: $($r.Err)"
 }
 Check 'readiness: the lights the Setup page reads' {
     $r = & $engine.Readiness $Work

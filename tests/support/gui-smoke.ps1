@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
     Headless smoke test of the console: builds the real window (not shown), walks the state machine on the fake engine, feeds a fake events file
     (running, PC slept and resumed, needs a decision, stopped, complete, error), checks the pages build and that nothing throws.
@@ -23,6 +23,28 @@ function Wait-Dispatcher {
     [Windows.Threading.Dispatcher]::PushFrame($frame)
 }
 function Measure-Window($w) { $r = $w.Content; $r.Measure([Windows.Size]::new(1480, 940)); $r.Arrange([Windows.Rect]::new(0, 0, 1480, 940)); $r.UpdateLayout(); Wait-Dispatcher }
+function Measure-WindowAt($w, [double]$Width, [double]$Height) { $r = $w.Content; $r.Measure([Windows.Size]::new($Width, $Height)); $r.Arrange([Windows.Rect]::new(0, 0, $Width, $Height)); $r.UpdateLayout(); Wait-Dispatcher; $r.UpdateLayout() }
+function Find-Visual($root, [type]$Type) {
+    # the first element of the visual tree below $root that is a $Type
+    if ($root -isnot [Windows.DependencyObject]) { return $null }
+    for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($root); $i++) {
+        $c = [Windows.Media.VisualTreeHelper]::GetChild($root, $i)
+        if ($Type.IsInstanceOfType($c)) { return $c }
+        $r = Find-Visual $c $Type
+        if ($r) { return $r }
+    }
+    return $null
+}
+function Get-BrowserLayout([string]$Use) {
+    # where the card of the browser is in the page area, and how much the page and the tree could scroll
+    $g = $script:Gui; $b = $g.Browsers[$Use]; $ps = $g.C.PageScroll
+    $inner = Find-Visual $b.C.FolderTree ([Windows.Controls.ScrollViewer])
+    [pscustomobject]@{
+        Viewport = $ps.ViewportHeight; Extent = $ps.ExtentHeight; Card = $b.Root.ActualHeight
+        Top = $b.Root.TransformToAncestor($ps).Transform([Windows.Point]::new(0, 0)).Y
+        Tree = $b.C.FolderTree.ActualHeight; TreeExtent = $(if ($inner) { $inner.ExtentHeight } else { 0 })
+    }
+}
 function Reset-State { $g = $script:Gui; $g.S = New-MbtGuiState -WorkFolder $Work; $g.Run = $null; $g.Job = $null; foreach ($b in $g.Browsers.Values) { Set-MbtGuiBrowserRoots -Browser $b -Roots @() } }
 function Find-Text($root, [string]$Text) {
     $script:hit = $false
@@ -73,6 +95,18 @@ function Get-CommandLineText {
     }
     & $walk $script:Gui.C.Page.Content
     return ($found -join "`n")
+}
+function Find-ByAutomationId($root, [string]$Id) {
+    # the elements of the logical tree of the page whose automation id is $Id
+    $found = [Collections.Generic.List[object]]::new()
+    $walk = {
+        param($o)
+        if ($o -isnot [Windows.DependencyObject]) { return }
+        if ([Windows.Automation.AutomationProperties]::GetAutomationId($o) -eq $Id) { $found.Add($o) }
+        foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c }
+    }
+    & $walk $root
+    return $found.ToArray()
 }
 function Get-StepperState {
     $out = [Collections.Generic.List[object]]::new()
@@ -228,6 +262,112 @@ foreach ($theme in 'Light', 'Dark') {
         $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.OutFolder = 'D:\Exports\adele'; $g.S.OutName = 'adele.pst'
         $k1 -eq $k2 }
 
+    function Find-ByAutomationName($root, [string]$Name) {
+        # the elements of the logical tree of the page whose automation name is $Name
+        $found = [Collections.Generic.List[object]]::new()
+        $walk = {
+            param($o)
+            if ($o -isnot [Windows.DependencyObject]) { return }
+            if ([Windows.Automation.AutomationProperties]::GetName($o) -eq $Name) { $found.Add($o) }
+            foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c }
+        }
+        & $walk $root
+        return $found.ToArray()
+    }
+    Check 'period (From): the line under the browser says all dates by default, in the tray of the browser and in view, with a Change button and no All dates button' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $row = Get-AllText $b.C.PeriodRow
+        $change = @(Find-ByAutomationName $b.C.PeriodRow 'Change the period')
+        $top = $b.C.PeriodRow.TransformToAncestor($g.C.PageScroll).Transform([Windows.Point]::new(0, 0)).Y
+        $b.C.PeriodRow.Visibility -eq 'Visible' -and ($row -join ' ') -match 'Period: ?all dates \(recommended\)' -and $change.Count -eq 1 -and @(Find-ByAutomationName $b.C.PeriodRow 'Take all dates').Count -eq 0 -and $g.S.Period -eq 'all' -and $null -eq $b.C.PeriodDetail.Content -and $top -ge 0 -and ($top + $b.C.PeriodRow.ActualHeight) -le $g.C.PageScroll.ViewportHeight }
+    Check 'period (From): Change opens the two days with the hint about migrated mail and about messages ticked one by one, Done closes them, and nothing is chosen while no day is set' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        Switch-MbtGuiPeriodDetail; Measure-Window $window
+        $a = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1 -and @(Find-ByAutomationName $b.C.PeriodDetail 'Period to').Count -eq 1 -and (Find-Text $b.C.PeriodDetail 'not the original date of the message') -and (Find-Text $b.C.PeriodDetail 'whatever their date') -and $g.S.PeriodOpen -and $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
+        $d = @(Find-ByAutomationName $b.C.PeriodRow 'Close the period').Count -eq 1
+        Switch-MbtGuiPeriodDetail; Measure-Window $window
+        $c = -not $g.S.PeriodOpen -and $null -eq $b.C.PeriodDetail.Content
+        $a -and $d -and $c }
+    Check 'period (From): picking a day chooses the period and the line says it, with All dates; All dates puts everything back' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        Switch-MbtGuiPeriodDetail; Measure-Window $window
+        (@(Find-ByAutomationName $b.C.PeriodDetail 'Period from')[0]).SelectedDate = [datetime]::new(2026, 1, 1)
+        (@(Find-ByAutomationName $b.C.PeriodDetail 'Period to')[0]).SelectedDate = [datetime]::new(2026, 3, 31)
+        $a = $g.S.Period -eq 'between' -and $g.S.ArrFrom -eq '2026-01-01' -and $g.S.ArrTo -eq '2026-03-31' -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived between 2026-01-01 and 2026-03-31' -and @(Find-ByAutomationName $b.C.PeriodRow 'Take all dates').Count -eq 1
+        Reset-MbtGuiPeriod; Measure-Window $window
+        $c = $g.S.Period -eq 'all' -and $g.S.ArrFrom -eq '' -and $g.S.ArrTo -eq '' -and -not $g.S.PeriodOpen -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'all dates \(recommended\)' -and $null -eq $b.C.PeriodDetail.Content
+        $a -and $c }
+    Check 'period (From): the line of a chosen period is in the scenarios, with the days open or closed, and the left column has no Period card' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriod'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $a = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived between 2026-01-01 and 2026-03-31' -and $null -eq $b.C.PeriodDetail.Content -and -not (Find-Text $g.C.Page.Content 'All dates (recommended) ') -and (Find-Text $g.C.Page.Content 'at most')
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-Window $window
+        $o = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpenEnd'; Measure-Window $window
+        $e = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived from 2025-07-01' -and $g.C.Primary.IsEnabled
+        $a -and $o -and $e }
+    Check 'period (From): the first day after the last one says so and greys Continue; a valid pair turns it on' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodInvalid'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $a = (Find-Text $b.C.PeriodDetail 'The first date is after the last date') -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'check the days below' -and -not $g.C.Primary.IsEnabled
+        $from = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from')[0]; $to = @(Find-ByAutomationName $b.C.PeriodDetail 'Period to')[0]
+        $from.SelectedDate = [datetime]::new(2026, 2, 1)
+        $c = $g.S.ArrFrom -eq '2026-02-01' -and $g.C.Primary.IsEnabled -and -not (Find-Text $b.C.PeriodDetail 'The first date is after the last date')
+        $from.SelectedDate = $null; $to.SelectedDate = $null
+        $d = $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
+        $to.SelectedDate = [datetime]::new(2026, 3, 31)
+        $f = $g.S.ArrTo -eq '2026-03-31' -and $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Text -eq 'arrived until 2026-03-31'
+        $a -and $c -and $d -and $f }
+    Check 'period (From): the line is in view at 1366 x 700 too, days open or closed' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-WindowAt $window 1366 700
+        $b = Get-MbtGuiBrowser 'export'
+        $top = $b.C.PeriodRow.TransformToAncestor($g.C.PageScroll).Transform([Windows.Point]::new(0, 0)).Y
+        $detailBottom = $b.C.PeriodDetail.TransformToAncestor($g.C.PageScroll).Transform([Windows.Point]::new(0, $b.C.PeriodDetail.ActualHeight)).Y
+        $ok = $top -ge 0 -and $top -lt $g.C.PageScroll.ViewportHeight -and $detailBottom -le ($g.C.PageScroll.ViewportHeight + 1)
+        Measure-Window $window
+        $ok }
+    Check 'period: the days are kept as yyyy-MM-dd whatever the culture of the window, and an end of the period alone or a start alone is an open side' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            ((ConvertTo-MbtGuiPeriodDay ([datetime]::new(2026, 3, 9))) -eq '2026-03-09') -and ((ConvertTo-MbtGuiPeriodDay $null) -eq '')
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was } }
+    Check 'period (Verify): the plan says the period, the folder totals are "at most", and the command line carries the two days; without a period it carries none' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
+        $cmd = Get-CommandLineText
+        $atMost = { @(Get-AllText $g.C.Page.Content | Where-Object { $_ -match '^at most [\d,]+$' }).Count -gt 0 }
+        $a = @(($g.S.PlanState -eq 'ok'), (Find-Text $g.C.Page.Content 'keeping the ones that arrived between 2026-01-01 and 2026-03-31'), (& $atMost), (Find-Text $g.C.Page.Content 'The period is applied while the items are listed'), (Find-Text $g.C.Page.Content 'the period is applied while the items are listed'))
+        $b = @(($cmd -match '-SelectionFile \S+ -ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31 '), $g.C.Primary.IsEnabled)
+        $g.S.Period = 'all'; Show-MbtGuiPage; Measure-Window $window
+        $c = @(((Get-CommandLineText) -notmatch 'Arrived'), -not (& $atMost), -not (Find-Text $g.C.Page.Content 'The period is applied'))
+        if (($a + $b + $c) -contains $false) { throw ('a=' + ($a -join ',') + ' b=' + ($b -join ',') + ' c=' + ($c -join ',') + ' cmd=' + $cmd) }
+        $true }
+    Check 'period (Verify): the Time fact and the plan check read as sentences' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
+        $t = (Get-AllText $g.C.Page.Content) -join ' | '
+        $t -notmatch '[a-z] It can be shorter' -and $t -match '\. It can be shorter: only the items of the period are downloaded\.' -and $t -match 'counted by the service: at most [\d,]+ items in \d+ folders?, .*\(the period is applied while the items are listed\)' -and $t -notmatch 'the most the period leaves' }
+    Check 'period (Verify): a period or an end of it that changes voids the plan; the store of an export with a period is its own folder' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'
+        $k1 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-04-30'; $k2 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-03-31'; $k3 = Get-MbtGuiPlanKey
+        $store = (New-MbtGuiRequest -Task export).StorePath
+        $g.S.Period = 'all'; $plain = (New-MbtGuiRequest -Task export).StorePath
+        $g.S.Period = 'between'; $g.S.ArrTo = ''; $open = (New-MbtGuiRequest -Task export).StorePath
+        $k1 -ne $k2 -and $k1 -eq $k3 -and $store -match 'adele\.vance@contoso\.com-arrived-2026-01-01_2026-03-31$' -and $plain -match 'adele\.vance@contoso\.com$' -and $open -match 'adele\.vance@contoso\.com-arrived-from-2026-01-01$' }
+    Check 'period (Run): the listing step says how many items it left out' {
+        Reset-State; Set-MbtGuiScenario 'RunExportPeriod'; Measure-Window $window
+        (Find-Text $g.C.Page.Content '4,612 items outside the period left out') }
+    Check 'period (Next steps): the tiles and the sentence give the items kept, the ones outside the period, and the ones without a date that were kept; nothing is called an error' {
+        Reset-State; Set-MbtGuiScenario 'DoneExportPeriod'; Measure-Window $window
+        $t = @(Get-AllText $g.C.Page.Content) -join ' | '
+        $cmd = Get-CommandLineText
+        $t -match 'items that arrived between 2026-01-01 and 2026-03-31' -and $t -match '1,208 items kept' -and $t -match '4,612 outside the period \(skipped, not an error\)' -and $t -match '3 items had no date and were kept' -and $cmd -match '-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31' }
+    Check 'period (Next steps): an export without a period has no sentence about it' {
+        Reset-State; Set-MbtGuiScenario 'DoneExportComplete'; Measure-Window $window
+        -not (Find-Text $g.C.Page.Content 'outside the period') -and -not (Find-Text $g.C.Page.Content 'Period:') }
+
     $script:job = $null
     Check 'run: plan and progress events build the page' {
         Start-Fake 'import'
@@ -245,6 +385,63 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'run: stopped result stays on the run page with Continue' {
         Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'continue'; reason = 'stopped'; counts = @{ done = 100; pending = 900 } }; Pump $script:job $window
         $g.Run.State -eq 'stopped' -and $g.C.Primary.Visibility -eq 'Visible' -and $g.C.PrimaryLabel.Text -eq 'Continue' }
+    Check 'run: the icon of the running step is a Pause button (named, with its tooltip, reachable with the keyboard); the Stop button of the action bar stays' {
+        Start-Fake 'import'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'check'; title = 'Check the PST file' }, @{ id = 'send'; title = 'Send the items' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'check'; state = 'done' }
+        Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'running'; done = 100; total = 1000 }
+        Pump $script:job $window
+        $pause = @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause')
+        $none = @(Find-ByAutomationId $g.C.Page.Content 'RunStepResume')
+        $stop = Find-Text $g.C.ActionsLeft 'Stop and keep progress'
+        $pause.Count -eq 1 -and $none.Count -eq 0 -and $stop -and $pause[0] -is [Windows.Controls.Button] -and $pause[0].Visibility -eq 'Visible' -and $pause[0].Focusable -and $pause[0].IsTabStop -and $pause[0].IsEnabled -and
+        [Windows.Automation.AutomationProperties]::GetName($pause[0]) -eq 'Pause (stop and keep progress)' -and $pause[0].ToolTip -eq 'Pause (stop and keep progress)' -and $pause[0].Content.Text -eq (Get-MbtGlyph 'pause') }
+    Check 'run: the Pause button asks the same question as Stop and keep progress, and writes the stop request when it is confirmed' {
+        $pause = @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause')[0]
+        $pause.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $pause))
+        $asked = $g.DialogOpen -and $g.C.DialogTitle.Text -eq 'Stop this job?' -and @($g.C.DialogButtons.Children | ForEach-Object Content) -join '|' -eq 'Keep running|Stop and keep progress'
+        $writtenBefore = Test-Path -LiteralPath $script:job.StopPath
+        $answer = $g.C.DialogButtons.Children[1]
+        $answer.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $answer))
+        Measure-Window $window
+        $asked -and -not $writtenBefore -and -not $g.DialogOpen -and (Test-Path -LiteralPath $script:job.StopPath) -and $g.Run.StopRequested -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 0 }
+    Check 'run: Keep running in that question writes nothing and leaves the Pause button' {
+        Start-Fake 'import'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'running'; done = 1; total = 10 }
+        Pump $script:job $window
+        $pause = @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause')[0]
+        $pause.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $pause))
+        $keep = $g.C.DialogButtons.Children[0]
+        $keep.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $keep))
+        Measure-Window $window
+        -not $g.DialogOpen -and -not (Test-Path -LiteralPath $script:job.StopPath) -and -not $g.Run.StopRequested -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 1 }
+    Check 'run: once stopped, the icon of the step is a Resume button that does what Continue does, and the Pause button is gone' {
+        Start-Fake 'repair'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'write'; title = 'Write the new file' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'write'; state = 'running'; done = 3; total = 10 }
+        Pump $script:job $window
+        Request-MbtGuiStop -Job $script:job; $g.Run.StopRequested = $true
+        Add-Line $script:job @{ e = 'result'; exit = 2; complete = $false; next = 'continue'; reason = 'stopped'; counts = @{ done = 3; pending = 7 } }
+        Pump $script:job $window
+        $resume = @(Find-ByAutomationId $g.C.Page.Content 'RunStepResume')
+        $shown = $resume.Count -eq 1 -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 0 -and $g.Run.State -eq 'stopped' -and (Find-Text $g.C.Page.Content 'Stopped') -and $g.C.PrimaryLabel.Text -eq 'Continue' -and
+        [Windows.Automation.AutomationProperties]::GetName($resume[0]) -eq 'Resume (continue where it stopped)' -and $resume[0].ToolTip -eq 'Resume (continue where it stopped)' -and $resume[0].Focusable -and $resume[0].IsTabStop -and $resume[0].Content.Text -eq (Get-MbtGlyph 'play')
+        $script:started = 0
+        $saved = (Get-Item Function:\Start-MbtGuiProcess).ScriptBlock
+        Set-Item Function:\Start-MbtGuiProcess { param($Job) $script:started++; $Job.Queue.Clear(); return $true }
+        try {
+            $resume[0].RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $resume[0]))
+            Measure-Window $window
+        } finally { Set-Item Function:\Start-MbtGuiProcess $saved }
+        $shown -and $script:started -eq 1 -and -not (Test-Path -LiteralPath $script:job.StopPath) -and $g.Run.State -ne 'stopped' -and -not $g.Run.StopRequested -and (Get-MbtGuiScreen) -eq 'run' }
+    Check 'run: a finished job has neither a Pause nor a Resume button' {
+        Start-Fake 'import'
+        Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }
+        Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'done'; done = 10; total = 10 }
+        Add-Line $script:job @{ e = 'result'; exit = 0; complete = $true; counts = @{ done = 10 } }
+        Pump $script:job $window
+        $g.Run.State -eq 'complete' -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepPause').Count -eq 0 -and @(Find-ByAutomationId $g.C.Page.Content 'RunStepResume').Count -eq 0 }
     Check 'run: a complete result opens the done page' {
         Start-Fake 'import'
         Add-Line $script:job @{ e = 'plan'; job = 'x'; steps = @(@{ id = 'send'; title = 'Send the items' }) }; Add-Line $script:job @{ e = 'step'; id = 'send'; state = 'done'; done = 10; total = 10 }
@@ -356,6 +553,25 @@ foreach ($theme in 'Light', 'Dark') {
         $ok = (Find-Text $g.C.Page.Content 'A PST file') -and -not (Find-Text $g.C.Page.Content 'A PST file (coming') -and (Find-Text $g.C.Page.Content 'A folder of EML files') -and -not (Find-Text $g.C.Page.Content 'EML files (coming')
         $g.Engine.Capability.PstImport = $false; $g.Engine.Capability.EmlImport = $false; $g.Engine.Capability.SharedMailbox = $false; Show-MbtGuiPage; $ok }
     Check 'import: an EML source is shown disabled when the engine lacks it' { Find-Text $g.C.Page.Content 'A folder of EML files (coming in this version)' }
+    foreach ($size in @(@(1480, 940), @(1080, 640))) {
+        foreach ($case in @(@('import', 'ImportFromManyFolders', $true), @('export', 'ExportFrom', $false), @('open', 'Open', $false))) {
+            Check "browser page ($($case[0])) at $($size[0]) x $($size[1]): the card fills the page area, the page does not scroll, and a long tree scrolls inside the card" {
+                Reset-State
+                Set-MbtGuiScenario -Name $case[1]
+                $b = $g.Browsers[$case[0]]
+                foreach ($root in $b.Roots) { foreach ($n in $root.Descendants()) { $n.IsExpanded = $true } }
+                Measure-WindowAt $window $size[0] $size[1]
+                $l = Get-BrowserLayout $case[0]
+                $page = $g.C.Page.Content
+                [Math]::Abs($l.Extent - $l.Viewport) -lt 1 -and $l.Card -le ($l.Viewport + 0.5) -and $l.Card -ge 339 -and $l.Top -ge -0.5 -and ($l.Top + $l.Card) -le ($l.Viewport + 0.5) -and (-not $case[2] -or $l.Tree -lt $l.TreeExtent) -and $page.Tag -eq 'MbtFill' }
+        }
+    }
+    Check 'browser page: the left column scrolls by itself and the page of another kind keeps the height of its content' {
+        Reset-State; Set-MbtGuiScenario -Name 'ImportFromManyFolders'; Measure-WindowAt $window 1080 640
+        $left = Find-Visual $g.C.Page.Content ([Windows.Controls.ScrollViewer])
+        $scrolls = [bool]($left -and $left.VerticalScrollBarVisibility -eq 'Auto' -and $left.HorizontalScrollBarVisibility -eq 'Disabled')
+        Reset-State; Set-MbtGuiScenario -Name 'ExportPlan'; Measure-WindowAt $window 1080 640
+        $scrolls -and $g.C.Page.Tag -ne 'MbtFill' -and $g.C.Page.ReadLocalValue([Windows.FrameworkElement]::HeightProperty) -eq [Windows.DependencyProperty]::UnsetValue -and $g.C.PageScroll.ExtentHeight -gt $g.C.PageScroll.ViewportHeight }
     Check 'import: a store source opens and enables Continue' { $g.S.ImSrc = 'store'; $g.S.ImPath = 'D:\Exports\adele'; Open-MbtGuiSource -Use import; Measure-Window $window; $g.C.Primary.IsEnabled }
     Check 'import: an export that holds Recoverable Items says it goes to a normal folder, never back into Recoverable Items' {
         $saved = $g.S.ImInfo
@@ -383,9 +599,199 @@ foreach ($theme in 'Light', 'Dark') {
         $c = -not $g.S.Confirmed -and -not $g.C.Primary.IsEnabled
         $a -and $b -and $c }
     Check 'import: the default destination is a new folder' { (New-MbtGuiState -WorkFolder $Work).TgtMode -eq 'new' }
+    Check 'copy to another mailbox: the task card is on the Task page between Import and Check and repair, and leads to the From page of the browser' {
+        Reset-State; $g.S.Step = 1; $g.S.Sel = 'mailcopy'; Show-MbtGuiPage; Measure-Window $window
+        $seen = Find-Text $g.C.Page.Content 'Copy to another mailbox'
+        $names = @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })
+        & $g.PrimaryAction
+        $seen -and ($names -join ',') -eq 'export,import,mailcopy,repair,open' -and $g.S.Task -eq 'mailcopy' -and (Get-MbtGuiScreen) -eq 'exFrom' }
+    Check 'copy to another mailbox: the task of the PST copy is not confused with it: hidden, its own flow and its own name' {
+        ($script:Flows.copy -join ',') -eq 'setup,start,opFrom,cpTo,cpPlan,run,done' -and $script:Tasks.copy.Hidden -and $script:Tasks.copy.Title -eq 'Copy part of a PST' -and $script:Tasks.mailcopy.Title -eq 'Copy to another mailbox' -and ($script:Flows.mailcopy -join ',') -eq 'setup,start,exFrom,mcTo,mcPlan,run,done' }
+    Check 'copy to another mailbox (From): ticks in one place go on; ticks in an auxiliary archive or in several places say so and keep Continue grey' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFromSeveralPlaces'; Measure-Window $window
+        $several = -not $g.C.Primary.IsEnabled -and $g.C.Footer.Tag -match 'auxiliary archive cannot be copied|more than one place'
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFrom'; Measure-Window $window
+        $one = $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'Copy to another mailbox.') -and $g.C.PrimaryLabel.Text -eq 'Continue to the mailbox that receives' -and (Find-Text $g.C.Page.Content 'Period:')
+        $several -and $one }
+    Check 'copy to another mailbox (To): the own mailbox and the folder are named, the mailbox it copies from is refused, the five steps of the stepper are there' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxTo'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'Where to copy') -and (Find-Text $g.C.Page.Content 'The copy goes into your own mailbox') -and (Find-Text $g.C.Page.Content 'A new folder (recommended)') -and $g.C.Primary.IsEnabled
+        $st = Get-StepperState; $b = [bool](($st | Where-Object { $_.Label -eq 'To' }) -and ($st | Where-Object { $_.Label -match 'Verify$' }) -and ($st | Where-Object { $_.Label -match 'Next steps$' }))
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToSame'; Measure-Window $window
+        $c = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'This is the mailbox you copy from')
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (To): the application types the mailbox that receives, and Continue waits for a good address' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToApplication'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'Mailbox that receives the copy') -and $g.C.Primary.IsEnabled
+        $g.S.McTarget = 'nope'; Show-MbtGuiPage; $b = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'Type the address of the mailbox')
+        $g.S.McTarget = ''; Show-MbtGuiPage; $c = -not $g.C.Primary.IsEnabled
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (Verify): Start stays grey until the box that says what, from where and into where is ticked; the command line is one -Mode Copy command, without plumbing' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxPlan'; Measure-Window $window
+        $off = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'I checked: copy') -and (Find-Text $g.C.Page.Content 'Adds only.') -and $g.C.Footer.Tag -match 'Tick the box to unlock Start'
+        $t = Get-CommandLineText
+        $line = $t -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Copy -UserPrincipalName adele\.vance@contoso\.com -SelectionFile \S+selections\\mailcopy-[0-9a-f]{8}\.json -TargetRoot ''Copy of projects 2026-11-12'' -StorePath \S+stores\\copy-projects@contoso\.com-[0-9a-f]{8}$' -and $t.Split("`n").Count -eq 1 -and $t -notmatch '-NoPrompt|-EventsFile|-StopFile|-JobId|-TempPath|-WhatIf'
+        $g.S.Confirmed = $true; $g.S.ConfirmKey = Get-MbtGuiPlanKey; Show-MbtGuiPage
+        $off -and $line -and $g.C.Primary.IsEnabled -and $g.C.PrimaryLabel.Text -eq 'Start the copy into adele.vance@contoso.com' }
+    Check 'copy to another mailbox (Verify): the tick is not cleared by a change of case, and is cleared by a real change of the plan' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxPlanTicked'; Measure-Window $window
+        $a = $g.S.Confirmed -and $g.C.Primary.IsEnabled
+        $g.S.Mailbox = 'ADELE.VANCE@CONTOSO.COM'; $g.S.TgtName = $g.S.TgtName.ToUpper(); Show-MbtGuiPage; Measure-Window $window
+        $b = $g.S.Confirmed -and $g.C.Primary.IsEnabled
+        $g.S.TgtLoc = 'Archive'; Show-MbtGuiPage; Measure-Window $window
+        $c = -not $g.S.Confirmed -and -not $g.C.Primary.IsEnabled
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (Run): the two parts are the steps of one list, the second part says why it is slow, and the first part does not' {
+        Reset-State; Set-MbtGuiScenario 'RunCopyMailbox'; Measure-Window $window
+        $second = (Find-Text $g.C.Page.Content 'Verify the export store') -and (Find-Text $g.C.Page.Content 'Create the folders') -and (Find-Text $g.C.Page.Content 'Download the items') -and (Find-Text $g.C.Page.Content 'Why is it slow?') -and $g.Run.ImportHalf
+        Reset-State; Set-MbtGuiScenario 'RunCopyMailboxReading'; Measure-Window $window
+        $first = -not (Find-Text $g.C.Page.Content 'Why is it slow?') -and -not $g.Run.ImportHalf -and $g.C.Primary.Visibility -ne 'Visible'
+        $second -and $first }
+    Check 'copy to another mailbox (Next steps): both parts are in the result, the store is named, and the next step says where to look' {
+        Reset-State; Set-MbtGuiScenario 'DoneCopyMailbox'; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'items read') -and (Find-Text $g.C.Page.Content 'in the mailbox') -and (Find-Text $g.C.Page.Content 'Open the store') -and (Find-Text $g.C.Page.Content 'Copy of projects 2026-11-12') -and (Get-CommandLineText) -match '-Mode Copy' }
+    Check 'copy to another mailbox (Next steps): not finished says that a part that is finished is not done again, and offers Continue' {
+        Reset-State; Set-MbtGuiScenario 'DoneCopyMailboxPartial'; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'not done again') -and (Find-Text $g.C.Page.Content 'Continue') }
     Check 'repair: a damaged file offers a repair, a clean one does not' { Reset-State; Set-MbtGuiScenario 'RepairFromDamaged'; $a = $g.C.PrimaryLabel.Text; Reset-State; Set-MbtGuiScenario 'RepairFromClean'; $b = $g.C.PrimaryLabel.Text; $a -eq 'Repair into a new file' -and $b -eq 'Start a new task' }
     Check 'repair: the destination is never the original and never AUX' { (Test-MbtGuiRepairDestination @{ RpDest = 'D:\a.pst'; RpPath = 'D:\a.pst' }) -match 'original' -and (Test-MbtGuiRepairDestination @{ RpDest = 'D:\aux.pst'; RpPath = 'D:\a.pst' }) -match 'AUX' }
     Check 'closing without a job is allowed' { $e = [ComponentModel.CancelEventArgs]::new(); $g.Job = $null; Invoke-MbtGuiClosing $e; -not $e.Cancel }
+    Check 'text sizes: in a shown window the stepper labels and the titles of the options are 14, and no text block falls back to the default size' {
+        $w3 = New-MbtGuiWindow -Engine $engine -Theme Light -WorkFolder $Work -EntryScript $entry -Version '0.3.0'
+        $w3.Opacity = 0; $w3.ShowInTaskbar = $false; $w3.ShowActivated = $false; $w3.Show()
+        $fontSize = [Windows.Controls.TextBlock]::FontSizeProperty
+        $collect = {
+            param($o, $list)
+            if ($o -is [Windows.Controls.TextBlock]) { $list.Add($o) }
+            if ($o -is [Windows.Media.Visual]) { for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($o); $i++) { & $collect ([Windows.Media.VisualTreeHelper]::GetChild($o, $i)) $list } }
+        }
+        $problems = [Collections.Generic.List[string]]::new()
+        foreach ($scn in 'Setup', 'ExportTo', 'CopyTo', 'Start') {
+            Reset-State; Set-MbtGuiScenario $scn; Measure-Window $w3
+            $blocks = [Collections.Generic.List[object]]::new(); & $collect $w3.Content $blocks
+            foreach ($tb in $blocks) {
+                $parent = [Windows.Media.VisualTreeHelper]::GetParent($tb)
+                $source = [Windows.DependencyPropertyHelper]::GetValueSource($tb, $fontSize).BaseValueSource
+                if ($parent -and $source -eq [Windows.BaseValueSource]::Default -and $parent.GetValue($fontSize) -ne $tb.FontSize) { $problems.Add("$scn : '$(Get-TextBlockText $tb)' is $($tb.FontSize), its parent says $($parent.GetValue($fontSize))") }
+            }
+            if ($scn -eq 'Setup') {
+                $label = $blocks | Where-Object { (Get-TextBlockText $_) -eq 'Task' -and [Windows.Media.VisualTreeHelper]::GetParent($_) -is [Windows.Controls.StackPanel] } | Select-Object -First 1
+                $title = $blocks | Where-Object { (Get-TextBlockText $_) -like 'Me (delegated*' } | Select-Object -First 1
+                if (-not $label -or $label.FontSize -ne 14) { $problems.Add("the stepper label is $(if ($label) { $label.FontSize } else { 'missing' })") }
+                if (-not $title -or $title.FontSize -ne 14) { $problems.Add("the option title is $(if ($title) { $title.FontSize } else { 'missing' })") }
+            }
+        }
+        $script:Gui.ForceClose = $true; $w3.Close()
+        if ($problems.Count) { throw (($problems | Select-Object -First 5) -join '; ') }
+        $true }
+    # the checks above opened other windows (each window makes itself the console of the script scope): back to the first one
+    $script:Gui = $g
+    function Find-ButtonsByText($root, [string]$Text) {
+        # the buttons below $root whose text is exactly $Text (a string, or the text blocks of its content)
+        $found = [Collections.Generic.List[object]]::new()
+        $walk = {
+            param($o)
+            if ($o -isnot [Windows.DependencyObject]) { return }
+            if ($o -is [Windows.Controls.Button] -and $o.Content -ne $null) {
+                $t = if ($o.Content -is [string]) { $o.Content } else { (Get-AllText $o.Content) -join '' }
+                # the icon of a button is a glyph of the private use area, in front of its text
+                if (($t -replace '[\uE000-\uF8FF]', '').Trim() -eq $Text) { $found.Add($o) }
+            }
+            foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c }
+        }
+        & $walk $root
+        return $found.ToArray()
+    }
+    function Invoke-ButtonClick($button) { $button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $button)); Wait-Dispatcher }
+    Check 'start: the jobs that are not finished come first, each says why it stopped and the step it reached; the finished ones are in a fold' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $p = $g.C.Page.Content
+        (Find-Text $p 'Interrupted on 2026-11-24 22:41: the PC was shut down') -and (Find-Text $p 'Step 3 of 5, Send the items, 5,120 of 9,860 done') -and (Find-Text $p 'Stopped by you on 2026-11-23 17:05') -and (Find-Text $p 'Stopped by an error on 2026-11-22 09:12: The disk is full') -and
+        (Find-Text $p 'Running now, in another window or process.') -and (Find-Text $p 'Finished (2)') -and (Find-Text $p 'Step 3 of 9, Download the items (reading the source mailbox)') }
+    function Find-JobScroll {
+        $script:ctJobScroll = $null
+        $walk = $null
+        $walk = { param($o) if ($script:ctJobScroll) { return }; if ($o -is [Windows.Controls.ScrollViewer] -and $o.Tag -eq 'MbtJobList') { $script:ctJobScroll = $o; return }; if ($o -is [Windows.DependencyObject]) { foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c } } }
+        & $walk $g.C.Page.Content
+        return $script:ctJobScroll
+    }
+    Check 'start: the list of jobs scrolls inside its card and does not push the page' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $scroll = Find-JobScroll
+        $scroll -and $scroll.MaxHeight -le 400 -and $scroll.VerticalScrollBarVisibility -eq 'Auto' -and $scroll.ActualHeight -le 400 -and $scroll.ExtentHeight -gt 0 }
+    Check 'start: an unfinished job has Continue, Open the report and Delete; a running job and a finished one have no Continue' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $p = $g.C.Page.Content
+        @(Find-ButtonsByText $p 'Continue').Count -eq 3 -and @(Find-ButtonsByText $p 'Open the report').Count -eq 6 -and @(Find-ButtonsByText $p 'Delete').Count -eq 6 }
+    Check 'delete: the dialog names the job and says exactly what is deleted and what never is' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Delete')[0])
+        $text = (Get-AllText $g.C.DialogBody.Content) -join ' | '
+        $ok = $g.DialogOpen -and $g.C.DialogTitle.Text -eq 'Delete this job?' -and $text -like '*archive-2019.pst*Adele Vance (Archive)*' -and $text -like '*deletes the folder of the job on this PC: its log, its report and its events*' -and
+        $text -like '*Your data is never deleted: the export store you chose, PST files, source files and the mailboxes are not touched.*' -and $text -like '*not finished*can no longer continue*'
+        Close-MbtGuiDialog; $ok }
+    Check 'delete: a job that runs elsewhere is refused with the reason' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Delete')[3])
+        $text = (Get-AllText $g.C.DialogBody.Content) -join ' | '
+        $ok = $g.DialogOpen -and $g.C.DialogTitle.Text -eq 'This job cannot be deleted' -and $text -like '*is running now*' -and $g.C.DialogButtons.Children.Count -eq 1
+        Close-MbtGuiDialog; $ok }
+    Check 'delete: the copy store is offered unticked for a complete copy, and refused with its reason while the copy is not complete' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $deletes = @(Find-ButtonsByText $g.C.Page.Content 'Delete')
+        $checkOf = { $found = $null; $walk = $null; $walk = { param($o) if ($o -is [Windows.Controls.CheckBox]) { $script:ctCheck = $o; return }; if ($o -is [Windows.DependencyObject]) { foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c } } }; $script:ctCheck = $null; & $walk $g.C.DialogBody.Content; $script:ctCheck }
+        Invoke-ButtonClick $deletes[1]
+        $notComplete = & $checkOf
+        $a = $notComplete -and -not $notComplete.IsEnabled -and -not $notComplete.IsChecked -and ((Get-AllText $notComplete.Content) -join ' ') -like '*Also delete the copy store (4.2 GiB)*not complete*Finish the copy first*'
+        Close-MbtGuiDialog
+        Invoke-ButtonClick $deletes[4]
+        $complete = & $checkOf
+        $b = $complete -and $complete.IsEnabled -and -not $complete.IsChecked -and ((Get-AllText $complete.Content) -join ' ') -like '*Also delete the copy store (4.2 GiB)*'
+        $recorded = $null
+        $saved = $engine.JobDelete
+        $engine.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError) $script:ctDeleted = @($Name, $WithStore); & $OnDone $true }
+        $complete.IsChecked = $true
+        Invoke-ButtonClick (@($g.C.DialogButtons.Children | Where-Object { $_.Content -eq 'Delete the job' })[0])
+        $engine.JobDelete = $saved
+        $c = $script:ctDeleted -and $script:ctDeleted[0] -eq '20261110-0915-mailcopy-9b1c' -and $script:ctDeleted[1] -eq $true -and -not $g.DialogOpen
+        $a -and $b -and $c }
+    Check 'delete: Cancel deletes nothing' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $saved = $engine.JobDelete; $script:ctDeleted = $null
+        $engine.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError) $script:ctDeleted = @($Name); & $OnDone $true }
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Delete')[0])
+        Invoke-ButtonClick (@($g.C.DialogButtons.Children | Where-Object { $_.Content -eq 'Cancel' })[0])
+        $engine.JobDelete = $saved
+        -not $script:ctDeleted -and -not $g.DialogOpen }
+    Check 'resume: Continue on a job shows the Resume view first, and nothing starts before its Continue is pressed' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Continue')[0])
+        Measure-Window $window
+        $p = $g.C.Page.Content
+        $ok = (Get-MbtGuiScreen) -eq 'resume' -and (Find-Text $p 'Resume this job') -and (Find-Text $p 'Already done, and not done again') -and (Find-Text $p 'Checked again') -and (Find-Text $p 'Where it restarts') -and (Find-Text $p 'It restarts from step 1, Check the PST files') -and
+        (Find-Text $p 'Interrupted on 2026-11-24 22:41') -and $g.C.PrimaryLabel.Text -eq 'Continue' -and $g.C.Primary.IsEnabled -and (Get-TextBlockText $g.C.Footer) -like '*Nothing starts before you press Continue*' -and -not $g.Job
+        $ok }
+    Check 'resume: the Resume view of a copy, of an export, and Back to the jobs' {
+        Reset-State; Set-MbtGuiScenario 'ResumeCopy'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'It resumes the first part, reading the source mailbox') -and (Find-Text $g.C.Page.Content 'A copy has two parts')
+        Reset-State; Set-MbtGuiScenario 'ResumeExport'; Measure-Window $window
+        $b = (Find-Text $g.C.Page.Content 'It restarts from step 1, Read the folder tree, and downloads only what is left') -and (Find-Text $g.C.Page.Content 'Stopped by an error')
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.ActionsLeft 'Back to the jobs')[0]); Measure-Window $window
+        $c = (Get-MbtGuiScreen) -eq 'start' -and (Find-Text $g.C.Page.Content 'Continue a job')
+        $a -and $b -and $c }
+    Check 'resume: Continue on the Resume view starts the job, and the Run page says that it reads what is already done first' {
+        Reset-State; Set-MbtGuiScenario 'ResumeImport'; Measure-Window $window
+        & $g.PrimaryAction; Measure-Window $window
+        $a = (Get-MbtGuiScreen) -eq 'run'
+        Reset-State; Set-MbtGuiScenario 'RunExportResumed'; Measure-Window $window
+        $b = (Find-Text $g.C.Page.Content 'Resume: reading what is already done') -and (Find-Text $g.C.Page.Content 'Looking at what the earlier run already did')
+        $g.Run = New-MbtGuiRun -Task export -Title 'Export'; $g.Run.Resumed = $true; $g.Job = New-FakeJob 'export'; $g.S.Task = 'export'; $g.S.Step = $script:Flows.export.IndexOf('run'); Show-MbtGuiPage; Measure-Window $window
+        $c = (Find-Text $g.C.Page.Content 'Resume: reading what is already done') -and (Get-MbtGuiPreparingText $g.Run) -like '*Resume.*Reading what is already done*'
+        $a -and $b -and $c }
+    Check 'resume: a problem says why the job cannot be continued here and greys Continue' {
+        Reset-State; Set-MbtGuiScenario 'ResumeExport'
+        $g.S.Resume.Info = $g.S.Resume.Info | Select-Object *; $g.S.Resume.Info.Problem = 'This job belongs to the batch Wave1. A batch is continued from the command line.'; Show-MbtGuiPage; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'This job belongs to the batch Wave1') -and -not $g.C.Primary.IsEnabled -and -not (Find-Text $g.C.Page.Content 'Already done, and not done again') }
     Check 'the real engine adapter builds (no sign-in): capabilities, readiness, jobs' {
         $real = New-MbtGuiRealEngine -PackageRoot $Package -EntryScript (Join-Path $Package 'Invoke-MailboxTransfer.ps1') -WorkFolder $Work
         $lights = @((& $real.Readiness).Lights)

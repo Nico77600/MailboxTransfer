@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - every number of the tool is written in en-US (221.6 KiB, 13.8 s, 3,826,688), whatever the language of the session. The tests put the

@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 <#
 .SYNOPSIS
     Mailbox Transfer - the HTML report of a job (dot-sourced by MailboxTransfer.psm1 and by MailboxTransfer.Gui.Jobs.ps1).
@@ -108,8 +108,10 @@ function Get-MbtReportTaskName {
     param([string]$Task, [string]$Mode)
     $name = ($Task -replace '-plan$', '').Trim()
     if ($name -eq 'exportpst') { $name = 'export' }
+    if ($name -eq 'mailcopy') { return $(if ($Task -match '-plan$') { 'Copy to another mailbox (plan check)' } else { 'Copy to another mailbox' }) }
     if (-not $name) {
-        $name = switch -Regex ($Mode) { '^Export' { 'export' } '^Import' { 'import' } '^Check' { 'check' } '^Repair' { 'repair' } default { '' } }
+        $name = switch -Regex ($Mode) { '^Export' { 'export' } '^Import' { 'import' } '^Copy$' { 'mailcopy' } '^Check' { 'check' } '^Repair' { 'repair' } default { '' } }
+        if ($name -eq 'mailcopy') { return 'Copy to another mailbox' }
     }
     if (-not $name) { return '' }
     $text = $name.Substring(0, 1).ToUpperInvariant() + $name.Substring(1).ToLowerInvariant()
@@ -224,6 +226,7 @@ function Get-MbtJobEndpoint {
             'ImportPst' { $Source = 'PST files'; $Destination = $tail }
             'ExportEml' { $Destination = $tail }
             'ImportEml' { $Source = 'EML files'; $Destination = $tail }
+            'Copy' { $ends = $tail -split ' to ', 2; $Source = $ends[0]; $Destination = if ($ends.Count -gt 1) { $ends[1] } else { '' } }
             'CheckPst' { $Source = $tail }
             'RepairPst' { $Source = $tail }
         }
@@ -272,6 +275,7 @@ function Get-MbtJobReportModel {
     $waitCount = 0L; $waitSeconds = 0.0
     $eventCount = 0L
     $job = [string](Get-MbtReportValue $status 'jobId' ''); $task = [string](Get-MbtReportValue $status 'task' ''); $mode = [string](Get-MbtReportValue $status 'mode' '')
+    $period = [string](Get-MbtReportValue (Get-MbtReportValue $status 'period' $null) 'text' '')
     $tickWords = [regex]::new('\d[\d,\.]*')
     $oneText = { param([string]$S) if ($S.Length -gt $MaxText) { $S.Substring(0, $MaxText) + '...' } else { $S } }
 
@@ -415,6 +419,8 @@ function Get-MbtJobReportModel {
                     if (-not $job) { $job = [string]$e['job'] }
                     if (-not $task) { $task = [string]$e['task'] }
                     if (-not $mode) { $mode = [string]$e['mode'] }
+                    $planPeriod = [string](Get-MbtReportValue (Get-MbtReportValue $e 'period' $null) 'text' '')
+                    if ($planPeriod) { $period = $planPeriod }
                     foreach ($s in @(Get-MbtReportValue $e 'steps' @())) { & $addStep ([string](Get-MbtReportValue $s 'id' '')) ([string](Get-MbtReportValue $s 'title' '')) }
                 }
                 'result' {
@@ -471,7 +477,7 @@ function Get-MbtJobReportModel {
     $source = $ends.Source; $destination = $ends.Destination
 
     $model = [ordered]@{
-        Title = $title; Task = $task; TaskName = (Get-MbtReportTaskName -Task $task -Mode $mode); Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store
+        Title = $title; Task = $task; TaskName = (Get-MbtReportTaskName -Task $task -Mode $mode); Mode = $mode; JobId = $job; Source = $source; Destination = $destination; Store = $store; Period = $period
         Started = $first; Finished = $finished; Seconds = $seconds; Interrupted = $interrupted
         Result = $(if ($result) { @{ Exit = $result.Exit; Complete = $result.Complete; Next = $result.Next; Reason = $result.Reason } } else { $null })
         Verdict = $verdict
@@ -615,6 +621,7 @@ function ConvertTo-MbtJobReportHtml {
     $metaItems = [ordered]@{
         'Task' = $Model.TaskName; 'Source' = $Model.Source; 'Destination' = $Model.Destination
         'Store' = $(if ($Model.Store -and $Model.Store -ne $Model.Source -and $Model.Store -ne $Model.Destination) { $Model.Store } else { '' })
+        'Period' = $(if ($Model.Contains('Period') -and $Model.Period) { 'Items that ' + $Model.Period + ' in the mailbox' } else { '' })
         'Started' = (Format-MbtReportTime $started); 'Finished' = $(if ($Model.Interrupted) { 'not written (last event ' + (Format-MbtReportTime $finished) + ')' } else { Format-MbtReportTime $finished })
         'Duration' = (Format-MbtReportDuration $Model.Seconds)
         'Result' = $(if ($Model.Result) { $verdict.Text + ' (exit code ' + $Model.Result.Exit + ')' } else { $verdict.Text })
@@ -634,7 +641,7 @@ function ConvertTo-MbtJobReportHtml {
         @('done', 'Items done', 'ok', $true), @('recovered', 'Recovered', 'ok', $false), @('itemsWritten', 'Items written', 'ok', $false), @('foldersCreated', 'Folders created', '', $false), @('folders', 'Folders', '', $false),
         @('failed', 'Failed', 'fail', $true), @('refused', 'Refused', 'warn', $false), @('deferred', 'Deferred', 'warn', $false), @('unknown', 'To settle', 'warn', $false), @('pending', 'Left to do', 'warn', $false),
         @('partial', 'Partly recovered', 'warn', $false), @('lost', 'Lost', 'fail', $false), @('orphan', 'Orphans', 'warn', $false), @('errors', 'Errors', 'fail', $false), @('warnings', 'Warnings', 'warn', $false), @('infos', 'Notes', '', $false),
-        @('skipped', 'Skipped', '', $false), @('resumed', 'Resumed', '', $false), @('bytes', 'Data', 'bytes', $false), @('fileBytes', 'File size', 'bytes', $false), @('parts', 'PST files', '', $false)
+        @('skipped', 'Skipped', '', $false), @('resumed', 'Resumed', '', $false), @('kept', 'Items kept', '', $false), @('outsidePeriod', 'Outside the period', '', $false), @('withoutDate', 'Kept without a date', '', $false), @('bytes', 'Data', 'bytes', $false), @('fileBytes', 'File size', 'bytes', $false), @('parts', 'PST files', '', $false)
     )
     foreach ($s in $spec) {
         $has = $counts.Contains($s[0])
@@ -776,6 +783,7 @@ function ConvertTo-MbtJobReportHtml {
     # data for tools
     $data = [ordered]@{
         format = 1; title = $Model.Title; task = $Model.Task; mode = $Model.Mode; job = $Model.JobId; source = $Model.Source; destination = $Model.Destination; store = $Model.Store
+        period = $(if ($Model.Contains('Period') -and $Model.Period) { [string]$Model.Period } else { $null })
         started = $started.ToString('o'); finished = $finished.ToString('o'); seconds = [math]::Round($Model.Seconds, 1); interrupted = $Model.Interrupted
         result = $Model.Result; verdict = $verdict.Text; counts = $Model.Counts; waits = $Model.Waits
         steps = @($Model.Steps | ForEach-Object { [ordered]@{ id = $_.Id; title = $_.Title; state = $_.State; started = $(if ($_.Started) { ([datetime]$_.Started).ToString('o') } else { $null }); finished = $(if ($_.Finished) { ([datetime]$_.Finished).ToString('o') } else { $null }); done = $_.Done; total = $_.Total; bytes = $_.Bytes; msg = $_.Msg } })
@@ -831,8 +839,8 @@ function Write-MbtJobHtmlReport {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBl1DBLHrWE8qSM
-# hiMfMZiZh9VUXERKMi2e8QwvSqr4CKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCApkikGV4aV45QO
+# RC8E9WEOx3ZVsiHdOgDPP3VZ42PrnaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -909,23 +917,23 @@ function Write-MbtJobHtmlReport {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCLmA0opaDz
-# 9bVUnbFoNojbZ9KprhcPqL5QMKCqm88KnjANBgkqhkiG9w0BAQEFAASCAgCnwcEt
-# nngHPCvGQIsDHOTs4aZlo8h63jrPoWh0udMHmCLjqjAAz6qVx6/cWHGH1/BVbrZb
-# rIM3Rkqo4MFDAf5S3aiKsfNleg4JWtJ/ftvJGH0bX4wqHuWX7pn6YnTiHhzWoi8R
-# knNKJ3mdHj4kQRkf1NvUsE0tMpGJtU2QJbnRFcWumXA6NIijrDZwrKCNuX4JQn5X
-# o90q+fg5p6UsGh/F32ZXcxAOqaA9QGOVfBZF53rriCn9bKTBQhK9DdhZp6T6ErBc
-# uMl17/IQTqst/Wr/faVJajk4GGqLAcb7Fw+OnL3pk5qSZV7BoO/5e4qHJkgpry2Q
-# OWHK6p0cPlB/nNG4tFNh1PND1gD0l4Qq/ruPsO7NFVCqunb8YqjyZcuX/Cysiqp9
-# qMy/3c9ovOZcuVytxqFrAXVMVvCibtsAthE5S+xXVyDaSZko8LZsFIz4MZRd/xml
-# QzJQ/cQBM4Bhx7xJ4VP6svODNFuNmEwIzAcnGmAQKK6m2ysXO6FLraaKw1DxCfXH
-# +om1UiR7Pei8apoK1LnXBPNmzMxhHEdVyjZhiUieMrucVLvhUeeTaZV1w8NNbE5f
-# N93jUp80SMIoWOzVHQoeQwpKI1mC7uX+JwyC+qF59C6qsHqyk0O30EVYZ5+ctvWT
-# Rp/V1DUt3Y3DsaTet7zXX+sUrWzhncP9P7qWW6GCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCi2B7zp9Ia
+# yf0nlwoykKAcTE4mqGEGoh9JPEirV6v7gzANBgkqhkiG9w0BAQEFAASCAgBRMzlJ
+# uzWYLp40V8Kigio/ILYsEQLtrKaok4cKXYG55eINXG4NzCLeRpMpIB2KqLANO9sw
+# 6PfnOKC7ppyUKpUNr2X9MIl403vDQ6fBFPyHW8RufDHmrZypd3umBJ03U+TmZ9Ib
+# JBvAdzd6eaB3WxK/fNLixc95dI5tXYAzSfw+iXr33bZTC+A5IWmCBjmnjlsIYG62
+# OGGQx3l7kBNcsNjvcifQMBM0vPKUfUb/oSo8fnzLL7FUIqKf7pBqhHkLLt/mYRaq
+# gyA5fnKnW4DaWHaX6cdBPcv88aDOKAM+yXgkC+TWoI1j6g4bBgef9WLCc7ykZV6+
+# WIcrPx0QqMTHn50YrUjKoJ6evKTvQWphsiMIV6vz7NH0da+jl9jbsBBPtKjMXJru
+# qTx7cybFAhBCvNaR0zQ3/B1mENaVzzvtRuUf0GhMVxegbr2/MM7H8kvJ2lKzsih/
+# rxIfTFctTchU236SSzNsGjUOVad4L9bxdGyIjMOUszyfKPs2rKXtuKGfk/4+QPd8
+# huLHFkad+R19LEcLhPIUFs0WlhM71qik8NRgXXoKwRa8ZV+kxKUBL0FXYtEPqTBv
+# eGuYuyDCWB7pnqDtBP4hHYO102BsWZzclKygHbR3cascxSfOaFkcHrpDPCw4CjJF
+# 1qhIAjE/i4h1xPYY8gdnATMooeAcmEXAgfKcV6GCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIEkkfs9n2h9/3LhnhH+pNk+g3KsQWOImZU6uqms8yBmBAggkG/QRFTxr
-# 9RgPMjAyNjExMTUxNDM0MzVaMAMCAQECECGkRS62TCCQ4VcpqWmG4o+gghGnMIIE
+# BAIBBQAEIOLxfOaGUQ971xyhXw0oJoYiuntM62GgLCIq1nfEstteAghm8KzaNSYY
+# ExgPMjAyNjExMjUwODAyNDBaMAMCAQECEDeTIclyfZtQ2TkURM9eZcygghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -1024,13 +1032,13 @@ function Write-MbtJobHtmlReport {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTExNTE0MzQzNVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIKUm
-# Tplp3cpHNt6XORfwkhxLLzr5pyzpAbIwTiqKPp/mMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDI0MFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEILK/
+# 37kNfCYw5X4RDJJqDuHRSzrhYENqaPEgQ/aClKIHMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiBwzIzzazdGJYRxOaZhoytjHM3spmSt8xGnF4wiAddQewIhAImX
-# wBcLFa/dsx//YsY7nFqmnxkd/yVL9RMBDiE7z0iw
+# zj0EAwIERzBFAiAkOkv5F+zh7EK7GykfZ9vNihonTqAECeJ0K/KK5GHXNQIhAOyi
+# qxGp64DkWxCEFSBgvdXT4rSLB6fU/hiEcT598Oeu
 # SIG # End signature block

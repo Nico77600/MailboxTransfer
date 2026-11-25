@@ -18,7 +18,7 @@ The release ZIP (`MailboxTransfer-1.1.0.zip`, built by `tools/New-MailboxTransfe
 
 - Every PowerShell file of the package, `src/Test-PackageIntegrity.ps1` and the manifest `PackageIntegrity.psd1` carry the owner's Authenticode signature with a trusted timestamp. The verifier hard-codes the signer thumbprint (`0F28E442889F17B5F4D251E8F96E7CC6E2C9C6D6`).
 - The manifest lists the SHA-256 of every other protected file: the C# sources compiled in memory, the SQLite libraries, the window definitions, the HTML guides, the launcher, the README and the notices. The launcher (`.cmd`) cannot carry an Authenticode signature: the manifest protects it by hash.
-- The entry scripts and the module run the verifier before anything is compiled or shown; a file that is missing, changed, unknown or a reparse point stops the start. The configuration and the generated `out\` and `logs\` folders are the only unprotected places.
+- The entry scripts and the module run the verifier before anything is compiled or shown; a file that is missing, changed or unknown, or a link whose type redirects or is not known (OneDrive, deduplicated and CompactOS files are accepted, and hashed), stops the start. The configuration and the generated `out\` and `logs\` folders are the only unprotected places.
 - Continuous integration verifies the signed sources with `-DevelopmentMode` (files and signatures, no unsigned mode in a release). No key material is read by any tool of the repository.
 
 ## Attesting the ZIP

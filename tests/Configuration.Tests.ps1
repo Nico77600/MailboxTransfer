@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 # Configuration: the Tenant section (and Lab, the name it had), read by Import-MbtConfiguration, the command line and the console. Nothing contacts the cloud.
 BeforeAll {
     $script:Package = Join-Path (Split-Path $PSScriptRoot -Parent) 'package'
@@ -180,5 +180,35 @@ Describe 'Configuration: what the console shows on the Setup page' {
         $light = @((& $engine.Readiness).Lights | Where-Object Name -EQ 'Configuration file')
         $light[0].Ok | Should -BeFalse
         $light[0].Detail | Should -Match 'Nonsense'
+    }
+}
+
+Describe 'PowerShell minimum: 7.6 for the console and the command line' {
+    It 'the manifest and product.json ask for 7.6' {
+        (Import-PowerShellDataFile -LiteralPath (Join-Path $script:Package 'MailboxTransfer.psd1')).PowerShellVersion | Should -Be '7.6'
+        $product = Get-Content -LiteralPath (Join-Path $script:Package 'product.json') -Raw | ConvertFrom-Json
+        $product.powerShell.minimum | Should -Be '7.6'
+        $product.powerShell.commandLineMinimum | Should -Be '7.6'
+    }
+    It 'every script of the package asks for 7.6 with #Requires' {
+        $bad = foreach ($f in Get-ChildItem -LiteralPath $script:Package -Recurse -Include *.ps1, *.psm1 -File) {
+            $line = Get-Content -LiteralPath $f.FullName -TotalCount 3 | Where-Object { $_ -match '#Requires\s+-Version' } | Select-Object -First 1
+            if ($line -notmatch '-Version\s+7\.6\s*$') { $f.Name }
+        }
+        @($bad) | Should -BeNullOrEmpty
+    }
+    It 'the launcher refuses an older PowerShell and names the way to install or update it' {
+        $cmd = Get-Content -LiteralPath (Join-Path $script:Package 'Start-MailboxTransferConsole.cmd') -Raw
+        $cmd | Should -Match "\[version\]'7\.6'"
+        $cmd | Should -Match 'winget install Microsoft\.PowerShell'
+        $cmd | Should -Match 'winget upgrade Microsoft\.PowerShell'
+    }
+    It 'the first light of the Setup page asks for PowerShell 7.6 or later, and the running PowerShell satisfies it' {
+        foreach ($f in 'Core', 'Run', 'Jobs', 'Browse', 'State', 'Pages', 'Pages.Export', 'Pages.Run', 'Pages.Source', 'Fake', 'Engine', 'Scenarios') { . (Join-Path $script:Package "module\MailboxTransfer.Gui.$f.ps1") }
+        $script:GuiRoot = $script:Package
+        $engine = New-MbtGuiRealEngine -PackageRoot $script:Package -EntryScript (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1') -WorkFolder $TestDrive
+        $light = @((& $engine.Readiness).Lights | Select-Object -First 1)
+        $light[0].Name | Should -Be 'PowerShell 7.6 or later'
+        $light[0].Ok | Should -BeTrue
     }
 }

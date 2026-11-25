@@ -1,4 +1,4 @@
-#Requires -Version 7.4
+#Requires -Version 7.6
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
     Mailbox Transfer - tests of the export of a list of mailboxes (module\MailboxTransfer.Batch.ps1 and the entry script with -MailboxCsv): the checks of the CSV file (every problem at
@@ -188,6 +188,16 @@ Describe 'The arguments of a mailbox' {
         $sel = Get-MbtBatchChildArgument -Row (New-Row 'alex@contoso.com' 'Primary' 'D:\sel.json') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{} } -Job $script:Job -BatchId 'W'
         ($sel -join ' ') | Should -Match '-UserPrincipalName alex@contoso.com -SelectionFile D:\\sel.json -StorePath'
         ($sel -join ' ') | Should -Not -Match '-Mailbox '
+    }
+    It 'gives the period of the batch to the export of every mailbox, as it was written' {
+        $a = Get-MbtBatchChildArgument -Row (New-Row 'adele@contoso.com') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31T18:30' } } -Job $script:Job -BatchId 'W'
+        ($a -join ' ') | Should -Match ' -ArrivedFrom 2026-03-01 -ArrivedTo 2026-03-31T18:30 '
+        $open = Get-MbtBatchChildArgument -Row (New-Row 'adele@contoso.com') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '' } } -Job $script:Job -BatchId 'W'
+        ($open -join ' ') | Should -Match ' -ArrivedFrom 2026-03-01 '
+        ($open -join ' ') | Should -Not -Match 'ArrivedTo'
+        $declared = (Get-Command $script:Entry).Parameters.Keys
+        $declared | Should -Contain 'ArrivedFrom'
+        $declared | Should -Contain 'ArrivedTo'
     }
     It 'every parameter it uses exists in the entry script' {
         $declared = (Get-Command $script:Entry).Parameters.Keys
@@ -502,6 +512,25 @@ Describe 'The command line of a batch' {
         $refused | Should -Match 'ok-2@contoso.com \(Archive\) is in the batch and not in the CSV file'
         $refused | Should -Match 'use -ResumeBatch to continue it, or another -BatchName'
     }
+    It 'a batch keeps the period it was started with: the same period is accepted, another one is refused before anything starts, a date that cannot be read stops the command' {
+        $w3 = New-Work 'cli-period'
+        $p = $script:Common.Clone(); $p.WorkFolder = $w3; $p.LogFolder = (Join-Path $w3 'logs')
+        $option = @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' } }
+        $b = New-TestBatch $w3 'Per1' @('ok-1@contoso.com', 'ok-2@contoso.com') -Option $option
+        foreach ($row in $b.rows) { $row.state = 'complete'; $row.job = ''; $row.done = 5 }
+        Save-MbtBatch -Batch $b -Folder (Join-Path $w3 'batches\Per1')
+        $same = Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedFrom = '2026-03-01T00:00:00'; ArrivedTo = '2026-03-31T23:59:59.9999999' })
+        $global:CliExit | Should -Be 0
+        $same | Should -Match '2 mailboxes: 2 complete, 0 to do'
+        $refused = Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedTo = '2026-06-30' })
+        $global:CliExit | Should -Be 1
+        $refused | Should -Match 'was started with the period'
+        $refused | Should -Match 'Continuing it would mix two periods in the stores of the batch'
+        $refused | Should -Match 'nothing was started'
+        { Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedFrom = '2026-04-01'; ArrivedTo = '2026-03-01' }) } | Should -Throw '*starts after it ends*'
+        { Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedFrom = '1/2/2026' }) } | Should -Throw '*not a date this tool reads*'
+        (Get-Content -LiteralPath (Join-Path $w3 'batches\Per1\batch.json') -Raw) | Should -Match '"ArrivedFrom": "2026-03-01'
+    }
     It 'says what is wrong with the batch name, a batch that does not exist, a CSV that is not the one of the batch, and options that belong to one mailbox' {
         $csv = New-Csv 'cli-name.csv' "UserPrincipalName`r`nadele@contoso.com`r`n"
         (Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; BatchName = '..\x' })) | Should -Match 'The batch name can hold letters'
@@ -510,7 +539,7 @@ Describe 'The command line of a batch' {
         $global:CliExit | Should -Be 1
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; ParallelMailboxes = 9 }) } | Should -Throw
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; SelectionFile = 'x.json' }) } | Should -Throw '*-SelectionFile is for one mailbox*'
-        { Invoke-Cli (@{ MailboxCsv = $csv; Mode = 'Import' }) } | Should -Throw '*belong to -Mode Export*'
+        { Invoke-Cli (@{ MailboxCsv = $csv; Mode = 'Browse' }) } | Should -Throw '*belong to -Mode Export, Import, ImportPst, ImportEml and Copy*'
         { Invoke-Cli @{ Mode = 'Export'; BatchName = 'X' } } | Should -Throw '*belong to -MailboxCsv*'
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; Mailbox = 'AuxArchive' }) } | Should -Throw '*AuxArchive*'
     }
@@ -641,6 +670,32 @@ Describe 'A batch of real exports: the entry script run against the fake service
         }
     }
     AfterAll { Remove-Variable -Name MbtEntryClient, MbtBatchService -Scope Global -ErrorAction SilentlyContinue }
+    It 'applies the period to every mailbox of the batch and says how many items each one left out' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $null = $svc.AddMailbox($script:Src)
+        $null = $svc.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+        foreach ($i in 1..2) { $null = $svc.AddItem($script:Src, 'F-INBOX', "O$i", (New-Message "Old $i"), "ck-O$i", [datetime]::new(2025, 5, $i, 12, 0, 0, [DateTimeKind]::Utc)) }
+        foreach ($i in 1..3) { $null = $svc.AddItem($script:Src, 'F-INBOX', "M$i", (New-Message "March $i"), "ck-M$i", [datetime]::new(2026, 3, 10 + $i, 12, 0, 0, [DateTimeKind]::Utc)) }
+        $global:MbtBatchService = $svc
+        $work = New-Work 'real-period'
+        $csv = New-Csv 'real-period.csv' "UserPrincipalName,Location`r`nadele.vance@contoso.com,Primary`r`nalex.wilber@contoso.com,Primary`r`n"
+        $read = Read-MbtBatchCsv -Path $csv -StoreBase (Join-Path $work 'stores') -SignedInUser 'adele.vance@contoso.com'
+        $option = @{ AppOnly = $false; SignInUser = 'adele.vance@contoso.com'; Pass = @{ Concurrency = 2; IntervalSeconds = 60; ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' } }
+        $batch = New-MbtBatch -Id 'Period' -Csv $csv -Row $read.Rows -Option $option -Parallel 1
+        $r = Invoke-MbtBatch -WorkFolder $work -Batch $batch -EntryScript $script:Entry -Option $option -Launcher $script:Launcher -PollMilliseconds 50 -StartGapMilliseconds 0 6>&1 | Where-Object { $_ -isnot [string] -and $_ -isnot [System.Management.Automation.InformationRecord] }
+        $r.ExitCode | Should -Be 0 -Because (@($r.Batch.rows.message) -join ' | ')
+        foreach ($row in $r.Batch.rows) {
+            $row.state | Should -Be 'complete'
+            $row.done | Should -Be 3
+            $row.outsidePeriod | Should -Be 2
+            $dir = Join-Path $work "jobs\$($row.job)"
+            $status = Get-Content -LiteralPath (Join-Path $dir 'status.json') -Raw | ConvertFrom-Json
+            $status.period.text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+            $status.counts.outsidePeriod | Should -Be 2
+            $status.counts.kept | Should -Be 3
+        }
+        (Get-MbtBatchCount $r.Batch).OutsidePeriod | Should -Be 4
+    }
     It 'exports each mailbox as an ordinary job: events, status with the batch, report.html, a store, a PST named after the mailbox; one mailbox after the other; the batch report lists them' {
         $global:MbtBatchService = New-SourceService
         $csv = New-Csv 'real.csv' "UserPrincipalName,Location`r`nadele.vance@contoso.com,Primary`r`nalex.wilber@contoso.com,Primary`r`n"
