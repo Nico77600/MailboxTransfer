@@ -450,7 +450,7 @@ Describe 'Reparse points are judged by their tag' {
         [void](New-Item -ItemType SymbolicLink -Path $docs -Target $docsCopy)
         $r = Invoke-Verifier -Root $fx -Distribution
         $r.ExitCode | Should -Not -Be 0
-        (ConvertTo-FlatText $r.Text) | Should -Match 'reparse point that is not accepted \(tag 0xA000000C\)'
+        (ConvertTo-FlatText $r.Text) | Should -Match 'reparse(-point ancestor| point) that is not accepted \(tag 0xA000000C\): \S*docs'
         (Get-Item -LiteralPath $docs -Force).Delete()
     }
     It 'refuses a junction in the package tree, whatever it points to, and names the tag' {
