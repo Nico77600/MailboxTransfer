@@ -106,8 +106,11 @@ Written in the job folder at the start (`running`), refreshed while the job runs
 ```json
 { "v": 1, "jobId": "imp-7c1e", "task": "import", "title": "Import - adele@contoso.com", "mode": "Import", "store": "D:\\MailboxTransfer\\stores\\adele", "source": "D:\\MailboxTransfer\\stores\\adele", "destination": "adele@contoso.com, folder Restore",
   "state": "resumable", "exitCode": 2, "counts": { "done": 5120, "pending": 4738 }, "next": "continue", "reason": "stopped",
-  "started": "2026-11-09T14:02:11.000Z", "updated": "2026-11-09T22:41:03.000Z", "lastEvent": "2026-11-09T22:41:03.000Z", "pid": 10432 }
+  "step": { "id": "send", "title": "Send the items", "index": 3, "of": 5, "done": 5120, "total": 9860 }, "error": null,
+  "started": "2026-11-09T14:02:11.000Z", "runStarted": "2026-11-09T14:02:11.000Z", "updated": "2026-11-09T22:41:03.000Z", "lastEvent": "2026-11-09T22:41:03.000Z", "pid": 10432 }
 ```
+
+`step` is the step that works (`id` and `title` of the `plan` event, `index` of `of` steps, and `done` and `total` when it counts): the console and `-Mode Status` say "Step 3 of 5, Send the items, 5,120 of 9,860 done" from it. `error` (`code`, `message`: the plain sentence of the `error` event) is written when an error ended the job. `runStarted` is the start of the process that writes the file: a job that runs again (the same folder, `-ResumeJob`, the console's **Continue**) has a new one, which is how a job that runs again is told from one that was left behind. A job that runs again begins its `plan` event with the step `resume` (*Resume: reading what is already done*), which ends when the first step of the job begins. A file written by an older version has fewer of these fields: what is missing is simply not said.
 
 `source` and `destination` say in a few words what the job reads from and writes to (the report of the job shows them). `period` (an export with a period only, same fields as in the `plan` event) says which items the job takes; `counts` then holds `kept`, `outsidePeriod` and `withoutDate`. `batch` is optional: the name of the batch the job belongs to (`Open-MbtEventLog -Batch`); the overview of all the jobs (`<work folder>\jobs\overview.html`, `Write-MbtJobOverview`) lists it and filters by it, and ignores a job that has none.
 

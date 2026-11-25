@@ -52,12 +52,14 @@ function Open-MbtEventLog {
     Initialize-MbtEngine
     Close-MbtEventLog
     $full = [IO.Path]::GetFullPath($Path)
+    # a folder whose events file already holds lines is a job that runs again: the run begins with a step that reads what the earlier run did
+    $resumed = [IO.File]::Exists($full) -and ([IO.FileInfo]::new($full)).Length -gt 0
     $script:EventLog = [MailboxTransfer.EventLog]::new($full, $null, $HeartbeatMs, 120)
     if (-not $JobId) { $JobId = (Split-Path (Split-Path $full -Parent) -Leaf) }
-    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false; Period = $null; PeriodOutside = 0L; Phase = $null }
+    $script:JobInfo = @{ Folder = (Split-Path $full -Parent); Id = $JobId; Task = $Task; Title = $Title; Mode = $Mode; Store = $Store; Started = [DateTime]::UtcNow; Steps = @{}; Counts = @{}; StatusAt = [DateTime]::UtcNow; Finished = $false; Period = $null; PeriodOutside = 0L; Phase = $null; Resumed = $resumed; PlanSteps = @(); Current = $null; Failure = $null }
     $script:JobProgress = @{ Step = ''; Detail = ''; ThrottleSeen = 0; Waited = 0.0; WindowsSeen = 0; Warns = 0; Last = [DateTime]::MinValue }
     $script:JobInfo.Period = ConvertTo-MbtPeriodField $Period
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch -Period $script:JobInfo.Period
+    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -JobId $JobId -Task $Task -Title $Title -Mode $Mode -Store $Store -Source $Source -Destination $Destination -Batch $Batch -Period $script:JobInfo.Period -NewRun
 }
 
 function ConvertTo-MbtPeriodField {
@@ -122,11 +124,15 @@ function Write-MbtJobPlan {
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable[]]$Steps)
     if (-not $script:EventLog) { return }
+    # a job that runs again begins with a step that reads what the earlier run did (the store, the journal, the manifest): the events show it at once
+    if ($script:JobInfo.Resumed) { $Steps = @(@{ Id = 'resume'; Title = 'Resume: reading what is already done' }) + @($Steps) }
+    $script:JobInfo.PlanSteps = @($Steps | Where-Object { $_.Id -ne 'resume' } | ForEach-Object { @{ Id = [string]$_.Id; Title = [string]$_.Title } })
     $list = @($Steps | ForEach-Object { [ordered]@{ id = $_.Id; title = $_.Title } })
     foreach ($s in $Steps) { $script:JobInfo.Steps[$s.Id] = 'waiting' }
     $plan = [ordered]@{ job = $script:JobInfo.Id; task = $script:JobInfo.Task; mode = $script:JobInfo.Mode; steps = $list }
     if ($script:JobInfo.Period) { $plan.period = $script:JobInfo.Period }
     Write-MbtEvent plan $plan
+    if ($script:JobInfo.Resumed) { Write-MbtJobStep -Id resume -State running -Msg 'Looking at what the earlier run already did' }
 }
 
 function Update-MbtJobStatusTick {
@@ -144,9 +150,10 @@ function Update-MbtJobStatusTick {
     $script:JobInfo.StatusAt = $now
     $counts = $null
     if ($Done -ge 0) { $counts = @{ done = $Done }; if ($Total -ge 0) { $counts.total = $Total } }
-    try {
-        if ($counts) { Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running -Counts $counts } else { Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State running }
-    } catch { Write-Verbose "status.json not refreshed: $($_.Exception.Message)" }
+    $write = @{ JobFolder = $script:JobInfo.Folder; State = 'running' }
+    if ($counts) { $write.Counts = $counts }
+    if ($script:JobInfo.Current) { $write.Step = $script:JobInfo.Current }
+    try { Write-MbtJobStatus @write } catch { Write-Verbose "status.json not refreshed: $($_.Exception.Message)" }
 }
 
 function Write-MbtJobStep {
@@ -158,9 +165,27 @@ function Write-MbtJobStep {
         [long]$Done = -1, [long]$Total = -1, [long]$Bytes = -1, [long]$BytesTotal = -1, [string]$Msg
     )
     if (-not $script:EventLog) { return }
+    # the step that reads what an earlier run did ends when the next step begins
+    if ($Id -ne 'resume' -and $State -eq 'running' -and $script:JobInfo.Steps.ContainsKey('resume') -and $script:JobInfo.Steps['resume'] -eq 'running') {
+        $script:JobInfo.Steps['resume'] = 'done'
+        $script:EventLog.Step('resume', 'done', -1, -1, -1, -1, $null)
+    }
     $script:JobInfo.Steps[$Id] = $State
     $script:EventLog.Step($Id, $State, $Done, $Total, $Bytes, $BytesTotal, $(if ($Msg) { $Msg }))
-    if ($State -eq 'running') { Update-MbtJobStatusTick -Done $Done -Total $Total }
+    if ($State -ne 'running' -or $Id -eq 'resume') { return }
+    # the step that works is written to status.json at once when it changes (the console says "step 3 of 5" from it), and with the counts while it runs
+    $current = $script:JobInfo.Current
+    if (-not $current -or $current.id -ne $Id) {
+        $plan = @($script:JobInfo.PlanSteps)
+        $index = 0; for ($i = 0; $i -lt $plan.Count; $i++) { if ($plan[$i].Id -eq $Id) { $index = $i + 1; break } }
+        $title = if ($index) { $plan[$index - 1].Title } else { $Id }
+        $current = @{ id = $Id; title = $title; index = $index; of = $plan.Count }
+        $script:JobInfo.Current = $current
+        $script:JobInfo.StatusAt = [DateTime]::MinValue
+    }
+    if ($Done -ge 0) { $current.done = $Done } else { $null = $current.Remove('done') }
+    if ($Total -ge 0) { $current.total = $Total } else { $null = $current.Remove('total') }
+    Update-MbtJobStatusTick -Done $Done -Total $Total
 }
 
 function Write-MbtJobObject {
@@ -184,10 +209,16 @@ function Write-MbtJobResult {
     if (-not $script:EventLog) { return }
     if (-not $Next) { $Next = switch ($ExitCode) { 0 { 'done' } 2 { 'continue' } 3 { 'decide' } default { 'retry' } } }
     $isComplete = [bool]$Complete -or ($ExitCode -eq 0)
+    # a job that never got to a step of its own (a check, a repair) ends the step that reads what an earlier run did with the result
+    if ($script:JobInfo.Steps.ContainsKey('resume') -and $script:JobInfo.Steps['resume'] -eq 'running') { $script:JobInfo.Steps['resume'] = 'done'; $script:EventLog.Step('resume', 'done', -1, -1, -1, -1, $null) }
     $script:EventLog.Result($ExitCode, $isComplete, $(if ($Counts) { $Counts } else { @{} }), $Next, $(if ($Reason) { $Reason }))
     $state = if ($ExitCode -eq 0 -or ($ExitCode -eq 1 -and $Reason -eq 'refused-items')) { 'complete' } elseif ($ExitCode -eq 3) { 'needs-decision' } elseif ($ExitCode -eq 2) { if ($Reason -eq 'stopped') { 'stopped' } else { 'resumable' } } else { 'error' }
     $script:JobInfo.Finished = $true
-    Write-MbtJobStatus -JobFolder $script:JobInfo.Folder -State $state -Counts $Counts -ExitCode $ExitCode -Next $Next -Reason $Reason
+    $write = @{ JobFolder = $script:JobInfo.Folder; State = $state; ExitCode = $ExitCode; Next = $Next; Reason = $Reason }
+    if ($Counts) { $write.Counts = $Counts }
+    if ($script:JobInfo.Current) { $write.Step = $script:JobInfo.Current }
+    if ($script:JobInfo.Failure -and $state -eq 'error') { $write.Failure = $script:JobInfo.Failure }
+    Write-MbtJobStatus @write
 }
 
 function ConvertTo-MbtPlainError {
@@ -215,6 +246,7 @@ function Write-MbtJobError {
     if (-not $Code) { $Code = $p.Code }
     if (-not $Plain) { $Plain = $p.Message }
     if ($script:EventLog) { $script:EventLog.Error($Code, $Plain, $Message) }
+    if ($script:JobInfo) { $script:JobInfo.Failure = @{ code = $Code; message = $Plain } }
     [pscustomobject]@{ Code = $Code; Message = $Plain }
 }
 
@@ -238,7 +270,9 @@ function Write-MbtJobStatus {
         Writes (or updates) status.json in a job folder: what the Continue list of the console reads.
     .DESCRIPTION
         Fields: v, jobId, task, title, mode, store, source, destination, batch (when the job belongs to one), state (running | stopped | resumable | needs-decision | complete | error), exitCode,
-        counts, next, reason, started, updated, lastEvent, pid. A call updates the fields it is given and keeps the others.
+        counts, next, reason, step (the step that works: id, title, index, of, done, total), error (code and plain message of the failure that ended the job), started, runStarted (the start of the
+        process that writes the file: a job that runs again has a new one), updated, lastEvent, pid. A call updates the fields it is given and keeps the others; -NewRun starts a run: the
+        process start is written and the reason, the next step and the error of the run before are cleared.
     #>
     [CmdletBinding()]
     param(
@@ -247,7 +281,11 @@ function Write-MbtJobStatus {
         [string]$JobId, [string]$Task, [string]$Title, [string]$Mode, [string]$Store, [string]$Source, [string]$Destination, [string]$Batch,
         [hashtable]$Counts, [Nullable[int]]$ExitCode, [string]$Next, [string]$Reason,
         # the period of an export (see ConvertTo-MbtPeriodField); a job without one has no period field
-        [System.Collections.IDictionary]$Period
+        [System.Collections.IDictionary]$Period,
+        # the step that works (id, title, index, of, done, total) and the failure that ended the job (code, message)
+        [System.Collections.IDictionary]$Step,
+        [System.Collections.IDictionary]$Failure,
+        [switch]$NewRun
     )
     if (-not (Test-Path -LiteralPath $JobFolder)) { New-Item -ItemType Directory -Path $JobFolder -Force | Out-Null }
     $file = Join-Path $JobFolder 'status.json'
@@ -258,10 +296,14 @@ function Write-MbtJobStatus {
     $now = [DateTime]::UtcNow.ToString('yyyy-MM-dd\THH:mm:ss.fff\Z')
     if (-not $s.started) { $s.started = $now }
     $s.state = $State; $s.updated = $now; $s.pid = $PID
+    if ($NewRun -or -not $s.Contains('runStarted') -or -not $s.runStarted) { $s.runStarted = $now }
+    if ($NewRun) { $s.reason = $null; $s.next = $null; $s.error = $null }
     $s.lastEvent = if ($script:EventLog) { [MailboxTransfer.EventLog]::Iso($script:EventLog.LastEventUtc) } else { $now }
     foreach ($pair in @(@('jobId', $JobId), @('task', $Task), @('title', $Title), @('mode', $Mode), @('store', $Store), @('source', $Source), @('destination', $Destination), @('batch', $Batch), @('next', $Next), @('reason', $Reason))) { if ($pair[1]) { $s[$pair[0]] = $pair[1] } }
     if ($Counts) { $s.counts = $Counts }
     if ($Period) { $s.period = $Period }
+    if ($Step) { $s.step = $Step }
+    if ($Failure) { $s.error = $Failure }
     if ($PSBoundParameters.ContainsKey('ExitCode') -and $null -ne $ExitCode) { $s.exitCode = [int]$ExitCode }
     $json = $s | ConvertTo-Json -Depth 6
     $tmp = "$file.$PID.tmp"
@@ -272,19 +314,20 @@ function Write-MbtJobStatus {
 function Get-MbtJob {
     <#
     .SYNOPSIS
-        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job". -ExcludeFolder: names of job folders that are left out without being read.
+        The jobs found in a work folder (<WorkFolder>\jobs\<job>\status.json), newest first: the list of "Continue a job". -ExcludeFolder: names of job folders that are left out without being read. -Name: only the job whose folder has that name (whatever the case).
     .DESCRIPTION
         A job whose state is running but whose process is gone (crash, power loss, killed) is reported with EffectiveState resumable and
         Interrupted = $true; if the process is still there, Alive is $true ("running elsewhere").
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50, [string[]]$ExcludeFolder)
+    param([Parameter(Mandatory)][string]$WorkFolder, [int]$Limit = 50, [string[]]$ExcludeFolder, [string]$Name)
     $jobs = Join-Path $WorkFolder 'jobs'
     if (-not (Test-Path -LiteralPath $jobs)) { return }
     # the newest folders only (a status.json is replaced with every update, which touches its folder), and not the ones the caller already knows about (the jobs of a batch that is complete)
     $skip = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($n in $ExcludeFolder) { if ($n) { [void]$skip.Add($n) } }
-    $newest = @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { -not $skip.Contains($_.Name) } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([math]::Max($Limit * 4, 200)))
+    $newest = if ($Name) { @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { $_.Name -ieq $Name }) }
+    else { @([IO.DirectoryInfo]::new($jobs).EnumerateDirectories() | Where-Object { -not $skip.Contains($_.Name) } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First ([math]::Max($Limit * 4, 200))) }
     $found = foreach ($dir in $newest) {
         $file = Join-Path $dir.FullName 'status.json'
         if (-not (Test-Path -LiteralPath $file)) { continue }
@@ -293,16 +336,18 @@ function Get-MbtJob {
         $parse = { param($v, $fallback) if ($v -is [datetime]) { $v.ToUniversalTime() } elseif ($v) { [DateTime]::Parse([string]$v, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal) } else { $fallback } }
         $started = & $parse (& $get 'started') $dir.CreationTimeUtc
         $updated = & $parse (& $get 'updated') $dir.LastWriteTimeUtc
+        $runStarted = & $parse (& $get 'runStarted') $started
         $state = [string](& $get 'state'); $jobPid = & $get 'pid'
         $alive = $false
         if ($state -eq 'running' -and $jobPid) {
             $proc = Get-Process -Id ([int]$jobPid) -ErrorAction SilentlyContinue
-            if ($proc) { try { $alive = $proc.StartTime.ToUniversalTime() -le $started.AddSeconds(30) } catch { $alive = $true } }
+            if ($proc) { try { $alive = $proc.StartTime.ToUniversalTime() -le $runStarted.AddSeconds(30) } catch { $alive = $true } }
         }
         $effective = if ($state -eq 'running' -and -not $alive) { 'resumable' } else { $state }
         [pscustomobject]@{
             JobId = & $get 'jobId'; Task = & $get 'task'; Title = & $get 'title'; Mode = & $get 'mode'; Store = & $get 'store'; State = $state; EffectiveState = $effective
             Alive = $alive; Interrupted = ($state -eq 'running' -and -not $alive); ExitCode = & $get 'exitCode'; Counts = & $get 'counts'; Next = & $get 'next'; Reason = & $get 'reason'; Batch = & $get 'batch'
+            Source = & $get 'source'; Destination = & $get 'destination'; Step = & $get 'step'; Failure = & $get 'error'; Name = $dir.Name
             Started = $started; Updated = $updated; Folder = $dir.FullName; EventsFile = (Join-Path $dir.FullName 'events.jsonl')
         }
     }

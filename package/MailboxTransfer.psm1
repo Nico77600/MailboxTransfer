@@ -3516,6 +3516,8 @@ function Get-MbtPstPreview {
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Eml.ps1')
 # Events of a job (JSON lines), stop request, keep awake, job status, capabilities.
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Events.ps1')
+# The job folders: what a job says about itself, deleting and resuming a job, the job folder of a command-line run.
+. (Join-Path $PSScriptRoot 'module\MailboxTransfer.JobFolders.ps1')
 # The HTML report of a job: written at the end of every job from events.jsonl and status.json of the job folder.
 . (Join-Path $PSScriptRoot 'module\MailboxTransfer.Report.ps1')
 # The overview of all the jobs of a work folder: <work folder>\jobs\overview.html, rewritten at the end of every job.
@@ -3545,6 +3547,7 @@ Export-ModuleMember -Function @(
     'Set-MbtJobPhase', 'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
     'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
     'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
+    'Get-MbtDefaultWorkFolder', 'Get-MbtJobField', 'Get-MbtJobListing', 'Get-MbtJobDescription', 'Find-MbtJob', 'Get-MbtJobRemovalPlan', 'Remove-MbtJob', 'Get-MbtJobResumeText', 'New-MbtCliJob', 'Read-MbtJobRequest', 'Get-MbtCliJobParameter', 'Get-MbtFolderBytes'
     'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken', 'Read-MbtImportBatchCsv', 'Compare-MbtImportBatchRow', 'Get-MbtBatchMode', 'Get-MbtImportBatchKey', 'Get-MbtImportChildArgument', 'Get-MbtBatchRowLock', 'Read-MbtCopyBatchCsv', 'Compare-MbtCopyBatchRow', 'Get-MbtCopyChildArgument'
 )
 

@@ -234,9 +234,12 @@ Describe 'Event log of the module, status.json and the job list' {
         $start = & $read
         $start.counts.done | Should -BeNullOrEmpty
         Write-MbtJobPlan -Steps @(@{ Id = 'send'; Title = 'Send' })
-        # a step event right after the start does not rewrite the file (throttled)
+        # the first event of a step writes the step at once; the next events of the same step do not rewrite the file (throttled)
         Write-MbtJobStep -Id send -State running -Done 10 -Total 100
-        (& $read).updated | Should -Be $start.updated
+        $first = & $read
+        $first.step.id | Should -Be 'send'; $first.step.index | Should -Be 1; $first.step.of | Should -Be 1
+        Write-MbtJobStep -Id send -State running -Done 20 -Total 100
+        (& $read).updated | Should -Be $first.updated
         # fifteen seconds later the next step event refreshes it
         InModuleScope MailboxTransfer { $script:JobInfo.StatusAt = [DateTime]::UtcNow.AddSeconds(-20) }
         Start-Sleep -Milliseconds 20

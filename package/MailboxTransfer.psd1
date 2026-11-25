@@ -33,6 +33,7 @@
         'Set-MbtJobPhase', 'Start-MbtPhaseProgress', 'Stop-MbtPhaseProgress', 'Start-MbtStopWatch', 'Stop-MbtStopWatch', 'Test-MbtStopRequested', 'Get-MbtStopToken', 'Start-MbtKeepAwake', 'Stop-MbtKeepAwake', 'Get-MbtCapability'
         'Get-MbtConfiguredMailboxId', 'Assert-MbtSignInSettings'
         'Write-MbtJobHtmlReport', 'Get-MbtJobReportModel', 'Write-MbtJobOverview', 'Get-MbtJobOverviewModel', 'Invoke-MbtJobRetention'
+        'Get-MbtDefaultWorkFolder', 'Get-MbtJobField', 'Get-MbtJobListing', 'Get-MbtJobDescription', 'Find-MbtJob', 'Get-MbtJobRemovalPlan', 'Remove-MbtJob', 'Get-MbtJobResumeText', 'New-MbtCliJob', 'Read-MbtJobRequest', 'Get-MbtCliJobParameter', 'Get-MbtFolderBytes'
         'Read-MbtBatchCsv', 'Read-MbtBatch', 'Save-MbtBatch', 'New-MbtBatch', 'Compare-MbtBatchRow', 'Invoke-MbtBatch', 'Write-MbtBatchReport', 'Get-MbtBatchList', 'Get-MbtBatchProtection', 'Get-MbtBatchFolder', 'Find-MbtBatchFolder', 'Test-MbtBatchName', 'Get-MbtBatchCount', 'Get-MbtBatchState', 'Get-MbtBatchChildArgument', 'Resolve-MbtBatchOutput', 'Write-MbtBatchLog', 'Write-MbtBatchSummary', 'Show-MbtBatchPlan', 'Format-MbtBatchToken', 'Read-MbtImportBatchCsv', 'Compare-MbtImportBatchRow', 'Get-MbtBatchMode', 'Get-MbtImportBatchKey', 'Get-MbtImportChildArgument', 'Get-MbtBatchRowLock', 'Read-MbtCopyBatchCsv', 'Compare-MbtCopyBatchRow', 'Get-MbtCopyChildArgument'
     )
     CmdletsToExport   = @()
