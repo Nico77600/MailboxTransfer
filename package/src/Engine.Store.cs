@@ -1262,23 +1262,6 @@ CREATE TABLE IF NOT EXISTS exportOption(
             finally { ExitOp(); }
         }
 
-        /// <summary>Mailbox id of a folder record with this folder id in a mailbox of this kind (the main archive holds the record of an expanded folder), or null.</summary>
-        public string FindFolderMailbox(string folderId, StoreMailboxKind kind)
-        {
-            EnterOp(false);
-            try
-            {
-                using (var l = Reader())
-                using (var cmd = Cmd(l.Conn, "SELECT m.mailbox_id FROM folder f JOIN mailbox m ON m.mailbox_key=f.mailbox_key WHERE f.folder_id=@f AND m.kind=@k ORDER BY m.mailbox_key LIMIT 1", null,
-                    "@f", folderId, "@k", (int)kind))
-                {
-                    object o = cmd.ExecuteScalar();
-                    return o == null ? null : Convert.ToString(o, CultureInfo.InvariantCulture);
-                }
-            }
-            finally { ExitOp(); }
-        }
-
         /// <summary>
         /// An item turned out to live in another mailbox than the one it was listed in (an auxiliary archive answered ErrorArchiveFolderMovedPermanently):
         /// its record is moved there. False when that mailbox already holds a record of the same item id (nothing is changed then).

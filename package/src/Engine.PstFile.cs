@@ -502,8 +502,6 @@ namespace MailboxTransfer
         public byte[] ReadAll() { return File.ReadData(BidData); }
         /// <summary>Bytes of the data of the node, from the root of its data tree (nothing is read from the data blocks).</summary>
         public long DataLength { get { return File.DataTreeLength(BidData); } }
-        /// <summary>The data of the node as a blob: a stream that reads the data tree block by block, whatever its size.</summary>
-        public FxBlob OpenData() { return new PstDataBlob(File, BidData, DataLength); }
 
         Dictionary<uint, PstSubEntry> Subs
         {
@@ -570,8 +568,6 @@ namespace MailboxTransfer
             _offs[bi] = o;
             return o;
         }
-
-        public int AllocCount(int block) { return Offsets(block).Length - 1; }
 
         public byte[] Get(uint hid)
         {

@@ -135,9 +135,6 @@ namespace MailboxTransfer
             }
             return "Unknown(0x" + type.ToString("X4") + ")";
         }
-
-        /// <summary>The code page of a code page string type (0x84B0 is 1200, 0xFDE9 is 65001), 0 for another type.</summary>
-        public static int CodePageOf(ushort type) { return FxTypes.Describe(type).CodePage; }
     }
 
     public sealed class FxElement

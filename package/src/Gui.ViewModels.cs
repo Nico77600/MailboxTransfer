@@ -147,14 +147,6 @@ namespace MailboxTransferGui
             if (Parent != null) Parent.Refresh();
         }
 
-        /// <summary>The user (un)ticks messages of this folder. A message ticked while the folder was ticked as a whole turns the folder into a list of picks.</summary>
-        public void SetPicks(IEnumerable<KeyValuePair<string, object>> rows, Func<object, long> size, bool all, IEnumerable<string> allIds)
-        {
-            own = false; Picks.Clear(); PickRows.Clear();
-            foreach (var kv in rows) { PickRows[kv.Key] = kv.Value; Picks[kv.Key] = size(kv.Value); }
-            Refresh(); Notify();
-        }
-
         public void TickWholeFolder(bool on)
         {
             SetAll(on);
