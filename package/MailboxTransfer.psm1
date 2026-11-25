@@ -3260,7 +3260,9 @@ function Show-MbtLiveExportPlan {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Tree, [Parameter(Mandatory)][string]$Kind, [string]$Folder, [long]$PstMaxBytes = 51200MB, [int]$MaxFolders = 60,
         # the tree holds Recoverable Items (Get-MbtBrowseFolder -RecoverableItems -RecoverableItemsFolders ...): they count in the plan; otherwise they are left out
-        [switch]$IncludeRecoverableItems)
+        [switch]$IncludeRecoverableItems,
+        # a copy writes no PST: the estimate of the number of files is left out
+        [switch]$NoPst)
     foreach ($n in $Tree.Notes) { Write-MbtItem WARN $n }
     $folders = @($Tree.Folders | Where-Object { $IncludeRecoverableItems -or -not $_.Recoverable })
     if ($Folder) {
@@ -3288,7 +3290,7 @@ function Show-MbtLiveExportPlan {
     }
     $empty = @($folders | Where-Object { $_.TotalItemCount -eq 0 }).Count
     if ($empty) { Write-MbtDetail "$empty folder(s) without items" }
-    if ($totals.Items -gt 0) {
+    if ($totals.Items -gt 0 -and -not $NoPst) {
         if ($totals.SizeUnknown) { Write-MbtDetail ("PST files: cannot be estimated, the service gives no folder size for this location (an estimate of the number of files at {0} per file needs the sizes)" -f (Format-MbtBytes $PstMaxBytes)) }
         else { Write-MbtDetail ("PST files: about {0} at most {1} per file (announced size {2}{3})" -f [math]::Max(1, [math]::Ceiling($totals.KnownSizeBytes / $PstMaxBytes)), (Format-MbtBytes $PstMaxBytes), (Format-MbtBytes $totals.KnownSizeBytes), $(if (-not $totals.SizeComplete) { ', unknown sizes not counted' })) }
     }

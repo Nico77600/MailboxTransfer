@@ -1458,7 +1458,7 @@ try {
                         # the counts of the plan (counted by the service, folders below included), not the ones the browse view wrote in the file
                         foreach ($unit in $units) {
                             $selTotals = $unit.Plan.Totals()
-                            Write-MbtItem INFO ("selection ({0} mailbox): {1}{2}" -f $unit.Kind, (Format-MbtBrowseTotals $selTotals -AtMost:([bool]$arrivalPeriod)), $(if (-not $selTotals.SizeUnknown) { "; about {0} PST file(s) of at most {1} if converted (-OutputPst)" -f [math]::Max(1, [math]::Ceiling($selTotals.KnownSizeBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes) }))
+                            Write-MbtItem INFO ("selection ({0} mailbox): {1}{2}" -f $unit.Kind, (Format-MbtBrowseTotals $selTotals -AtMost:([bool]$arrivalPeriod)), $(if ($Mode -ne 'Copy' -and -not $selTotals.SizeUnknown) { "; about {0} PST file(s) of at most {1} if converted (-OutputPst)" -f [math]::Max(1, [math]::Ceiling($selTotals.KnownSizeBytes / $pstMaxBytes)), (Format-MbtBytes $pstMaxBytes) }))
                         }
                         Write-MbtJobStep -Id tree -State done
                         if ($Mode -eq 'Copy') {
@@ -1500,7 +1500,7 @@ try {
                             $withRecoverable = [bool]($IncludeRecoverableItems -or ($Folder -and [MailboxTransfer.RecoverableItems]::IsPath($Folder)))
                             $recoverableNames = if ($IncludeRecoverableItems -or ($Folder -and $Folder.Trim('/') -ieq [MailboxTransfer.RecoverableItems]::TopName)) { [MailboxTransfer.RecoverableItems]::Chosen([string[]]@($RecoverableItemsFolders | Where-Object { $_ })) }
                             $tree = Get-MbtBrowseFolder -Location (New-MbtBrowseLocation -Kind $tg.Kind -MailboxId $tg.Id) -AsTree -RecoverableItems:$withRecoverable -RecoverableItemsFolders $recoverableNames
-                            $totals = Show-MbtLiveExportPlan -Tree $tree -Kind $tg.Kind -Folder $Folder -PstMaxBytes $pstMaxBytes -IncludeRecoverableItems:$withRecoverable
+                            $totals = Show-MbtLiveExportPlan -Tree $tree -Kind $tg.Kind -Folder $Folder -PstMaxBytes $pstMaxBytes -IncludeRecoverableItems:$withRecoverable -NoPst:($Mode -eq 'Copy')
                             $sumItems += $totals.Items; $sumBytes += $totals.KnownSizeBytes; if (-not $totals.SizeComplete) { $sumUnknown = $true }
                         } catch { Write-MbtItem WARN "the folders of the $($tg.Kind) mailbox $($tg.Id) could not be read: $($_.Exception.Message)" }
                     }

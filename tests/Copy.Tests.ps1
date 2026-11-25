@@ -195,6 +195,8 @@ Describe 'Copy: the plan (-WhatIf)' {
         $text | Should -Match 'keep:  the export store .* stays on disk after the copy'
         $text | Should -Match "write: the Primary mailbox .*, below the folder 'Copied'"
         $text | Should -Match 'time:'
+        $text | Should -Not -Match 'PST file'
+        $text | Should -Not -Match 'if converted'
         $text | Should -Match 'sign-in: delegated as adele.vance@contoso.com: it reads what that account can read and writes into the mailbox of that account only'
         $text | Should -Match 'Copy planned \(WhatIf, nothing was written\)'
         $text | Should -Match 'Next steps\s+Run the same command without -WhatIf'

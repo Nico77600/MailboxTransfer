@@ -1022,6 +1022,7 @@ Describe 'WhatIf in every mode of the entry script' {
         $text | Should -Match 'Inbox/Projects\s+2 item\(s\)'
         $text | Should -Match '6 item\(s\)'
         $text | Should -Match 'PST file\(s\) of at most 5[,.]0 MiB'
+        $text | Should -Match 'PST files: (about \d+ at most|cannot be estimated)'
         $text | Should -Match 'WhatIf: nothing was exported and no store was created'
         $text | Should -Not -Match 'export finished'
         Test-Path -LiteralPath $store | Should -BeFalse
