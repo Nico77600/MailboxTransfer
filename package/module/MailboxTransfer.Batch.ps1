@@ -252,6 +252,13 @@ function Read-MbtBatchCsv {
         $suffix = ''
         if ($group.Count -gt 1) { $suffix = if (-not $r.SelectionFile -and @($group | Where-Object { -not $_.SelectionFile -and $_.Location -eq $r.Location }).Count -eq 1) { $r.Location.ToLowerInvariant() } else { "row$($r.Number)" } }
         if ($r.RowOutput -or $OutputPst) {
+            # the name as written in the CSV: resolving a path ending in a device name such as aux.pst gives the device itself on Windows 10 and Server 2022
+            $rowFile = ([string]$r.RowOutput).TrimEnd('\', '/')
+            if ($rowFile -and [IO.Path]::GetExtension($rowFile) -ieq '.pst') {
+                $leaf = [IO.Path]::GetFileName($rowFile)
+                $why = Test-MbtBatchFileName $leaf
+                if ($why) { $problems.Add("line $($r.Line): the PST file name $leaf cannot be used: $why."); continue }
+            }
             try { $r.Output = Resolve-MbtBatchOutput -UserPrincipalName $r.UserPrincipalName -RowOutput $r.RowOutput -GlobalOutput $OutputPst -CsvFolder $csvFolder -Suffix $suffix } catch { $problems.Add("line $($r.Line): the OutputPst is not a path ($($r.RowOutput)): $($_.Exception.Message)"); continue }
             $why = Test-MbtBatchFileName ([IO.Path]::GetFileName($r.Output))
             if ($why) { $problems.Add("line $($r.Line): the PST file name $([IO.Path]::GetFileName($r.Output)) cannot be used: $why."); continue }
