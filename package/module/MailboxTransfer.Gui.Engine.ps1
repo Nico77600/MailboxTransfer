@@ -89,9 +89,9 @@ function New-MbtGuiRealEngine {
 
     $e.Jobs = {
         param($Work)
-        # a batch is one line (its numbers and its report; a batch is run from the command line), and the jobs of a batch that is complete are not listed one by one; the jobs of a batch that is not
-        # complete are listed with the name of the batch, three at most
-        $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 3)
+        # a batch is one line (its numbers and its report; a batch is run from the command line); the jobs of a batch that is complete are not listed one by one, the jobs of a batch that is not
+        # complete are listed with the name of the batch, three at most. The lines of the jobs that are not finished come first, then the finished ones (Finished = $true).
+        $batches = @(Get-MbtBatchList -WorkFolder $Work -Limit 20)
         $lines = [Collections.Generic.List[object]]::new()
         foreach ($b in $batches) {
             $sub = '{0} of {1} {2} complete' -f (Format-MbtNumber $b.Complete), (Format-MbtNumber $b.Total), $(if ($b.Mode -ne 'Export') { 'import' + $(if ($b.Total -eq 1) { '' } else { 's' }) } elseif ($b.Total -eq 1) { 'mailbox' } else { 'mailboxes' })
@@ -99,30 +99,55 @@ function New-MbtGuiRealEngine {
             if ($b.Failed) { $sub += ', {0} failed' -f (Format-MbtNumber $b.Failed) }
             if ($b.Pending) { $sub += ', {0} not started' -f (Format-MbtNumber $b.Pending) }
             if ($b.State -ne 'complete') { $sub += '. Run it again from the command line to continue.' }
-            $lines.Add([pscustomobject]@{ Task = 'batch'; Title = "$(if ($b.Mode -ne 'Export') { 'Import batch' } else { 'Batch' }) $($b.Id)"; Sub = $sub; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id })
+            $lines.Add([pscustomobject]@{ Task = 'batch'; Kind = 'batch'; Title = "$(if ($b.Mode -ne 'Export') { 'Import batch' } else { 'Batch' }) $($b.Id)"; Sub = $sub; Sub2 = ''; State = $(if ($b.State -eq 'complete') { 'ok' } else { 'warn' }); Button = 'Open the report'; Folder = $b.Folder; Report = $b.Report; Batch = $b.Id; Name = $b.Id; Finished = ($b.State -eq 'complete'); CanContinue = $false })
         }
         $finished = @($(foreach ($b in @(Get-MbtBatchList -WorkFolder $Work -Limit 1000 | Where-Object { $_.State -eq 'complete' })) { $b.Jobs }))
+        $listing = Get-MbtJobListing -WorkFolder $Work -FinishedLimit 50 -ExcludeFolder $finished
         $ofBatch = 0
-        foreach ($j in @(Get-MbtJob -WorkFolder $Work -Limit 50 -ExcludeFolder $finished)) {
+        foreach ($j in @($listing.Unfinished) + @($listing.Finished)) {
             if ($j.Batch -and $ofBatch -ge 3) { continue }
             if ($j.Batch) { $ofBatch++ }
-            $lines.Add($j)
-        }
-        $out = foreach ($j in @($lines | Select-Object -First 8)) {
-            if ($j.PSObject.Properties['Report']) { $j; continue }
-            $state = switch ($j.EffectiveState) { 'complete' { 'ok' } 'error' { 'warn' } 'needs-decision' { 'warn' } default { 'run' } }
-            $counts = $j.Counts
-            $sub = switch ($j.EffectiveState) {
-                'complete' { 'finished ' + $j.Updated.ToLocalTime().ToString('yyyy-MM-dd') }
-                'needs-decision' { 'Almost done: an item needs your decision.' }
-                'error' { 'Stopped by an error. Nothing is lost.' }
-                default { "stopped $($j.Updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm'))" + $(if ($counts -and $counts.PSObject.Properties['done']) { " - $(Format-MbtGuiQuantity $counts.done 'item') done" } else { '' }) }
-            }
-            if ($j.Alive) { $sub = 'running elsewhere' }
+            $isDone = [string]$j.EffectiveState -eq 'complete'
+            $state = switch ([string]$j.EffectiveState) { 'complete' { 'ok' } 'error' { 'warn' } 'needs-decision' { 'warn' } default { 'run' } }
+            $sub = [string]$j.Why
             if ($j.Batch) { $sub = "batch $($j.Batch) - $sub" }
-            [pscustomobject]@{ Task = $j.Task; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; State = $state; Button = $(if ($j.EffectiveState -eq 'complete' -or $j.Alive) { 'Open' } else { 'Continue' }); Folder = $j.Folder }
+            $canContinue = (-not $isDone) -and (-not [bool]$j.Alive)
+            $lines.Add([pscustomobject]@{ Task = $j.Task; Kind = 'job'; Title = $(if ($j.Title) { $j.Title } else { $j.JobId }); Sub = $sub; Sub2 = [string]$j.Progress; State = $state; Button = $(if ($canContinue) { 'Continue' } else { 'Open' }); Folder = $j.Folder; Name = $j.Name; Batch = $j.Batch; Finished = $isDone; CanContinue = $canContinue; Alive = [bool]$j.Alive })
         }
-        @($out)
+        # not finished first, every one of them; the batches and the jobs each newest first
+        @(@($lines | Where-Object { -not $_.Finished }) + @($lines | Where-Object { $_.Finished }))
+    }.GetNewClosure()
+
+    # what Delete would do for a job (and why it would be refused), with the size of the copy store: the worker reads it, the page asks the question
+    $e.JobDeleteInfo = { param($Work, $Name, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work, $Name) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($work, $name)
+            $job = Find-MbtJob -WorkFolder $work -Name $name
+            if (-not $job) { throw "The job $name is not there any more." }
+            Get-MbtJobRemovalPlan -WorkFolder $work -Job $job -WithSize
+        }
+    }.GetNewClosure()
+
+    # the deletion itself (the folder of the job, and the copy store when it was ticked): the engine checks everything again
+    $e.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Work, $Name, [bool]$WithStore) -OnDone { param($res) & $OnDone @($res)[0] }.GetNewClosure() -OnError $OnError -Script {
+            param($work, $name, $withStore)
+            try { $null = Start-MbtLog -Directory (Join-Path $work 'logs') } catch { Write-Verbose "no log: $_" }
+            Remove-MbtJob -WorkFolder $work -Name $name -IncludeStore:$withStore -Confirm:$false
+        }
+    }.GetNewClosure()
+
+    # what Continue does for a job, for its mode, read from its folder (the Resume view)
+    $e.JobResume = { param($Work, $Name)
+        $job = Find-MbtJob -WorkFolder $Work -Name $Name
+        if (-not $job) { return $null }
+        $request = Read-MbtJobRequest -Folder $job.Folder
+        $description = Get-MbtJobDescription -Job $job
+        $text = Get-MbtJobResumeText -Job $job -Request $request
+        [pscustomobject]@{
+            Name = $job.Name; Title = $(if ($job.Title) { [string]$job.Title } else { [string]$job.JobId }); Kind = $description.Kind; Why = $description.Why; Progress = $description.Progress
+            Heading = $text.Heading; Already = $text.Already; Again = $text.Again; From = $text.From; Notes = $text.Notes; Problem = $text.Problem; Started = $job.Started; Updated = $job.Updated
+        }
     }.GetNewClosure()
 
     # "All jobs": the overview page of the work folder, written by the worker; OnDone gets its path

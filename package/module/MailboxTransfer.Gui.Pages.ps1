@@ -31,6 +31,7 @@ $script:PageBuilders = @{
     opFrom = { Build-MbtGuiOpenPage }
     cpTo = { Build-MbtGuiCopyToPage }
     cpPlan = { Build-MbtGuiCopyPlanPage }
+    resume = { Build-MbtGuiResumePage }
     run = { Build-MbtGuiRunPage }
     done = { Build-MbtGuiDonePage }
 }
@@ -138,34 +139,75 @@ function New-MbtGuiTaskCard {
     return $btn
 }
 
+function New-MbtGuiJobRow {
+    <# One job of the list: the icon of its state, its title, why it stopped and when, the step it reached, and its buttons (Continue for a job that is not finished, Open the report, Delete). A batch has its report only. #>
+    param([Parameter(Mandatory)]$Job, [bool]$First)
+    $state = [string](Get-MbtGuiProp $Job 'State' 'run')
+    $isBatch = ((Get-MbtGuiProp $Job 'Task' '') -eq 'batch')
+    $glyphName = switch ($state) { 'ok' { 'check' } 'warn' { 'warn' } default { 'pause' } }
+    $brush = switch ($state) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } default { 'MbtBrandText' } }
+    $row = [Windows.Controls.Grid]::new()
+    foreach ($w in 'Auto', '*') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }; $row.ColumnDefinitions.Add($cd) }
+    $ic = New-GuiIcon $glyphName 14 $brush; $ic.Margin = [Windows.Thickness]::new(0, 2, 12, 0); $ic.VerticalAlignment = 'Top'
+    $txt = [Windows.Controls.StackPanel]::new(); [Windows.Controls.Grid]::SetColumn($txt, 1)
+    $t1 = New-GuiText ([string](Get-MbtGuiProp $Job 'Title' '')) 'Body'; $t1.FontSize = 13; $t1.FontWeight = [Windows.FontWeights]::SemiBold
+    $txt.Children.Add($t1) | Out-Null
+    $why = [string](Get-MbtGuiProp $Job 'Sub' '')
+    if ($why) { $txt.Children.Add((New-GuiText $why 'Small')) | Out-Null }
+    $progress = [string](Get-MbtGuiProp $Job 'Sub2' '')
+    if ($progress) { $txt.Children.Add((New-GuiText $progress 'Small')) | Out-Null }
+    $bar = [Windows.Controls.WrapPanel]::new(); $bar.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+    if ($isBatch) {
+        $bar.Children.Add((New-GuiButton -Text ([string](Get-MbtGuiProp $Job 'Button' 'Open the report')) -Small -OnClick { Resume-MbtGuiJob $Job }.GetNewClosure())) | Out-Null
+    } else {
+        if ([bool](Get-MbtGuiProp $Job 'CanContinue' $false)) { $bar.Children.Add((New-GuiButton -Text 'Continue' -Small -Icon play -OnClick { Resume-MbtGuiJob $Job }.GetNewClosure())) | Out-Null }
+        $bar.Children.Add((New-GuiButton -Text 'Open the report' -Small -Icon doc -OnClick { Open-MbtGuiJobReport $Job }.GetNewClosure())) | Out-Null
+        $bar.Children.Add((New-GuiButton -Text 'Delete' -Small -Icon trash -OnClick { Show-MbtGuiJobDelete $Job }.GetNewClosure())) | Out-Null
+    }
+    $txt.Children.Add($bar) | Out-Null
+    $row.Children.Add($ic) | Out-Null; $row.Children.Add($txt) | Out-Null
+    $wrap = [Windows.Controls.Border]::new(); $wrap.Child = $row; $wrap.Padding = [Windows.Thickness]::new(0, 9, 0, 9)
+    if (-not $First) { $wrap.BorderThickness = [Windows.Thickness]::new(0, 1, 0, 0); Set-MbtGuiResource $wrap ([Windows.Controls.Border]::BorderBrushProperty) 'DividerStrokeColorDefaultBrush' }
+    return $wrap
+}
+
 function New-MbtGuiJobList {
+    <# The jobs of the work folder: the ones that are not finished first, every one of them, in a list that scrolls inside the card; the finished ones in a fold below. #>
     $g = $script:Gui
     $jobs = @()
     try { $jobs = @(& $g.Engine.Jobs $g.S.WorkFolder) } catch { Write-Verbose "jobs: $_" }
     if (-not $jobs.Count) { return (New-GuiText 'No job yet. A job you stop, or that is not finished, is listed here so you can continue it.' 'Hint') }
+    $open = @($jobs | Where-Object { -not [bool](Get-MbtGuiProp $_ 'Finished' $false) })
+    $done = @($jobs | Where-Object { [bool](Get-MbtGuiProp $_ 'Finished' $false) })
     $stack = [Windows.Controls.StackPanel]::new()
     $first = $true
-    foreach ($j in $jobs) {
-        $row = [Windows.Controls.Grid]::new()
-        $row.Margin = [Windows.Thickness]::new(0, 0, 0, 0)
-        foreach ($w in 'Auto', '*', 'Auto') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }; $row.ColumnDefinitions.Add($cd) }
-        $glyphName = switch ($j.State) { 'ok' { 'check' } 'warn' { 'warn' } default { 'pause' } }
-        $brush = switch ($j.State) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } default { 'MbtBrandText' } }
-        $ic = New-GuiIcon $glyphName 14 $brush; $ic.Margin = [Windows.Thickness]::new(0, 0, 12, 0); $ic.VerticalAlignment = 'Center'
-        $txt = [Windows.Controls.StackPanel]::new(); [Windows.Controls.Grid]::SetColumn($txt, 1)
-        $t1 = New-GuiText $j.Title 'Body'; $t1.FontSize = 13; $t1.FontWeight = [Windows.FontWeights]::SemiBold
-        $t2 = New-GuiText $j.Sub 'Small'
-        $txt.Children.Add($t1) | Out-Null; $txt.Children.Add($t2) | Out-Null
-        $btn = New-GuiButton -Text $j.Button -Small -OnClick { Resume-MbtGuiJob $j }.GetNewClosure()
-        $btn.Margin = [Windows.Thickness]::new(12, 0, 0, 0); $btn.VerticalAlignment = 'Center'
-        [Windows.Controls.Grid]::SetColumn($btn, 2)
-        $row.Children.Add($ic) | Out-Null; $row.Children.Add($txt) | Out-Null; $row.Children.Add($btn) | Out-Null
-        $wrap = [Windows.Controls.Border]::new(); $wrap.Child = $row; $wrap.Padding = [Windows.Thickness]::new(0, 9, 0, 9)
-        if (-not $first) { $wrap.BorderThickness = [Windows.Thickness]::new(0, 1, 0, 0); Set-MbtGuiResource $wrap ([Windows.Controls.Border]::BorderBrushProperty) 'DividerStrokeColorDefaultBrush' }
-        $stack.Children.Add($wrap) | Out-Null
-        $first = $false
+    foreach ($j in $open) { $stack.Children.Add((New-MbtGuiJobRow -Job $j -First $first)) | Out-Null; $first = $false }
+    if (-not $open.Count) { $stack.Children.Add((New-GuiText 'Nothing to continue: every job is finished.' 'Hint')) | Out-Null }
+    if ($done.Count) {
+        $rows = @(for ($i = 0; $i -lt $done.Count; $i++) { New-MbtGuiJobRow -Job $done[$i] -First ($i -eq 0) })
+        $fold = New-GuiMore -Summary "Finished ($($done.Count))" -Content $rows
+        $fold.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+        $stack.Children.Add($fold) | Out-Null
     }
-    return $stack
+    $scroll = [Windows.Controls.ScrollViewer]::new()
+    $scroll.VerticalScrollBarVisibility = 'Auto'; $scroll.HorizontalScrollBarVisibility = 'Disabled'; $scroll.MaxHeight = 380; $scroll.Focusable = $false; $scroll.FontSize = 14
+    $scroll.Content = $stack
+    $scroll.Tag = 'MbtJobList'
+    # the wheel scrolls the list, and the page when the list is at its end
+    Add-MbtGuiHandler $scroll 'PreviewMouseWheel' {
+        param($sender, $e)
+        $atTop = ($e.Delta -gt 0 -and $sender.VerticalOffset -le 0)
+        $atBottom = ($e.Delta -lt 0 -and $sender.VerticalOffset -ge $sender.ScrollableHeight)
+        if (-not ($atTop -or $atBottom)) { return }
+        $e.Handled = $true
+        $parent = [Windows.Media.VisualTreeHelper]::GetParent($sender) -as [Windows.UIElement]
+        if ($parent) {
+            $forward = [Windows.Input.MouseWheelEventArgs]::new($e.MouseDevice, $e.Timestamp, $e.Delta)
+            $forward.RoutedEvent = [Windows.UIElement]::MouseWheelEvent; $forward.Source = $sender
+            $parent.RaiseEvent($forward)
+        }
+    }
+    return $scroll
 }
 
 function New-MbtGuiCheckRow {

@@ -88,6 +88,8 @@ $screens = [ordered]@{
     ExportPlanChecking = 'console-verify-export-checking'; RunExportPreparing = 'console-run-export-preparing'
     ExportFromPeriodOpen = 'console-from-period'; ExportPlanPeriod = 'console-verify-export-period'
     CopyMailboxFrom = 'console-copy-from'; CopyMailboxTo = 'console-copy-to'; CopyMailboxPlan = 'console-verify-copy'; CopyMailboxPlanTicked = 'console-verify-copy-ticked'
+    StartJobs = 'console-jobs'; ResumeImport = 'console-resume-import'; ResumeCopy = 'console-resume-copy'; ResumeExport = 'console-resume-export'; RunExportResumed = 'console-run-export-resumed'
+    JobDelete = 'console-delete-job'; JobDeleteUnfinished = 'console-delete-job-unfinished'
     RunCopyMailboxReading = 'console-run-copy-reading'; RunCopyMailbox = 'console-run-copy'; DoneCopyMailbox = 'console-done-copy-complete'; DoneCopyMailboxPartial = 'console-done-copy-partial'
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.

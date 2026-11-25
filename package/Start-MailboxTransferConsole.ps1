@@ -149,7 +149,7 @@ $script:GuiDevelopmentMode = [bool]$DevelopmentMode
 
 if ($DocScenario) { $Demo = $true }
 $entry = Join-Path $packageRoot 'Invoke-MailboxTransfer.ps1'
-if (-not $WorkFolder) { $WorkFolder = Join-Path $env:LOCALAPPDATA 'MailboxTransfer' }
+if (-not $WorkFolder) { $WorkFolder = if ($env:MAILBOXTRANSFER_WORK_FOLDER) { $env:MAILBOXTRANSFER_WORK_FOLDER } else { Join-Path $env:LOCALAPPDATA 'MailboxTransfer' } }
 Initialize-MbtGuiTypes
 if ($Demo) {
     $engine = New-MbtGuiFakeEngine -Capability @{ PstImport = $true; EmlExport = $true; EmlImport = $true; SharedMailbox = $true; FolderChoice = $true; PstCopy = $true; PstPreview = $true }

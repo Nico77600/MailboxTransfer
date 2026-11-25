@@ -237,7 +237,7 @@ try {
     $entryJob = @(Get-MbtJob -WorkFolder $work | Where-Object { $_.JobId -eq $k.Job.Id })[0]
     Add-Check 'stop: the Continue list offers it' ($null -ne $entryJob -and ($entryJob.EffectiveState -in 'stopped', 'complete')) "state $($entryJob.EffectiveState)"
 
-    # Continue: the same request again in the same job folder (what Resume-MbtGuiJob does)
+    # Continue: the same request again in the same job folder (what Start-MbtGuiResumeRun does)
     $req = Get-Content -LiteralPath (Join-Path $k.Job.Folder 'request.json') -Raw | ConvertFrom-Json
     $job2 = New-MbtGuiJob -WorkFolder $work -Task export -EntryScript $entry -StorePath ([string]$req.StorePath) -SelectionFiles @($req.SelectionFiles) -JobName ([string]$req.JobName)
     $job2.Folder = $k.Job.Folder

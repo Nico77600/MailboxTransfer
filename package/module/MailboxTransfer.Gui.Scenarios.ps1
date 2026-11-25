@@ -19,7 +19,8 @@ function Get-MbtGuiScenarioName {
         'DoneExportComplete', 'DoneExportPartial', 'DoneExportError', 'ImportFrom', 'ImportTo', 'ImportPlan', 'DoneImportComplete', 'DoneImportPartial', 'DoneImportDecision', 'DoneImportError',
         'RepairFromDamaged', 'RepairFromClean', 'RepairTo', 'RepairPlan', 'DoneRepair', 'Open',
         'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing', 'ExportFromPeriod', 'ExportFromPeriodOpen', 'ExportPlanPeriod', 'RunExportPeriod', 'DoneExportPeriod',
-        'CopyMailboxFrom', 'CopyMailboxTo', 'CopyMailboxPlan', 'CopyMailboxPlanTicked', 'RunCopyMailboxReading', 'RunCopyMailbox', 'DoneCopyMailbox', 'DoneCopyMailboxPartial')
+        'CopyMailboxFrom', 'CopyMailboxTo', 'CopyMailboxPlan', 'CopyMailboxPlanTicked', 'RunCopyMailboxReading', 'RunCopyMailbox', 'DoneCopyMailbox', 'DoneCopyMailboxPartial',
+        'StartJobs', 'ResumeExport', 'ResumeImport', 'ResumeCopy', 'RunExportResumed', 'JobDelete', 'JobDeleteUnfinished')
 }
 
 function Get-MbtGuiEdgeScenarioName {
@@ -276,6 +277,28 @@ function Initialize-MbtGuiScenarioCopy {
     if ($Application) { $s.AuthMode = 'app'; $s.AppThumb = '5D41402ABC4B2A76B9719D911017C59228F3D1AE'; $s.Mailbox = 'projects@contoso.com'; $s.Account = $s.Mailbox; $s.Shared = ''; $s.McTarget = 'adele.vance@contoso.com' }
 }
 
+function New-MbtGuiScenarioResumedRun {
+    <# A job that runs again: its first step reads what the earlier run did, then the steps of the job follow. #>
+    $run = New-MbtGuiRun -Task export -Title ('Export ' + [char]0x00B7 + ' adele.vance@contoso.com')
+    $run.Resumed = $true
+    $t0 = [datetime]::UtcNow.AddSeconds(-6)
+    $ev = { param($k, $sec, $f) $null = Add-MbtGuiEvent -Run $run -Event (New-MbtGuiEvt $k $t0.AddSeconds($sec) $f) }
+    & $ev 'plan' 0 @{ steps = @(@{ id = 'resume'; title = 'Resume: reading what is already done' }, @{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }, @{ id = 'verify'; title = 'Check the downloads' }) }
+    & $ev 'step' 0.3 @{ id = 'resume'; state = 'running'; msg = 'Looking at what the earlier run already did' }
+    return $run
+}
+
+function Show-MbtGuiResumeScenario {
+    <# The Resume view of a job of the fake list (the state of the job comes from the engine's list, as when Continue is pressed). #>
+    param([Parameter(Mandatory)][string]$Task, [Parameter(Mandatory)][string]$Name)
+    $g = $script:Gui; $s = $g.S
+    $s.Task = $Task; $s.Sel = $Task; $s.Signed = $true; $s.Mailbox = 'adele.vance@contoso.com'; $s.Account = $s.Mailbox
+    $entry = @(@(& $g.Engine.Jobs $s.WorkFolder) | Where-Object { $_.Name -eq $Name })[0]
+    $s.Resume = @{ Entry = $entry; Info = @(& $g.Engine.JobResume $s.WorkFolder $Name)[0]; Request = $null }
+    $s.Step = (Get-MbtGuiScenarioStep $Task 'run') - 1
+    Show-MbtGuiPage
+}
+
 function Set-MbtGuiScenario {
     <# Puts the window in a state. Names: Get-MbtGuiScenarioName. #>
     param([Parameter(Mandatory)][string]$Name)
@@ -286,6 +309,13 @@ function Set-MbtGuiScenario {
     switch ($Name) {
         'Start' { $s.Step = 1; Show-MbtGuiPage }
         'StartImport' { $s.Step = 1; $s.Sel = 'import'; Show-MbtGuiPage }
+        'StartJobs' { $s.Step = 1; Show-MbtGuiPage }
+        'JobDelete' { $s.Step = 1; Show-MbtGuiPage; Show-MbtGuiJobDelete (@(@(& $g.Engine.Jobs $s.WorkFolder) | Where-Object { $_.Name -eq '20261110-0915-mailcopy-9b1c' })[0]) }
+        'JobDeleteUnfinished' { $s.Step = 1; Show-MbtGuiPage; Show-MbtGuiJobDelete (@(@(& $g.Engine.Jobs $s.WorkFolder) | Where-Object { $_.Name -eq '20261123-1630-mailcopy-7c1e' })[0]) }
+        'ResumeExport' { Show-MbtGuiResumeScenario -Task export -Name '20261122-0912-export-b8f8' }
+        'ResumeImport' { Show-MbtGuiResumeScenario -Task import -Name '20261124-2241-import-3fa2' }
+        'ResumeCopy' { Show-MbtGuiResumeScenario -Task mailcopy -Name '20261123-1630-mailcopy-7c1e' }
+        'RunExportResumed' { Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioResumedRun) }
         'ExportFromSignedOut' { $s.Task = 'export'; $s.Sel = 'export'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); $s.Mailbox = 'adele.vance@contoso.com'; Show-MbtGuiPage }
         'ExportFromCode' { $s.Task = 'export'; $s.Sel = 'export'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); $s.Mailbox = 'adele.vance@contoso.com'; $s.SigningIn = $true; $s.CodeShown = $true; $s.Code = @{ Code = 'ABCD1EFGH'; Url = 'https://microsoft.com/devicelogin'; Until = (Get-Date).Date.AddHours(14).AddMinutes(32) }; Show-MbtGuiPage }
         'ExportFrom' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }

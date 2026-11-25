@@ -193,12 +193,80 @@ function New-MbtGuiFakeEngine {
     $engine.SaveSelection = { param($Root, $Entries, $Path, $OnDone, $OnError) & $OnDone $Path }
     $engine.SaveSelections = { param($Groups, $Path, $OnDone, $OnError) & $OnDone $Path }
     $engine.Jobs = { param($Work)
+        $mid = [char]0x00B7; $arrow = [char]0x2192
+        $line = {
+            param($Name, $Task, $Title, $Sub, $Sub2, $State, [bool]$Finished, [bool]$CanContinue, [bool]$Alive, $Demo, $ResumeDemo)
+            [pscustomobject]@{ Task = $Task; Kind = 'job'; Name = $Name; Title = $Title; Sub = $Sub; Sub2 = $Sub2; State = $State; Button = $(if ($CanContinue) { 'Continue' } else { 'Open' }); Folder = ''; Finished = $Finished; CanContinue = $CanContinue; Alive = $Alive; Demo = $Demo; ResumeDemo = $ResumeDemo }
+        }
+        # the jobs that are not finished first, the finished ones after them (the real adapter lists them the same way)
         $jobs = @(
-            [pscustomobject]@{ Task = 'import'; Title = 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' Adele Vance (Archive)'; Sub = '5,120 of 9,860 items done ' + [char]0x00B7 + ' stopped yesterday 22:41 ' + [char]0x00B7 + ' 3 items to check'; State = 'run'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'RunImportStopped' } }
-            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' Primary + Archive ' + [char]0x2192 + ' D:\Exports\adele'; Sub = 'Not finished: 2 folders are not ready at Microsoft yet. Nothing is lost.'; State = 'warn'; Button = 'Continue'; Folder = ''; Demo = { Set-MbtGuiScenario 'DoneExportPartial' } }
-            [pscustomobject]@{ Task = 'export'; Title = 'Export ' + [char]0x00B7 + ' finished 2026-11-02 ' + [char]0x00B7 + ' 3 PST files'; Sub = 'D:\Exports\fabrikam ' + [char]0x00B7 + ' all parts checked'; State = 'ok'; Button = 'Open'; Folder = ''; Demo = { Set-MbtGuiScenario 'Open' } })
+            (& $line '20261124-2241-import-3fa2' 'import' "Import $mid archive-2019.pst $arrow Adele Vance (Archive)" 'Interrupted on 2026-11-24 22:41: the PC was shut down or restarted, or the tool was closed, while it was running. What was done is kept.' 'Step 3 of 5, Send the items, 5,120 of 9,860 done' 'run' $false $true $false { Set-MbtGuiScenario 'ResumeImport' } { Set-MbtGuiScenario 'RunImportStopped' })
+            (& $line '20261123-1630-mailcopy-7c1e' 'mailcopy' "Copy $mid Adele Vance (Primary) $arrow projects@contoso.com (Archive)" 'Stopped by you on 2026-11-23 17:05 (Stop and keep progress). Nothing is lost.' 'Step 3 of 9, Download the items (reading the source mailbox), 12,400 of 31,000 done' 'run' $false $true $false { Set-MbtGuiScenario 'ResumeCopy' } { Set-MbtGuiScenario 'RunCopyMailbox' })
+            (& $line '20261122-0912-export-b8f8' 'export' "Export $mid Primary + Archive $arrow D:\Exports\adele" 'Stopped by an error on 2026-11-22 09:12: The disk is full. Free some space and press Try again. What was downloaded is kept.' 'Step 3 of 4, Download the items, 2,300 of 4,100 done' 'warn' $false $true $false { Set-MbtGuiScenario 'ResumeExport' } { Set-MbtGuiScenario 'RunExport' })
+            (& $line '20261124-2300-export-5a90' 'export' "Export $mid Archive $arrow D:\Exports\fabrikam" 'Running now, in another window or process.' 'Step 3 of 4, Download the items, 640 of 8,200 done' 'run' $false $false $true $null $null)
+            (& $line '20261110-0915-mailcopy-9b1c' 'mailcopy' "Copy $mid projects@contoso.com (Primary) $arrow Adele Vance (Primary)" 'Finished on 2026-11-10 11:48.' '14,200 items done' 'ok' $true $false $false $null $null)
+            (& $line '20261102-1000-export-0d44' 'export' "Export $mid finished 2026-11-02 $mid 3 PST files" 'Finished on 2026-11-02 11:00.' '' 'ok' $true $false $false $null $null))
         if ($null -ne $script:FakeJobCount) { $jobs = @($jobs | Select-Object -First $script:FakeJobCount) }
         $jobs }
+    # what Delete says for each fake job: the one that runs is refused, a copy that is complete can delete its store, a copy that is not complete cannot
+    $engine.JobDeleteInfo = { param($Work, $Name, $OnDone, $OnError)
+        $jobs = @(& $engine.Jobs $Work)
+        $job = @($jobs | Where-Object { $_.Name -eq $Name })
+        if (-not $job.Count) { & $OnError "The job $Name is not there any more."; return }
+        $job = $job[0]
+        $at = { param($text) [datetime]::SpecifyKind([datetime]::Parse($text, [cultureinfo]::InvariantCulture), [DateTimeKind]::Local).ToUniversalTime() }
+        $times = @{ '20261124-2241-import-3fa2' = @('2026-11-24 20:10', '2026-11-24 22:41'); '20261123-1630-mailcopy-7c1e' = @('2026-11-23 16:30', '2026-11-23 17:05'); '20261122-0912-export-b8f8' = @('2026-11-22 08:40', '2026-11-22 09:12'); '20261124-2300-export-5a90' = @('2026-11-24 22:30', '2026-11-24 23:00'); '20261110-0915-mailcopy-9b1c' = @('2026-11-10 09:15', '2026-11-10 11:48'); '20261102-1000-export-0d44' = @('2026-11-02 10:00', '2026-11-02 11:00') }
+        $store = $null
+        if ($job.Task -eq 'mailcopy') {
+            $complete = [bool]$job.Finished
+            $store = [pscustomobject]@{ Path = 'D:\MailboxTransfer\stores\copy-projects-contoso.com-1a2b3c4d'; Offered = $true; Allowed = $complete; Reason = $(if ($complete) { '' } else { 'The copy is not complete: its second part, adding the items to the target mailbox, is not finished, and it reads this store. Finish the copy first.' }); Bytes = [long](4.2GB) }
+        }
+        $plan = [pscustomobject]@{
+            Name = $job.Name; Folder = "D:\MailboxTransfer\jobs\$($job.Name)"; Title = $job.Title; Source = ''; Destination = ''; Started = (& $at $times[$job.Name][0]); Updated = (& $at $times[$job.Name][1]); State = $(if ($job.Finished) { 'complete' } else { 'resumable' }); Unfinished = (-not $job.Finished)
+            Allowed = (-not $job.Alive); Reason = $(if ($job.Alive) { "The job '$($job.Name)' is running now, in another window or process. Stop it first (Stop and keep progress), then delete it." } else { '' })
+            Warnings = @($(if (-not $job.Finished) { 'This job is not finished. After it is deleted you can no longer continue it from the console or with -ResumeJob.' })); Store = $store
+        }
+        & $OnDone $plan
+    }.GetNewClosure()
+    $engine.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError) & $OnDone ([pscustomobject]@{ Name = $Name; Removed = $true; StoreRemoved = [bool]$WithStore }) }
+    # what Continue says for each fake job, in the words of the engine (Get-MbtJobResumeText; the tests compare the two)
+    $engine.JobResume = { param($Work, $Name)
+        $reading = 'The folder tree and the list of the items are read again from the source mailbox, so that what arrived or changed since is taken. An item that changed since is read again.'
+        $uncertain = 'Items that were being sent when it stopped may or may not have reached the mailbox. They are looked up in the target folder first, after a short wait so that Microsoft can finish creating them: an item found there counts as done, an item that is not found is sent again, and when several items could be it you are asked.'
+        $at = { param($text) [datetime]::SpecifyKind([datetime]::Parse($text, [cultureinfo]::InvariantCulture), [DateTimeKind]::Local).ToUniversalTime() }
+        $times = @{ '20261124-2241-import-3fa2' = @('2026-11-24 20:10', '2026-11-24 22:41'); '20261123-1630-mailcopy-7c1e' = @('2026-11-23 16:30', '2026-11-23 17:05'); '20261122-0912-export-b8f8' = @('2026-11-22 08:40', '2026-11-22 09:12') }
+        $pair = if ($times.ContainsKey($Name)) { $times[$Name] } else { $times['20261122-0912-export-b8f8'] }
+        $common = @{ Started = (& $at $pair[0]); Updated = (& $at $pair[1]); Problem = '' }
+        switch ($Name) {
+            '20261124-2241-import-3fa2' {
+                [pscustomobject]($common + @{ Name = $Name; Title = 'Import - archive-2019.pst to Adele Vance (Archive)'; Kind = 'interrupted'
+                        Why = 'Interrupted on 2026-11-24 22:41: the PC was shut down or restarted, or the tool was closed, while it was running. What was done is kept.'; Progress = 'Step 3 of 5, Send the items, 5,120 of 9,860 done'
+                        Heading = 'Import from a PST file'
+                        Already = @('The messages already added to the mailbox, as the journal of the import records them (D:\MailboxTransfer\jobs\20261124-2241-import-3fa2\work\pstimport.db), are not added again, even when the same PST file is given again.')
+                        Again = @('The PST files are checked again.', $uncertain.Replace('Items', 'Messages').Replace('an item', 'a message').Replace('items', 'messages'), 'Messages that failed are tried again, up to 3 tries in all. A message that Microsoft refused for good is not tried again.')
+                        From = 'It restarts from step 1, Check the PST files, then sends only the messages that are left. Before it stopped it had reached step 3 of 5, Send the items.'
+                        Notes = @('The PC was shut down, or the tool was closed, while it ran: it could not finish the item it was working on, and an item that was being sent is uncertain until it is looked up.') })
+            }
+            '20261123-1630-mailcopy-7c1e' {
+                [pscustomobject]($common + @{ Name = $Name; Title = 'Copy - Adele Vance (Primary) to projects@contoso.com (Archive)'; Kind = 'stopped'
+                        Why = 'Stopped by you on 2026-11-23 17:05 (Stop and keep progress). Nothing is lost.'; Progress = 'Step 3 of 9, Download the items (reading the source mailbox), 12,400 of 31,000 done'
+                        Heading = 'Copy to another mailbox'
+                        Already = @('The items already read into the store are not read again.')
+                        Again = @($reading, 'Items that failed are tried again, up to 3 tries in all.', 'When the reading is complete, the second part follows: adding the items to the target mailbox.')
+                        From = 'It resumes the first part, reading the source mailbox: from step 1 of 9, Read the folder tree. Before it stopped it had reached step 3 of 9, Download the items.'
+                        Notes = @('A copy has two parts: reading the source mailbox into the store on this PC, then adding the items to the target mailbox. The source mailbox is only read.') })
+            }
+            default {
+                [pscustomobject]($common + @{ Name = $Name; Title = 'Export - Primary + Archive to D:\Exports\adele'; Kind = 'error'
+                        Why = 'Stopped by an error on 2026-11-22 09:12: The disk is full. Free some space and press Try again. What was downloaded is kept.'; Progress = 'Step 3 of 4, Download the items, 2,300 of 4,100 done'
+                        Heading = 'Export to an export store'
+                        Already = @('The items already downloaded and checked in the export store are not downloaded again.')
+                        Again = @('The folder tree and the list of the items are read again from the mailbox, so that what arrived or changed since is taken. An item that changed since is downloaded again.', 'Items that failed are tried again, up to 3 tries in all.', 'Then the PST files: the parts already written and checked are kept; the part that was being written when it stopped is written again from its start.')
+                        From = 'It restarts from step 1, Read the folder tree, and downloads only what is left. Before it stopped it had reached step 3 of 4, Download the items.'
+                        Notes = @() })
+            }
+        }
+    }.GetNewClosure()
     # the demonstration writes no overview and removes no folder
     $engine.JobOverview = { param($Work, $OnDone, $OnError) & $OnDone $null }
     $engine.BatchReport = { param($Work, $Id, $OnDone, $OnError) & $OnDone $null }

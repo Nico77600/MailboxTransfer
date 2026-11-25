@@ -40,7 +40,7 @@ function New-MbtGuiRun {
         Samples = [Collections.Generic.List[hashtable]]::new()
         Started = $null; LastEvent = $null; EpochStart = $null
         Done = 0L; Total = 0L; Bytes = 0L; BytesTotal = 0L; ImportHalf = $false
-        Sleep = $null; Error = $null; Result = $null; StopRequested = $false; Dirty = $true; EventCount = 0
+        Sleep = $null; Error = $null; Result = $null; StopRequested = $false; Dirty = $true; EventCount = 0; Resumed = $false
     }
 }
 
@@ -88,6 +88,7 @@ function Get-MbtGuiPreparingText {
     $note = Get-MbtGuiRunningNote $Run
     if ($note) { return "**Preparing.** $note." }
     foreach ($s in $Run.Steps) { if ($s.State -eq 'running' -and $s.Title) { return "**Preparing.** $($s.Title)." } }
+    if ($Run.Resumed -and -not $Run.Steps.Count) { return '**Resume.** Reading what is already done, then connecting to Microsoft.' }
     return '**Preparing.** Connecting to Microsoft and reading what you chose.'
 }
 

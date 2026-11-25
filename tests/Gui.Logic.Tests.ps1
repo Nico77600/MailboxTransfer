@@ -1045,3 +1045,47 @@ Describe 'Copy to another mailbox: one command for both parts, the period, the s
         $other.Rates.Count | Should -Be 1 -Because 'an import is one part'
     }
 }
+
+Describe 'Continue a job: the list, the Resume view, the first step of a resumed run' {
+    BeforeAll {
+        $script:PagesText = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.ps1') -Raw
+        $script:RunPagesText = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Pages.Run.ps1') -Raw
+        $script:EngineText = Get-Content -LiteralPath (Join-Path $script:Package 'module\MailboxTransfer.Gui.Engine.ps1') -Raw
+    }
+    It 'the list is not cut to a few lines, scrolls inside its card and keeps the finished jobs in a fold' {
+        $script:EngineText | Should -Not -Match 'Select-Object -First 8'
+        $script:PagesText | Should -Match "(?s)function New-MbtGuiJobList.*?Finished \(\`$\(\`$done\.Count\)\).*?VerticalScrollBarVisibility = 'Auto'.*?MaxHeight = \d+"
+    }
+    It 'every line has Open the report and Delete, and Continue only for a job that can be continued; a batch has its report only' {
+        $script:PagesText | Should -Match "(?s)function New-MbtGuiJobRow.*?CanContinue.*?-Text 'Continue'.*?-Text 'Open the report'.*?-Text 'Delete'"
+        $script:PagesText | Should -Match "(?s)function New-MbtGuiJobRow.*?if \(\`$isBatch\).*?Resume-MbtGuiJob"
+    }
+    It 'Continue opens the Resume view; the job starts only from the button of that view' {
+        $script:RunPagesText | Should -Match '(?s)function Resume-MbtGuiJob.*?\$s\.Resume = @\{ Entry = \$Entry; Info = \$info; Request = \$req \}.*?Show-MbtGuiPage'
+        $script:RunPagesText | Should -Not -Match '(?s)function Resume-MbtGuiJob.*?Start-MbtGuiProcess.*?function New-MbtGuiResumeList'
+        $script:RunPagesText | Should -Match '(?s)function Build-MbtGuiResumePage.*?Already done, and not done again.*?Checked again.*?Where it restarts.*?Start-MbtGuiResumeRun'
+        $script:RunPagesText | Should -Match '(?s)function Start-MbtGuiResumeRun.*?Start-MbtGuiProcess'
+    }
+    It 'a job of the command line is continued by its name, also by Continue on the Run page after a stop' {
+        $script:RunPagesText | Should -Match "(?s)function Start-MbtGuiResumeRun.*?'-ResumeJob', \[string\]\`$Entry\.Name.*?ResumeArguments"
+        $script:RunPagesText | Should -Match "(?s)function Invoke-MbtGuiContinue.*?ResumeArguments"
+    }
+    It 'Delete asks the engine, names the job, says what goes and what never goes, and offers the copy store unticked' {
+        $script:RunPagesText | Should -Match "(?s)function Show-MbtGuiJobDelete.*?JobDeleteInfo"
+        $script:RunPagesText | Should -Match "(?s)function Show-MbtGuiJobDeleteQuestion.*?its log, its report and its events.*?Your data is never deleted.*?Also delete the copy store.*?-Checked \`$false.*?'Delete the job'"
+        $script:RunPagesText | Should -Match "(?s)function Invoke-MbtGuiJobDelete.*?JobDelete.*?Show-MbtGuiPage"
+    }
+    It 'a run that was resumed says first that it reads what is already done' {
+        $r = New-MbtGuiRun -Task export
+        $r.Resumed | Should -BeFalse
+        (Get-MbtGuiPreparingText $r) | Should -BeLike '**Preparing.**'
+        $r.Resumed = $true
+        (Get-MbtGuiPreparingText $r) | Should -Be '**Resume.** Reading what is already done, then connecting to Microsoft.'
+        Add-Evt $r plan -Fields @{ steps = @([pscustomobject]@{ id = 'resume'; title = 'Resume: reading what is already done' }, [pscustomobject]@{ id = 'tree'; title = 'Read the folder tree' }) }
+        Add-Evt $r step -Fields @{ id = 'resume'; state = 'running'; msg = 'Looking at what the earlier run already did' }
+        $r.Steps.Count | Should -Be 2
+        $r.Steps[0].Title | Should -Be 'Resume: reading what is already done'
+        (Get-MbtGuiPreparingText $r) | Should -BeLike '**Preparing.**'
+        $r.Planned | Should -BeTrue
+    }
+}

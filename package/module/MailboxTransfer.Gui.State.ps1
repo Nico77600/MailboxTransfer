@@ -66,7 +66,7 @@ function New-MbtGuiState {
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
         PlanState = 'idle'; PlanMsg = ''; PlanKey = ''; PlanTotals = $null; CpFor = ''
-        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''; JobName = ''
+        RStep = $null; RObj = $null; Outcome = $null; LogOpen = $false; SignInTech = ''; JobName = ''; Resume = $null
     }
 }
 
@@ -118,7 +118,7 @@ function New-MbtGuiWindow {
     $c.Primary.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'AccentButtonStyle')
     $window.TaskbarItemInfo = [Windows.Shell.TaskbarItemInfo]::new()
 
-    if (-not $WorkFolder) { $WorkFolder = Join-Path $env:LOCALAPPDATA 'MailboxTransfer' }
+    if (-not $WorkFolder) { $WorkFolder = if ($env:MAILBOXTRANSFER_WORK_FOLDER) { $env:MAILBOXTRANSFER_WORK_FOLDER } else { Join-Path $env:LOCALAPPDATA 'MailboxTransfer' } }
     $timer = [Windows.Threading.DispatcherTimer]::new([Windows.Threading.DispatcherPriority]::Background)
     $timer.Interval = [TimeSpan]::FromMilliseconds(100)
     $script:Gui = @{
@@ -163,6 +163,7 @@ function Get-MbtGuiScreen {
     $s = $script:Gui.S
     if ($s.Step -le 0) { return 'setup' }
     if (-not $s.Task) { return 'start' }
+    if ($s.Resume) { return 'resume' }
     return $script:Flows[$s.Task][$s.Step]
 }
 
@@ -296,6 +297,7 @@ function Set-MbtGuiStep {
     param([int]$Index)
     $s = $script:Gui.S
     if ($Index -lt 0) { $Index = 0 }
+    $s.Resume = $null
     $s.Step = $Index
     if ($Index -le 1) { $s.Task = $null }
     Show-MbtGuiPage

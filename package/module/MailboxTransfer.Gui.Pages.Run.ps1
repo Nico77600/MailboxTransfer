@@ -299,26 +299,180 @@ function Open-MbtGuiBatchReport {
     try { & $g.Engine.BatchReport $g.S.WorkFolder ([string]$Entry.Batch) $open $fail } catch { & $fail $_.Exception.Message }
 }
 
+function Open-MbtGuiJobReport {
+    <# The report of a job of the list: the file in its folder, written again by the worker when it is not there. #>
+    param([Parameter(Mandatory)]$Entry)
+    $g = $script:Gui
+    $say = { param([string]$Title, [string]$Body) Show-MbtGuiDialog -Title $Title -Body $Body -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $open = { param($path) if ($path -and (Test-Path -LiteralPath ([string]$path))) { Start-Process -FilePath ([string]$path) } else { & $say 'Nothing to open here' 'No file was written: this is the demonstration.' } }.GetNewClosure()
+    $folder = [string](Get-MbtGuiProp $Entry 'Folder' '')
+    if (-not $folder) { & $open $null; return }
+    $report = Join-Path $folder 'report.html'
+    if (Test-Path -LiteralPath $report) { & $open $report; return }
+    $fail = { param($message) & $say 'The report of the job could not be written' ([string]$message) }.GetNewClosure()
+    try { & $g.Engine.JobReport $folder $open $fail } catch { & $fail $_.Exception.Message }
+}
+
+function Show-MbtGuiJobDelete {
+    <# Delete on a job of the list: the engine says what the deletion would do (and refuse), then the dialog names the job and says exactly what goes. #>
+    param([Parameter(Mandatory)]$Entry)
+    $g = $script:Gui
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    $fail = { param($message) Show-MbtGuiDialog -Title 'The job cannot be deleted' -Body ([string]$message) -Buttons @(@{ Text = 'Close'; Accent = $true }) }
+    $ask = { param($info) Show-MbtGuiJobDeleteQuestion -Entry $Entry -Info @($info)[0] }.GetNewClosure()
+    try { & $g.Engine.JobDeleteInfo $g.S.WorkFolder $name $ask $fail } catch { & $fail $_.Exception.Message }
+}
+
+function Show-MbtGuiJobDeleteQuestion {
+    param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)]$Info)
+    $g = $script:Gui
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    if (-not [bool](Get-MbtGuiProp $Info 'Allowed' $false)) {
+        Show-MbtGuiDialog -Title 'This job cannot be deleted' -Body ([string](Get-MbtGuiProp $Info 'Reason' 'The job is kept.')) -Buttons @(@{ Text = 'Close'; Accent = $true })
+        return
+    }
+    $when = { param($v) if ($v -is [datetime]) { $v.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) } else { '' } }
+    $lines = [Collections.Generic.List[object]]::new()
+    $lines.Add((New-GuiText ('**' + [string](Get-MbtGuiProp $Info 'Title' $name) + '**') 'Body'))
+    $source = [string](Get-MbtGuiProp $Info 'Source' ''); $destination = [string](Get-MbtGuiProp $Info 'Destination' '')
+    if ($source -or $destination) { $lines.Add((New-GuiText ((@($source, $destination) | Where-Object { $_ }) -join (' ' + [char]0x2192 + ' ')) 'Small')) }
+    $dates = @(); $started = & $when (Get-MbtGuiProp $Info 'Started'); $updated = & $when (Get-MbtGuiProp $Info 'Updated')
+    if ($started) { $dates += "started $started" }
+    if ($updated) { $dates += "last activity $updated" }
+    if ($dates.Count) { $lines.Add((New-GuiText ($dates -join (' ' + [char]0x00B7 + ' ')) 'Small')) }
+    $lines.Add((New-GuiText ('This deletes the folder of the job on this PC: its log, its report and its events. ' + [string](Get-MbtGuiProp $Info 'Folder' '')) 'Body' -Margin '0,10,0,0'))
+    $lines.Add((New-GuiText 'Your data is never deleted: the export store you chose, PST files, source files and the mailboxes are not touched.' 'Body' -Margin '0,6,0,0'))
+    foreach ($w in @(Get-MbtGuiProp $Info 'Warnings' @())) { $lines.Add((New-GuiMessage -Kind warn -Icon warn -Text ([string]$w))) }
+    $store = Get-MbtGuiProp $Info 'Store'
+    $check = $null
+    if ($store -and [bool](Get-MbtGuiProp $store 'Offered' $false)) {
+        $bytes = Get-MbtGuiProp $store 'Bytes'
+        $size = $(if ($null -ne $bytes) { Format-MbtGuiBytes ([double]$bytes) } else { 'size unknown' })
+        $allowed = [bool](Get-MbtGuiProp $store 'Allowed' $false)
+        $hint = if ($allowed) { [string]$store.Path + ': the items read from the source mailbox. The copy is complete, so nothing reads them any more.' } else { [string]$store.Reason }
+        $check = New-GuiOption -Type Check -Title "Also delete the copy store ($size)" -Hint $hint -Checked $false -Disabled:(-not $allowed) -Margin '0,12,0,0'
+        [Windows.Automation.AutomationProperties]::SetName($check, 'Also delete the copy store')
+        $lines.Add($check)
+    } elseif ($store -and (Get-MbtGuiProp $store 'Reason')) { $lines.Add((New-GuiText ([string]$store.Reason) 'Hint')) }
+    $body = New-GuiStack $lines.ToArray()
+    Show-MbtGuiDialog -Title 'Delete this job?' -Body $body -Buttons @(
+        @{ Text = 'Cancel' }
+        @{ Text = 'Delete the job'; Danger = $true; Action = { Invoke-MbtGuiJobDelete -Entry $Entry -WithStore ([bool]($check -and $check.IsChecked)) }.GetNewClosure() })
+}
+
+function Invoke-MbtGuiJobDelete {
+    param([Parameter(Mandatory)]$Entry, [bool]$WithStore)
+    $g = $script:Gui
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    $fail = { param($message) Show-MbtGuiDialog -Title 'The job could not be deleted' -Body ([string]$message) -Buttons @(@{ Text = 'Close'; Accent = $true }); Show-MbtGuiPage }
+    $done = { param($result) Show-MbtGuiPage }
+    try { & $g.Engine.JobDelete $g.S.WorkFolder $name $WithStore $done $fail } catch { & $fail $_.Exception.Message }
+}
+
 function Resume-MbtGuiJob {
-    <# Continue: the same request again, in the same job folder, so only what is left is done. #>
+    <# Continue on a job of the list: the Resume view first (what is done, what is checked again, where it restarts); the job starts when the button of that view is pressed. #>
     param($Entry)
     $g = $script:Gui; $s = $g.S
     if ($g.Engine.Name -eq 'Fake' -and $Entry.PSObject.Properties['Demo'] -and $Entry.Demo) { & $Entry.Demo; return }
     # a batch is run from the command line: the console shows its report, read only
     if ($Entry.PSObject.Properties['Task'] -and $Entry.Task -eq 'batch') { Open-MbtGuiBatchReport $Entry; return }
-    $reqFile = Join-Path $Entry.Folder 'request.json'
-    if (-not (Test-Path -LiteralPath $reqFile)) { return }
-    $req = Get-Content -LiteralPath $reqFile -Raw | ConvertFrom-Json
-    foreach ($p in $req.PSObject.Properties) { if ($s.ContainsKey($p.Name) -and $p.Name -notin 'Task') { $s[$p.Name] = $p.Value } }
-    $s.Task = [string]$req.Task; $s.Sel = $s.Task
-    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath ([string]$req.StorePath) -SelectionFiles @($req.SelectionFiles) -JobName ([string]$req.JobName)
+    $folder = [string](Get-MbtGuiProp $Entry 'Folder' '')
+    $name = [string](Get-MbtGuiProp $Entry 'Name' '')
+    $info = $null
+    try { if ($name) { $info = @(& $g.Engine.JobResume $s.WorkFolder $name)[0] } } catch { Write-Verbose "resume: $_" }
+    if (-not $info) { Show-MbtGuiDialog -Title 'This job cannot be read' -Body 'Its folder or its status file is not there any more.' -Buttons @(@{ Text = 'Close'; Accent = $true }); return }
+    $req = $null
+    $reqFile = if ($folder) { Join-Path $folder 'request.json' } else { '' }
+    if ($reqFile -and (Test-Path -LiteralPath $reqFile)) {
+        $req = Get-Content -LiteralPath $reqFile -Raw | ConvertFrom-Json
+        foreach ($p in $req.PSObject.Properties) { if ($s.ContainsKey($p.Name) -and $p.Name -notin 'Task') { $s[$p.Name] = $p.Value } }
+        $s.Task = [string]$req.Task; $s.Sel = $s.Task
+    }
+    if (-not $s.Task -or -not $script:Flows.ContainsKey($s.Task)) {
+        Show-MbtGuiDialog -Title 'This job cannot be continued here' -Body ([string](Get-MbtGuiProp $info 'Problem' 'Its request says nothing the console can run again. Run its command again from the command line.')) -Buttons @(@{ Text = 'Close'; Accent = $true })
+        return
+    }
+    $s.Resume = @{ Entry = $Entry; Info = $info; Request = $req }
+    $s.Step = [math]::Max(0, $script:Flows[$s.Task].IndexOf('run') - 1)
+    Show-MbtGuiPage
+}
+
+function New-MbtGuiResumeList {
+    <# A list of sentences under a small heading, each with the icon of its kind. #>
+    param([string]$Heading, [string]$Icon, [string]$Brush, [string[]]$Lines)
+    $stack = [Windows.Controls.StackPanel]::new()
+    $stack.Children.Add((New-GuiText $Heading 'Label')) | Out-Null
+    foreach ($line in @($Lines)) {
+        $row = [Windows.Controls.Grid]::new(); $row.Margin = [Windows.Thickness]::new(0, 3, 0, 3)
+        $c1 = [Windows.Controls.ColumnDefinition]::new(); $c1.Width = [Windows.GridLength]::new(24)
+        $c2 = [Windows.Controls.ColumnDefinition]::new(); $c2.Width = [Windows.GridLength]::new(1, 'Star')
+        $row.ColumnDefinitions.Add($c1); $row.ColumnDefinitions.Add($c2)
+        $ic = New-GuiIcon $Icon 13 $Brush; $ic.VerticalAlignment = 'Top'; $ic.Margin = [Windows.Thickness]::new(0, 2, 0, 0)
+        $tx = New-GuiText $line 'Body'; $tx.FontSize = 13; [Windows.Controls.Grid]::SetColumn($tx, 1)
+        $row.Children.Add($ic) | Out-Null; $row.Children.Add($tx) | Out-Null
+        $stack.Children.Add($row) | Out-Null
+    }
+    return $stack
+}
+
+function Build-MbtGuiResumePage {
+    <# The Resume view: what happened to the job, and for its mode what is already done and not done again, what is checked again, where it restarts. Nothing starts before Continue is pressed. #>
+    $g = $script:Gui; $s = $g.S
+    $info = $s.Resume.Info
+    $problem = [string](Get-MbtGuiProp $info 'Problem' '')
+    $kind = [string](Get-MbtGuiProp $info 'Kind' '')
+    $label = switch ($kind) { 'interrupted' { 'Interrupted' } 'stopped' { 'Stopped by you' } 'error' { 'Stopped by an error' } 'decision' { 'Needs a decision' } 'signin' { 'Sign-in expired' } default { 'Not finished' } }
+    $pill = New-GuiPill $label $(if ($kind -eq 'error') { 'bad' } else { 'warn' })
+    $left = [Collections.Generic.List[object]]::new()
+    $left.Add((New-GuiText ([string](Get-MbtGuiProp $info 'Title' '')) 'Title'))
+    $why = [string](Get-MbtGuiProp $info 'Why' ''); if ($why) { $left.Add((New-GuiText $why 'Body' -Margin '0,6,0,0')) }
+    $progress = [string](Get-MbtGuiProp $info 'Progress' ''); if ($progress) { $left.Add((New-GuiText $progress 'Muted' -Margin '0,4,0,0')) }
+    $facts = @()
+    $started = Get-MbtGuiProp $info 'Started'; $updated = Get-MbtGuiProp $info 'Updated'
+    if ($started -is [datetime]) { $facts += , @('Started', $started.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) }
+    if ($updated -is [datetime]) { $facts += , @('Last sign of life', $updated.ToLocalTime().ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)) }
+    if ($facts.Count) { $left.Add((New-GuiFacts $facts)) }
+    $leftCard = New-GuiCard -Title 'The job' -Right $pill -Content $left.ToArray()
+    $right = [Collections.Generic.List[object]]::new()
+    $right.Add((New-GuiText ([string](Get-MbtGuiProp $info 'Heading' 'Continue the job')) 'Body'))
+    if ($problem) { $right.Add((New-GuiMessage -Kind bad -Icon x -Text $problem)) }
+    else {
+        $right.Add((New-MbtGuiResumeList -Heading 'Already done, and not done again' -Icon check -Brush MbtSuccess -Lines @(Get-MbtGuiProp $info 'Already' @())))
+        $right.Add((New-MbtGuiResumeList -Heading 'Checked again' -Icon refresh -Brush MbtBrandText -Lines @(Get-MbtGuiProp $info 'Again' @())))
+        $from = [string](Get-MbtGuiProp $info 'From' '')
+        if ($from) { $right.Add((New-MbtGuiResumeList -Heading 'Where it restarts' -Icon play -Brush MbtBrandText -Lines @($from))) }
+        foreach ($note in @(Get-MbtGuiProp $info 'Notes' @())) { $right.Add((New-GuiMessage -Kind info -Icon info -Text ([string]$note))) }
+    }
+    $rightCard = New-GuiCard -Title 'When you press Continue' -Content $right.ToArray()
+    $back = New-GuiButton -Text 'Back to the jobs' -Icon refresh -OnClick { $s = $script:Gui.S; $s.Resume = $null; $s.Task = $null; $s.Sel = $null; $s.Step = 1; Show-MbtGuiPage }
+    Set-MbtGuiActions -Back $false -Left $back -Footer $(if ($problem) { 'This job cannot be continued from here.' } else { 'Nothing starts before you press Continue. Everything done so far is kept.' }) -Label 'Continue' -Icon play -Enabled (-not $problem) -OnClick { Start-MbtGuiResumeRun }
+    return (New-GuiStack @((New-GuiText 'Resume this job' 'H2'), (New-GuiTwoColumns -Left $leftCard -Right $rightCard -LeftWidth 380)))
+}
+
+function Start-MbtGuiResumeRun {
+    <# Continue on the Resume view: the recorded command again, in the same job folder, so only what is left is done. #>
+    $g = $script:Gui; $s = $g.S
+    $resume = $s.Resume
+    if (-not $resume) { return }
+    $Entry = $resume.Entry; $req = $resume.Request
+    $s.Resume = $null
+    if ($g.Engine.Name -eq 'Fake' -and (Get-MbtGuiProp $Entry 'ResumeDemo')) { & $Entry.ResumeDemo; return }
+    if (-not $req) { return }
+    $job = New-MbtGuiJob -WorkFolder $s.WorkFolder -Task $s.Task -EntryScript $g.EntryScript -StorePath ([string](Get-MbtGuiProp $req 'StorePath' '')) -SelectionFiles @(Get-MbtGuiProp $req 'SelectionFiles' @()) -JobName ([string](Get-MbtGuiProp $req 'JobName' ''))
     $job.Folder = $Entry.Folder
     foreach ($k in 'EventsPath', 'StopPath', 'StatusPath', 'StdOut', 'StdErr') { $job[$k] = Join-Path $Entry.Folder (Split-Path $job[$k] -Leaf) }
     if (Test-Path -LiteralPath $job.StopPath) { Remove-Item -LiteralPath $job.StopPath -Force }
     # the events of the earlier runs stay in the file (with their result): the new run reads only what the new process writes
     $job.Offset = $(if (Test-Path -LiteralPath $job.EventsPath) { (Get-Item -LiteralPath $job.EventsPath).Length } else { 0L })
-    foreach ($c in @($req.Commands)) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = @($c) }) }
+    if ([string](Get-MbtGuiProp $req 'Source' '') -eq 'cli') {
+        # a job of the command line runs again by its name: the recorded command, in the folder it ran in
+        $job.ResumeArguments = @('-ResumeJob', [string]$Entry.Name, '-WorkFolder', $s.WorkFolder, '-StopFile', $job.StopPath, '-NoPrompt')
+        $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = $job.ResumeArguments })
+    } else {
+        foreach ($c in @($req.Commands)) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = @($c) }) }
+    }
     $g.Job = $job; $g.Run = New-MbtGuiRun -Task $s.Task -Title ([string]$req.Title)
+    $g.Run.Resumed = $true
     $g.Run.Dirty = $true
     $null = Start-MbtGuiProcess -Job $job
     Set-MbtGuiStep ($script:Flows[$s.Task].IndexOf('run'))
@@ -383,6 +537,7 @@ function Get-MbtGuiStepSub {
 function Get-MbtGuiStepHelp {
     param([string]$Task, [string]$Id, [string]$Title)
     switch -Regex ("$Id $Title") {
+        '^resume|Resume: reading' { return 'Reads what the earlier run of this job already did (the store, the journal or the manifest it keeps), so that only what is left is done. Nothing is changed.' }
         '^tree|Read the folder tree' { return 'Reads the folders of the mailbox, 4 requests at a time. A mailbox with thousands of folders takes a minute or two. Nothing is changed.' }
         '^list|List the items' { return 'Lists the items of the folders you chose, so that the number and the size are known before they are downloaded. With a period, only the items that arrived in it are kept.' }
         '^verify|Check the downloads' { return 'Each item was checked against its fingerprint when it arrived in the store. Nothing else to do.' }
@@ -488,7 +643,7 @@ function New-MbtGuiStepsColumn {
     $g.RunStepControl = $null
     $i = 0
     if (-not $run.Steps.Count -and -not $run.Result) {
-        $first = New-GuiStack @((New-GuiIcon play 13 'MbtBrandText'), (New-GuiText 'Starting the task...' 'Body')) -Orientation Horizontal
+        $first = New-GuiStack @((New-GuiIcon play 13 'MbtBrandText'), (New-GuiText $(if ($run.Resumed) { 'Resume: reading what is already done' } else { 'Starting the task...' }) 'Body')) -Orientation Horizontal
         $first.Children[0].Margin = [Windows.Thickness]::new(0, 2, 8, 0)
         $stack.Children.Add($first) | Out-Null
     }
@@ -696,8 +851,11 @@ function Invoke-MbtGuiContinue {
     if (Test-Path -LiteralPath $job.StopPath) { Remove-Item -LiteralPath $job.StopPath -Force }
     $job.StopAsked = $null; $job.PartExit = $null
     $req = New-MbtGuiRequest -Task $s.Task
-    foreach ($c in (Get-MbtGuiCommand -Task $s.Task -S $s -Job $job)) { $job.Queue.Enqueue($c) }
+    # a job of the command line runs again by its name; the others are built again from the state of the console
+    if ($job.ContainsKey('ResumeArguments') -and $job.ResumeArguments) { $job.Queue.Enqueue([pscustomobject]@{ Title = 'Continue'; Arguments = $job.ResumeArguments }) }
+    else { foreach ($c in (Get-MbtGuiCommand -Task $s.Task -S $s -Job $job)) { $job.Queue.Enqueue($c) } }
     $g.Run = New-MbtGuiRun -Task $s.Task -Title (Get-MbtGuiRunTitle)
+    $g.Run.Resumed = $true
     $s.RStep = $null; $s.RObj = $null
     $null = Start-MbtGuiProcess -Job $job
     Set-MbtGuiStep ($script:Flows[$s.Task].IndexOf('run'))

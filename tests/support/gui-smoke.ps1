@@ -684,6 +684,114 @@ foreach ($theme in 'Light', 'Dark') {
         $script:Gui.ForceClose = $true; $w3.Close()
         if ($problems.Count) { throw (($problems | Select-Object -First 5) -join '; ') }
         $true }
+    # the checks above opened other windows (each window makes itself the console of the script scope): back to the first one
+    $script:Gui = $g
+    function Find-ButtonsByText($root, [string]$Text) {
+        # the buttons below $root whose text is exactly $Text (a string, or the text blocks of its content)
+        $found = [Collections.Generic.List[object]]::new()
+        $walk = {
+            param($o)
+            if ($o -isnot [Windows.DependencyObject]) { return }
+            if ($o -is [Windows.Controls.Button] -and $o.Content -ne $null) {
+                $t = if ($o.Content -is [string]) { $o.Content } else { (Get-AllText $o.Content) -join '' }
+                # the icon of a button is a glyph of the private use area, in front of its text
+                if (($t -replace '[\uE000-\uF8FF]', '').Trim() -eq $Text) { $found.Add($o) }
+            }
+            foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c }
+        }
+        & $walk $root
+        return $found.ToArray()
+    }
+    function Invoke-ButtonClick($button) { $button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $button)); Wait-Dispatcher }
+    Check 'start: the jobs that are not finished come first, each says why it stopped and the step it reached; the finished ones are in a fold' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $p = $g.C.Page.Content
+        (Find-Text $p 'Interrupted on 2026-11-24 22:41: the PC was shut down') -and (Find-Text $p 'Step 3 of 5, Send the items, 5,120 of 9,860 done') -and (Find-Text $p 'Stopped by you on 2026-11-23 17:05') -and (Find-Text $p 'Stopped by an error on 2026-11-22 09:12: The disk is full') -and
+        (Find-Text $p 'Running now, in another window or process.') -and (Find-Text $p 'Finished (2)') -and (Find-Text $p 'Step 3 of 9, Download the items (reading the source mailbox)') }
+    function Find-JobScroll {
+        $script:ctJobScroll = $null
+        $walk = $null
+        $walk = { param($o) if ($script:ctJobScroll) { return }; if ($o -is [Windows.Controls.ScrollViewer] -and $o.Tag -eq 'MbtJobList') { $script:ctJobScroll = $o; return }; if ($o -is [Windows.DependencyObject]) { foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c } } }
+        & $walk $g.C.Page.Content
+        return $script:ctJobScroll
+    }
+    Check 'start: the list of jobs scrolls inside its card and does not push the page' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $scroll = Find-JobScroll
+        $scroll -and $scroll.MaxHeight -le 400 -and $scroll.VerticalScrollBarVisibility -eq 'Auto' -and $scroll.ActualHeight -le 400 -and $scroll.ExtentHeight -gt 0 }
+    Check 'start: an unfinished job has Continue, Open the report and Delete; a running job and a finished one have no Continue' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $p = $g.C.Page.Content
+        @(Find-ButtonsByText $p 'Continue').Count -eq 3 -and @(Find-ButtonsByText $p 'Open the report').Count -eq 6 -and @(Find-ButtonsByText $p 'Delete').Count -eq 6 }
+    Check 'delete: the dialog names the job and says exactly what is deleted and what never is' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Delete')[0])
+        $text = (Get-AllText $g.C.DialogBody.Content) -join ' | '
+        $ok = $g.DialogOpen -and $g.C.DialogTitle.Text -eq 'Delete this job?' -and $text -like '*archive-2019.pst*Adele Vance (Archive)*' -and $text -like '*deletes the folder of the job on this PC: its log, its report and its events*' -and
+        $text -like '*Your data is never deleted: the export store you chose, PST files, source files and the mailboxes are not touched.*' -and $text -like '*not finished*can no longer continue*'
+        Close-MbtGuiDialog; $ok }
+    Check 'delete: a job that runs elsewhere is refused with the reason' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Delete')[3])
+        $text = (Get-AllText $g.C.DialogBody.Content) -join ' | '
+        $ok = $g.DialogOpen -and $g.C.DialogTitle.Text -eq 'This job cannot be deleted' -and $text -like '*is running now*' -and $g.C.DialogButtons.Children.Count -eq 1
+        Close-MbtGuiDialog; $ok }
+    Check 'delete: the copy store is offered unticked for a complete copy, and refused with its reason while the copy is not complete' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $deletes = @(Find-ButtonsByText $g.C.Page.Content 'Delete')
+        $checkOf = { $found = $null; $walk = $null; $walk = { param($o) if ($o -is [Windows.Controls.CheckBox]) { $script:ctCheck = $o; return }; if ($o -is [Windows.DependencyObject]) { foreach ($c in [Windows.LogicalTreeHelper]::GetChildren($o)) { & $walk $c } } }; $script:ctCheck = $null; & $walk $g.C.DialogBody.Content; $script:ctCheck }
+        Invoke-ButtonClick $deletes[1]
+        $notComplete = & $checkOf
+        $a = $notComplete -and -not $notComplete.IsEnabled -and -not $notComplete.IsChecked -and ((Get-AllText $notComplete.Content) -join ' ') -like '*Also delete the copy store (4.2 GiB)*not complete*Finish the copy first*'
+        Close-MbtGuiDialog
+        Invoke-ButtonClick $deletes[4]
+        $complete = & $checkOf
+        $b = $complete -and $complete.IsEnabled -and -not $complete.IsChecked -and ((Get-AllText $complete.Content) -join ' ') -like '*Also delete the copy store (4.2 GiB)*'
+        $recorded = $null
+        $saved = $engine.JobDelete
+        $engine.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError) $script:ctDeleted = @($Name, $WithStore); & $OnDone $true }
+        $complete.IsChecked = $true
+        Invoke-ButtonClick (@($g.C.DialogButtons.Children | Where-Object { $_.Content -eq 'Delete the job' })[0])
+        $engine.JobDelete = $saved
+        $c = $script:ctDeleted -and $script:ctDeleted[0] -eq '20261110-0915-mailcopy-9b1c' -and $script:ctDeleted[1] -eq $true -and -not $g.DialogOpen
+        $a -and $b -and $c }
+    Check 'delete: Cancel deletes nothing' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        $saved = $engine.JobDelete; $script:ctDeleted = $null
+        $engine.JobDelete = { param($Work, $Name, $WithStore, $OnDone, $OnError) $script:ctDeleted = @($Name); & $OnDone $true }
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Delete')[0])
+        Invoke-ButtonClick (@($g.C.DialogButtons.Children | Where-Object { $_.Content -eq 'Cancel' })[0])
+        $engine.JobDelete = $saved
+        -not $script:ctDeleted -and -not $g.DialogOpen }
+    Check 'resume: Continue on a job shows the Resume view first, and nothing starts before its Continue is pressed' {
+        Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Continue')[0])
+        Measure-Window $window
+        $p = $g.C.Page.Content
+        $ok = (Get-MbtGuiScreen) -eq 'resume' -and (Find-Text $p 'Resume this job') -and (Find-Text $p 'Already done, and not done again') -and (Find-Text $p 'Checked again') -and (Find-Text $p 'Where it restarts') -and (Find-Text $p 'It restarts from step 1, Check the PST files') -and
+        (Find-Text $p 'Interrupted on 2026-11-24 22:41') -and $g.C.PrimaryLabel.Text -eq 'Continue' -and $g.C.Primary.IsEnabled -and (Get-TextBlockText $g.C.Footer) -like '*Nothing starts before you press Continue*' -and -not $g.Job
+        $ok }
+    Check 'resume: the Resume view of a copy, of an export, and Back to the jobs' {
+        Reset-State; Set-MbtGuiScenario 'ResumeCopy'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'It resumes the first part, reading the source mailbox') -and (Find-Text $g.C.Page.Content 'A copy has two parts')
+        Reset-State; Set-MbtGuiScenario 'ResumeExport'; Measure-Window $window
+        $b = (Find-Text $g.C.Page.Content 'It restarts from step 1, Read the folder tree, and downloads only what is left') -and (Find-Text $g.C.Page.Content 'Stopped by an error')
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.ActionsLeft 'Back to the jobs')[0]); Measure-Window $window
+        $c = (Get-MbtGuiScreen) -eq 'start' -and (Find-Text $g.C.Page.Content 'Continue a job')
+        $a -and $b -and $c }
+    Check 'resume: Continue on the Resume view starts the job, and the Run page says that it reads what is already done first' {
+        Reset-State; Set-MbtGuiScenario 'ResumeImport'; Measure-Window $window
+        & $g.PrimaryAction; Measure-Window $window
+        $a = (Get-MbtGuiScreen) -eq 'run'
+        Reset-State; Set-MbtGuiScenario 'RunExportResumed'; Measure-Window $window
+        $b = (Find-Text $g.C.Page.Content 'Resume: reading what is already done') -and (Find-Text $g.C.Page.Content 'Looking at what the earlier run already did')
+        $g.Run = New-MbtGuiRun -Task export -Title 'Export'; $g.Run.Resumed = $true; $g.Job = New-FakeJob 'export'; $g.S.Task = 'export'; $g.S.Step = $script:Flows.export.IndexOf('run'); Show-MbtGuiPage; Measure-Window $window
+        $c = (Find-Text $g.C.Page.Content 'Resume: reading what is already done') -and (Get-MbtGuiPreparingText $g.Run) -like '*Resume.*Reading what is already done*'
+        $a -and $b -and $c }
+    Check 'resume: a problem says why the job cannot be continued here and greys Continue' {
+        Reset-State; Set-MbtGuiScenario 'ResumeExport'
+        $g.S.Resume.Info = $g.S.Resume.Info | Select-Object *; $g.S.Resume.Info.Problem = 'This job belongs to the batch Wave1. A batch is continued from the command line.'; Show-MbtGuiPage; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'This job belongs to the batch Wave1') -and -not $g.C.Primary.IsEnabled -and -not (Find-Text $g.C.Page.Content 'Already done, and not done again') }
     Check 'the real engine adapter builds (no sign-in): capabilities, readiness, jobs' {
         $real = New-MbtGuiRealEngine -PackageRoot $Package -EntryScript (Join-Path $Package 'Invoke-MailboxTransfer.ps1') -WorkFolder $Work
         $lights = @((& $real.Readiness).Lights)
