@@ -400,6 +400,18 @@
 .PARAMETER BatchId
     The batch a job belongs to (status.json: batch). A batch sets it for the jobs it starts; leave it out.
 
+.PARAMETER ResumeJob
+    Runs a job again from its job folder: the name of the folder (the first column of -Mode Status) or the job id, whatever the case. The command that was recorded runs again in the folder it first ran in, in the same job folder, so only what is
+    left is done (what each mode does again is in the guide). A single job started from the command line (Export, ExportPst, Import, ImportPst, ImportEml, ExportEml, Copy) has such a folder in the work folder, like the jobs of the console;
+    a job that is not finished says this command in its Next steps. -WorkFolder, -StopFile, -LogFolder, -NoPrompt, -KeepAwake and -WhatIf of this run are passed on; a certificate password is never saved, so a job started with one is run again by its own command.
+
+.PARAMETER RemoveJob
+    Deletes the folder of a job (its events, status, request, log and report): the name of the folder or the job id, whatever the case. Asks first (-Confirm:$false does not ask, -WhatIf only shows). Never deleted: an export store you chose, PST files, source files,
+    mailboxes. Refused: a job that is running, a job of a batch that is not complete. The jobs are listed by -Mode Status.
+
+.PARAMETER RemoveCopyStore
+    With -RemoveJob, for a copy that is complete: the copy store (the folder of items read from the source mailbox) goes with the job, when it is in the stores folder of the work folder and no other job that is not finished uses it. Refused when the copy is not complete.
+
 .PARAMETER Path
     CheckPst, RepairPst: the PST file.
 
@@ -445,6 +457,10 @@
     .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -MailboxCsv D:\batch\imports.csv -TargetRoot Imported -WhatIf
     .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -MailboxCsv D:\batch\imports.csv -BatchName Restore1 -TargetRoot Imported -ParallelMailboxes 2 -AppOnly
     .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -ResumeBatch Restore1
+    .\Invoke-MailboxTransfer.ps1 -Mode Status
+    .\Invoke-MailboxTransfer.ps1 -ResumeJob 20261124-2241-export-3fa2
+    .\Invoke-MailboxTransfer.ps1 -RemoveJob 20261124-2241-export-3fa2 -WhatIf
+    .\Invoke-MailboxTransfer.ps1 -RemoveJob 20261110-0915-mailcopy-9b1c -RemoveCopyStore -Confirm:$false
     .\Invoke-MailboxTransfer.ps1 -Mode Status -StorePath D:\store
     .\Invoke-MailboxTransfer.ps1 -Mode Status -StorePath D:\store -Unknown -Check
     .\Invoke-MailboxTransfer.ps1 -Mode Status -StorePath D:\store -Unknown -Check -ResolveAbsent -WhatIf
@@ -563,6 +579,9 @@ param(
     [ValidateRange(1, 4)][int]$ParallelMailboxes = 1,
     [string]$WorkFolder,
     [string]$BatchId,
+    [string]$ResumeJob,
+    [string]$RemoveJob,
+    [switch]$RemoveCopyStore,
     [string]$Path,
     [string]$Destination,
     [ValidateSet('Automatic', 'Recompute', 'Rebuild', 'Salvage')][string]$Level = 'Automatic'
@@ -676,6 +695,89 @@ $dryRun = [bool]$WhatIfPreference
 $WhatIfPreference = $false
 Import-Module (Join-Path $PSScriptRoot 'MailboxTransfer.psd1') -Force
 
+# -ResumeJob and -RemoveJob work on one job folder of the work folder (the folders the console lists) and do nothing else.
+if ($ResumeJob -or $RemoveJob) {
+    if ($ResumeJob -and $RemoveJob) { throw '-ResumeJob and -RemoveJob each name one job: give one of them.' }
+    $jobWork = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Get-MbtDefaultWorkFolder }
+    $jobAsked = if ($ResumeJob) { $ResumeJob } else { $RemoveJob }
+    $foundJob = Find-MbtJob -WorkFolder $jobWork -Name $jobAsked
+    if (-not $foundJob) { throw "No job is named '$jobAsked' in $(Join-Path $jobWork 'jobs'). -Mode Status lists the jobs (add -WorkFolder when they are in another work folder)." }
+    try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { Write-Verbose "Console output encoding unchanged: $($_.Exception.Message)" }
+    $jobClock = [Diagnostics.Stopwatch]::StartNew()
+    $jobLog = $null
+    try { $jobLog = Start-MbtLog -Directory $(if ($LogFolder) { $LogFolder } else { Join-Path $jobWork 'logs' }) } catch { Write-Warning "No log file: $($_.Exception.Message)" }
+    if ($RemoveJob) {
+        $details = [ordered]@{ Mode = @('Mode', ('RemoveJob' + $(if ($dryRun) { ' - WhatIf (nothing is deleted)' }))); Job = @('Folder', $foundJob.Name) }
+        if ($jobLog) { $details.Log = @('Log', $jobLog) }
+        Write-MbtBanner -Title 'Mailbox Transfer' -Subtitle 'Deletes the folder of a job: its events, log and report' -Details $details
+        Write-MbtStep "Delete the job $($foundJob.Name)"
+        $removal = Get-MbtJobRemovalPlan -WorkFolder $jobWork -Job $foundJob -WithSize:$RemoveCopyStore
+        $values = [ordered]@{}
+        $code = 0
+        try {
+            Write-MbtItem INFO $removal.Title
+            $removalWhy = Get-MbtJobDescription -Job $foundJob
+            if ($removalWhy.Why) { Write-MbtDetail $removalWhy.Why }
+            if (-not $removal.Allowed) { throw $removal.Reason }
+            foreach ($warning in $removal.Warnings) { Write-MbtItem WARN $warning }
+            Write-MbtItem INFO "deleted: the folder $($removal.Folder) (events, status, request, log and report of the job)"
+            Write-MbtItem INFO 'never deleted: an export store you chose, PST files, source files, mailboxes'
+            $confirmation = @{}
+            if ($boundParameters.ContainsKey('Confirm')) { $confirmation.Confirm = [bool]$boundParameters['Confirm'] }
+            $removed = Remove-MbtJob -WorkFolder $jobWork -Name $foundJob.Name -IncludeStore:$RemoveCopyStore -WhatIf:$dryRun @confirmation
+            if ($removed.StoreRemoved) { Write-MbtItem OK ('the copy store was deleted ({0})' -f (Format-MbtBytes ([long]$removed.StoreBytes))); $values['Copy store'] = @('Store', 'deleted') }
+            if ($removed.Removed) { Write-MbtItem OK 'the job folder was deleted'; $values.Job = @('Folder', "$($foundJob.Name) deleted") }
+            elseif ($dryRun) { Write-MbtItem WARN 'WhatIf: nothing was deleted.'; $values.Job = @('Folder', "$($foundJob.Name) - WhatIf, nothing was deleted") }
+            else { Write-MbtItem WARN 'nothing was deleted.'; $values.Job = @('Folder', "$($foundJob.Name) kept") }
+        } catch {
+            $code = 1
+            Write-MbtItem FAIL $_.Exception.Message
+            $values.Error = @('Fail', $_.Exception.Message)
+            $values.Job = @('Folder', "$($foundJob.Name) kept")
+        }
+        $values = [ordered]@{ Result = @($(if ($code) { 'Fail' } else { 'Ok' }), "exit code $code") } + $values
+        $values.Duration = @('Clock', (Format-MbtDuration $jobClock.Elapsed.TotalSeconds))
+        if ($code) { $values['Next steps'] = @('Plan', @('-Mode Status lists the jobs and says why a job cannot be deleted.')) }
+        if ($jobLog) { $values.Log = @('Log', $jobLog) }
+        Write-MbtSummary -Title $(if ($code) { 'RemoveJob failed' } elseif ($dryRun) { 'RemoveJob planned (WhatIf, nothing was deleted)' } else { 'RemoveJob finished' }) -Values $values -Status $(if ($code) { 'Fail' } else { 'Ok' })
+        exit $code
+    }
+    # ResumeJob: the recorded command, again, in the folder it first ran in
+    $jobRequest = Read-MbtJobRequest -Folder $foundJob.Folder
+    if ($null -eq $jobRequest) { throw "The job '$($foundJob.Name)' has no request.json: nothing says what it ran, so it cannot be run again. Run its command again." }
+    if ([string](Get-MbtJobField $jobRequest 'Source' '') -eq 'cli') {
+        if ([bool](Get-MbtJobField $jobRequest 'NeedsSecret' $false)) { throw "The job '$($foundJob.Name)' was started with a certificate password, which is never saved. Run its command again with -CertificatePassword." }
+        $jobFolder = [string](Get-MbtJobField $jobRequest 'WorkingDirectory' '')
+        if (-not $jobFolder -or -not (Test-Path -LiteralPath $jobFolder -PathType Container)) { throw "The job '$($foundJob.Name)' ran in the folder '$jobFolder', which is not there any more: its journals and its relative paths are relative to it. Create the folder again, or run its command again: $(Get-MbtJobField $jobRequest 'CommandLine' '')" }
+        $replay = Get-MbtCliJobParameter -Request $jobRequest
+        $replay['EventsFile'] = Join-Path $foundJob.Folder 'events.jsonl'
+        $replay['JobId'] = if ($foundJob.JobId) { [string]$foundJob.JobId } else { $foundJob.Name }
+        foreach ($forward in 'StopFile', 'LogFolder', 'NoPrompt', 'KeepAwake', 'DevelopmentMode') { if ($boundParameters.ContainsKey($forward)) { $replay[$forward] = $boundParameters[$forward] } }
+        if ($NoPrompt -and $replay.Contains('DeviceCode')) { $replay.Remove('DeviceCode') }
+        if ($WorkFolder) { $replay['WorkFolder'] = $WorkFolder }
+        if ($dryRun) { $replay['WhatIf'] = $true }
+        Write-MbtStep "Resume the job $($foundJob.Name)"
+        Write-MbtItem INFO "the recorded command: $(Get-MbtJobField $jobRequest 'CommandLine' '')"
+        Write-MbtItem INFO "runs in: $jobFolder"
+        Push-Location -LiteralPath $jobFolder
+        try { & $PSCommandPath @replay } finally { Pop-Location }
+        exit $LASTEXITCODE
+    }
+    # a job of the console: its command lines are in request.json, they run as the console runs them
+    $jobCommands = @(Get-MbtJobField $jobRequest 'Commands' @())
+    if (-not $jobCommands.Count) { throw "The job '$($foundJob.Name)' has no recorded command: it cannot be run again." }
+    Write-MbtStep "Resume the job $($foundJob.Name)"
+    Write-MbtItem INFO "the job was started by the console: its $($jobCommands.Count) recorded command line(s) run one after the other"
+    $jobExit = 0
+    foreach ($command in $jobCommands) {
+        $childArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + $(if ($DevelopmentMode) { @('-DevelopmentMode') } else { @() }) + @('-LogFolder', $(if ($LogFolder) { $LogFolder } else { Join-Path $jobWork 'logs' })) + @($command | ForEach-Object { [string]$_ })
+        & (Get-Process -Id $PID).Path @childArgs
+        $jobExit = $LASTEXITCODE
+        if ($jobExit -notin 0, 1) { break }
+    }
+    exit $jobExit
+}
+
 $config = if ($ConfigPath) { Import-MbtConfiguration -Path $ConfigPath } else { Import-MbtConfiguration }
 if ($PSBoundParameters.ContainsKey('RetryWaitSeconds')) { $config.Graph.BaseBackoffSeconds = $RetryWaitSeconds }
 if (-not $TenantId) { $TenantId = $config.Tenant.TenantId }
@@ -760,7 +862,7 @@ if ($PSBoundParameters.ContainsKey('ArrivedFrom') -or $PSBoundParameters.Contain
 # A copy (-Mode Copy) reads ONE mailbox location, an export into a store, and writes that store into ONE other mailbox location, an import, in one job.
 # The source side is given as for an export (-UserPrincipalName, -Mailbox, -MailboxId, -SelectionFile, -Folder, the period), the target side as for an import (-TargetMailbox,
 # -TargetMailboxId, -TargetRoot, -MappingFile). Everything that can be refused without signing in is refused here, before a banner or a request.
-$copyWork = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MailboxTransfer' }
+$copyWork = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Get-MbtDefaultWorkFolder }
 $copy = $null
 if ($Mode -eq 'Copy' -and -not $batchMode) {
     foreach ($notCopy in 'SourceMailbox', 'PstPath', 'EmlPath', 'IncludeFolder', 'ExcludeFolder', 'FolderFile', 'IncludeItemFile') {
@@ -824,6 +926,23 @@ $bannerSubtitle = switch ($Mode) {
     'CheckPst' { 'Checks a PST file, read only' }
     'RepairPst' { 'Writes a repaired copy of a PST file; the original is never changed' }
 }
+# A single job started from the command line is a job like the ones of the console: its folder (events, status.json, request.json with this command and the folder it runs in) is in the work folder,
+# so that the console lists it and -ResumeJob continues it. The same command again continues the job of that command while it is not complete.
+$cliJob = $null
+if (-not $EventsFile -and -not $batchMode -and -not $dryRun -and $Mode -in 'Export', 'ExportPst', 'Import', 'ImportPst', 'ImportEml', 'ExportEml', 'Copy') {
+    try {
+        $cliWork = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Get-MbtDefaultWorkFolder }
+        $cliTask = switch ($Mode) { 'Copy' { 'mailcopy' } 'Export' { 'export' } 'ExportEml' { 'export' } 'ExportPst' { 'exportpst' } default { 'import' } }
+        $cliParameters = @{}
+        foreach ($k in $boundParameters.Keys) { $cliParameters[$k] = $boundParameters[$k] }
+        $cliResolved = @{ StorePath = [IO.Path]::GetFullPath($StorePath); TempPath = [IO.Path]::GetFullPath($TempPath) }
+        if ($Mode -eq 'ImportPst') { $cliResolved.JournalPath = Join-Path $cliResolved.TempPath 'pstimport.db' }
+        $cliTitle = '{0} - {1}' -f $Mode, @($UserPrincipalName, $PstPath, $EmlPath, $StorePath | Where-Object { $_ } | ForEach-Object { [string]@($_)[0] })[0]
+        $cliJob = New-MbtCliJob -WorkFolder $cliWork -Mode $Mode -Task $cliTask -Parameter $cliParameters -WorkingDirectory (Get-Location).ProviderPath -ScriptPath $PSCommandPath -Resolved $cliResolved -Title $cliTitle
+        $EventsFile = $cliJob.EventsFile
+        $JobId = $cliJob.JobId
+    } catch { Write-Warning "The job folder could not be written ($($_.Exception.Message)): the job runs without it, and the console will not list it."; $cliJob = $null }
+}
 $bannerDetails = [ordered]@{ Mode = @('Mode', $Mode + $(if ($batchMode) { ' - a list of mailboxes' }) + $(if ($dryRun) { ' - WhatIf (nothing is written)' })) }
 if ($batchMode) { $bannerDetails.Mailboxes = @('Folder', $(if ($MailboxCsv) { $MailboxCsv } else { "batch $ResumeBatch" })) }
 elseif ($Mode -in 'Export', 'ExportPst', 'Import', 'Status', 'ExportEml', 'Copy') { $bannerDetails.Store = @('Store', $StorePath) }
@@ -836,6 +955,7 @@ if ($bannerSource) { $bannerDetails.Source = @('Folder', $bannerSource) }
 if ($OutputPst) { $bannerDetails.Output = @('Folder', $OutputPst) }
 if ($arrivalPeriod) { $bannerDetails.Period = @('Clock', $arrivalPeriod.Describe()) }
 if ($Destination) { $bannerDetails.Output = @('Folder', $Destination) }
+if ($cliJob) { $bannerDetails.Job = @('Folder', ($cliJob.Name + $(if ($cliJob.Reused) { ' (the same command again: this job continues)' }))) }
 if ($logPath) { $bannerDetails.Log = @('Log', $logPath) }
 Write-MbtBanner -Title 'Mailbox Transfer' -Subtitle $bannerSubtitle -Details $bannerDetails
 Initialize-MbtEngine
@@ -850,6 +970,16 @@ $script:phase = $Mode
 $script:resumable = $false
 $script:copyExportStopped = $false
 $script:copyNext = $null
+# The name of the job folder of a run that has one made by the command line: its Next steps say how to continue it.
+function Get-CliJobName {
+    if ($cliJob) { return [string]$cliJob.Name }
+    if ($EventsFile) {
+        $jobFolder = Split-Path ([IO.Path]::GetFullPath($EventsFile)) -Parent
+        $request = Read-MbtJobRequest -Folder $jobFolder
+        if ($request -and [string](Get-MbtJobField $request 'Source' '') -eq 'cli') { return (Split-Path $jobFolder -Leaf) }
+    }
+    return ''
+}
 # The card that ends every run: what happened (exit code rule: 3 uncertain items, 2 resumable, 1 error or items refused for good, 0 complete), the counts, the log, what to do next.
 function Write-MbtRunSummary {
     param([int]$ExitCode, [string]$Failure)
@@ -874,7 +1004,13 @@ function Write-MbtRunSummary {
     }
     $values.Duration = @('Clock', (Format-MbtDuration $runClock.Elapsed.TotalSeconds))
     if ($script:next -and $script:next -notin 'done') { $values.Next = @('Plan', [string]$script:next) }
-    if ($script:copyNext) { $values['Next steps'] = @('Plan', $script:copyNext) }
+    $cliName = Get-CliJobName
+    $nextSteps = @($script:copyNext | Where-Object { $_ })
+    if ($cliName -and -not $dryRun -and $ExitCode -ne 0 -and -not $script:resultComplete) {
+        $nextSteps += @("Continue this job: .\Invoke-MailboxTransfer.ps1 -ResumeJob $cliName", 'Running the same command again continues it as well. The console lists it under Continue a job.')
+    }
+    if ($nextSteps.Count) { $values['Next steps'] = @('Plan', $nextSteps) }
+    if ($cliName) { $values.Job = @('Folder', $cliName) }
     if ($logPath) { $values.Log = @('Log', $logPath) }
     # the report of the job (steps and chronology, waits, warnings, folders): one HTML file in the job folder, written from the events just written
     if ($EventsFile -and -not $dryRun -and $Mode -in 'Export', 'ExportPst', 'Import', 'ImportPst', 'ExportEml', 'ImportEml', 'CheckPst', 'RepairPst', 'Copy') {
@@ -1196,11 +1332,28 @@ function Write-MbtPeriodPlanNote {
     Write-MbtEvent info ([ordered]@{ msg = $note })
 }
 
+# -Mode Status: the jobs of the work folder (the ones the console lists), the ones that are not finished first, with why they stopped and the command that continues them.
+function Show-JobList {
+    $listWork = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Get-MbtDefaultWorkFolder }
+    Write-MbtStep "Jobs in $(Join-Path $listWork 'jobs')"
+    $listing = Get-MbtJobListing -WorkFolder $listWork -FinishedLimit 10
+    if (-not @($listing.Unfinished).Count -and -not @($listing.Finished).Count) { Write-MbtItem INFO 'no job yet: a job started from the command line or from the console is listed here.'; return }
+    foreach ($j in @($listing.Unfinished) + @($listing.Finished)) {
+        $icon = switch ($j.Kind) { 'complete' { 'OK' } 'running' { 'INFO' } 'error' { 'FAIL' } default { 'WARN' } }
+        Write-MbtItem $icon ('{0}  {1}' -f $j.Name, $(if ($j.Title) { $j.Title } else { $j.JobId }))
+        if ($j.Why) { Write-MbtDetail $j.Why }
+        if ($j.Progress) { Write-MbtDetail $j.Progress }
+        if ($j.Kind -notin 'complete', 'running') { Write-MbtDetail "continue: -ResumeJob $($j.Name)" }
+    }
+    if ($listing.FinishedTotal -gt @($listing.Finished).Count) { Write-MbtItem INFO ('{0} more finished jobs: the overview of all the jobs (jobs\overview.html) lists them.' -f ($listing.FinishedTotal - @($listing.Finished).Count)) }
+    Write-MbtDetail 'continue one with: -ResumeJob <name>; delete one with: -RemoveJob <name> (-WhatIf shows what goes)'
+}
+
 # The export of a list of mailboxes, the import into a list of mailboxes, or the copy of a list of mailboxes into others (-MailboxCsv, or -ResumeBatch for a batch that exists). The whole CSV file is checked first and every problem is printed together;
 # then each mailbox (each line of an import) is an ordinary job in a process of its own (Invoke-MbtBatch). The sign-in is done once here, and never asked for again in the middle of a run.
 function Invoke-BatchRun {
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    $work = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MailboxTransfer' }
+    $work = if ($WorkFolder) { [IO.Path]::GetFullPath($WorkFolder) } else { Get-MbtDefaultWorkFolder }
     $stop = { param([string[]]$Problems)
         Write-MbtStep 'The batch cannot start'
         foreach ($p in $Problems) { Write-MbtItem FAIL $p }
@@ -1377,6 +1530,7 @@ try {
             'Status' {
                 Write-MbtItem OK 'the C# engine compiles'
                 Write-MbtItem INFO "Graph: $($config.Graph.BaseUrl), retry up to $($config.Graph.MaxAttempts) attempts, token cache: $($config.Auth.CacheFile)"
+                if (-not $PSBoundParameters.ContainsKey('StorePath') -and -not ($Unknown -or $Locations -or $ResolveUnknown -or $ResolveAbsent)) { Show-JobList }
                 if (-not $storeExists) {
                     Write-MbtItem INFO "no store in $StorePath (Export creates it; -StorePath says where it is)."
                     break
