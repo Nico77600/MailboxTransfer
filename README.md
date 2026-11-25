@@ -296,6 +296,8 @@ cd C:\Tools\MailboxTransfer
 .\Invoke-MailboxTransfer.ps1 -Mode Browse -Mailbox Archive                                   # folder tree, read only
 .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store -OutputPst D:\pst\adele.pst
 .\Invoke-MailboxTransfer.ps1 -Mode ImportPst -PstPath D:\old\archive.pst -TargetRoot Imported/archive -WhatIf   # the plan
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -TargetRoot 'Copy of projects' -WhatIf  # a mailbox into another: the plan
+.\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\lists\mailboxes.csv                  # a list of mailboxes, one job each (also Import, ImportPst, ImportEml, Copy)
 .\Invoke-MailboxTransfer.ps1 -Mode CheckPst  -Path D:\pst\mail.pst                           # read only
 .\Invoke-MailboxTransfer.ps1 -Mode RepairPst -Path D:\pst\mail.pst -Destination D:\pst\mail.repaired.pst
 ```

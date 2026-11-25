@@ -41,7 +41,7 @@ $mbtCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
 [Globalization.CultureInfo]::DefaultThreadCurrentUICulture = $mbtCulture
 [Threading.Thread]::CurrentThread.CurrentCulture = $mbtCulture
 [Threading.Thread]::CurrentThread.CurrentUICulture = $mbtCulture
-$package =Join-Path (Split-Path $PSScriptRoot -Parent) 'package'
+$package = Join-Path (Split-Path $PSScriptRoot -Parent) 'package'
 if (-not $Version) { $Version = (Import-PowerShellDataFile -LiteralPath (Join-Path $package 'MailboxTransfer.psd1')).ModuleVersion }
 $Scenario = @($Scenario | ForEach-Object { $_ -split ',' } | Where-Object { $_ }); $Theme = @($Theme | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if (-not $OutDir) { $OutDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'out\console-screens' }
@@ -52,6 +52,18 @@ if ($Flow) { $shots = @(Get-MbtGuiFlowShots) } else {
     $n = 0; $shots = @($Scenario | ForEach-Object { $n++; @{ File = ('{0:00}-{1}' -f $n, $_); Scenario = $_ } })
 }
 $stateOnly = $null
+
+# A TextBlock that holds a resource reference (its brush) inside the content of a Button or a RadioButton keeps the default font size of WPF under .NET 10
+# instead of the size of the window (14). Invalidating the property gives it the inherited size, so that the pictures show the sizes the XAML sets.
+function Update-InheritedFontSize($Element) {
+    if ($Element -is [Windows.Controls.TextBlock] -and
+        [Windows.DependencyPropertyHelper]::GetValueSource($Element, [Windows.Controls.TextBlock]::FontSizeProperty).BaseValueSource -eq [Windows.BaseValueSource]::Default) {
+        $Element.InvalidateProperty([Windows.Controls.TextBlock]::FontSizeProperty)
+    }
+    if ($Element -is [Windows.Media.Visual]) {
+        for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($Element); $i++) { Update-InheritedFontSize ([Windows.Media.VisualTreeHelper]::GetChild($Element, $i)) }
+    }
+}
 
 function Wait-Dispatcher {
     for ($i = 0; $i -lt 4; $i++) {
@@ -79,6 +91,7 @@ foreach ($t in $Theme) {
         Set-MbtGuiScenario -Name $name
         Wait-Dispatcher
         $root = $window.Content
+        Update-InheritedFontSize $root
         $root.UpdateLayout()
         $w = $Width; $h = $Height
         $bmp = [Windows.Media.Imaging.RenderTargetBitmap]::new($w, $h, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)

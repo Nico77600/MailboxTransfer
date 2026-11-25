@@ -94,24 +94,24 @@ $screens = [ordered]@{
 $callouts = @{
     Setup = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 1252, 913))
     SetupApplication = @(@(1, 16, 240), @(2, 592, 240), @(3, 16, 506), @(4, 1252, 913))
-    TaskWhat = @(@(1, 50, 116), @(2, 16, 214), @(3, 16, 372), @(4, 866, 372))
+    TaskWhat = @(@(1, 50, 116), @(2, 16, 214), @(3, 16, 396), @(4, 866, 396))
     ExportFromSignedOut = @(@(1, 16, 190), @(2, 30, 263), @(3, 30, 415))
     ExportFromCode = @(@(1, 16, 190), @(2, 16, 330))
-    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 224), @(4, 1194, 224), @(5, 16, 617), @(6, 452, 838))
-    ExportFromPeriodOpen = @(@(1, 452, 762), @(2, 1080, 799), @(3, 452, 835))
+    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 224), @(4, 1194, 224), @(5, 16, 617), @(6, 440, 838))
+    ExportFromPeriodOpen = @(@(1, 440, 762), @(2, 1080, 799), @(3, 440, 835))
     ExportPlanPeriod = @(@(1, 16, 190), @(2, 30, 561), @(3, 566, 449), @(4, 30, 776), @(5, 1252, 913))
     ExportTo = @(@(1, 16, 190), @(2, 460, 190), @(3, 1252, 913))
     ExportPlan = @(@(1, 16, 190), @(2, 16, 386), @(3, 562, 182), @(4, 16, 643), @(5, 1252, 913))
     RunExport = @(@(1, 16, 178), @(2, 16, 334), @(3, 290, 334), @(4, 1146, 334), @(5, 16, 913), @(6, 30, 487))
     RunImportDecision = @(@(1, 16, 330), @(2, 30, 381), @(3, 16, 913))
     RepairFromDamaged = @(@(1, 16, 239), @(2, 460, 239), @(3, 1252, 913))
-    ImportFrom = @(@(1, 16, 215), @(2, 440, 215))
+    ImportFrom = @(@(1, 16, 215), @(2, 434, 215))
     ImportTo = @(@(1, 16, 226), @(2, 452, 340), @(3, 452, 450))
     RepairTo = @(,@(1, 16, 226))
     ImportPlan = @(@(1, 16, 190), @(2, 566, 262), @(3, 566, 446), @(4, 1090, 913))
     DoneExportComplete = @(@(1, 16, 190), @(2, 16, 424), @(3, 16, 556))
-    CopyMailboxFrom = @(@(1, 16, 200), @(2, 16, 515), @(3, 460, 198), @(4, 452, 838))
-    CopyMailboxTo = @(@(1, 16, 239), @(2, 460, 282), @(3, 460, 331), @(4, 460, 450))
+    CopyMailboxFrom = @(@(1, 16, 200), @(2, 16, 515), @(3, 450, 198), @(4, 440, 838))
+    CopyMailboxTo = @(@(1, 16, 239), @(2, 442, 282), @(3, 442, 331), @(4, 442, 450))
     CopyMailboxPlan = @(@(1, 16, 200), @(2, 16, 439), @(3, 566, 240), @(4, 566, 481), @(5, 1090, 913))
     DoneRepair = @(,@(1, 16, 178))
 }
@@ -276,16 +276,17 @@ $drawings['readme-tasks'] = @{ W = 1280; H = 380; Draw = {
         Add-Rect 0 0 1280 380 'bg' '' 0
         $tasks = @(@(0xE896, 'Browse and export', 'Look inside a mailbox, tick what to keep, save it as PST files, EML files or an export store.', 'Reads only', 'ok'),
             @(0xE898, 'Import', 'Put a PST file, an export store or EML files into a mailbox. Items are added, never replaced.', 'Adds to a mailbox', 'warn'),
+            @(0xE724, 'Copy to another mailbox', 'Read a mailbox into a store on this PC, then add it to another mailbox. One task, resumable.', 'Adds to a mailbox', 'warn'),
             @(0xE90F, 'Check and repair a PST', 'Test a PST. If it is damaged, write a repaired copy. The original is never changed.', 'Local files only', 'ok'),
             @(0xE838, 'Open an export or a PST', 'Read a PST or an export store like a mailbox: folders, messages, attachments.', 'Reads only', 'ok'))
         $x = 40
         foreach ($t in $tasks) {
-            Add-Card $x 40 285 300
-            Add-Tile $t[0] ($x + 20) 62 52
-            [void](Add-Text $t[1] ($x + 20) 130 21 'text' 'SemiBold' 250)
-            [void](Add-Text $t[2] ($x + 20) 166 16 'text2' 'Normal' 250)
-            if ($t[4] -eq 'ok') { [void](Add-Pill $t[3] ($x + 20) 290 'okBg' 'ok') } else { [void](Add-Pill $t[3] ($x + 20) 290 'warnBg' 'warn') }
-            $x += 305
+            Add-Card $x 40 232 300
+            Add-Tile $t[0] ($x + 18) 62 52
+            [void](Add-Text $t[1] ($x + 18) 130 17 'text' 'SemiBold' 212)
+            [void](Add-Text $t[2] ($x + 18) 162 15 'text2' 'Normal' 206)
+            if ($t[4] -eq 'ok') { [void](Add-Pill $t[3] ($x + 18) 290 'okBg' 'ok') } else { [void](Add-Pill $t[3] ($x + 18) 290 'warnBg' 'warn') }
+            $x += 242
         }
     } }
 

@@ -3,7 +3,7 @@ title: Mailbox Transfer
 subtitle: User guide
 version: 1.3.0
 author: Nicolas Fabert
-updated: 2026-11-24
+updated: 2026-11-25
 runtime: PowerShell 7.6+ (engine, window and command line)
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
@@ -192,7 +192,7 @@ Get-ChildItem "C:\Tools\MailboxTransfer" -Recurse -File -Force | Unblock-File
 **If not:** a red message that mentions a path means the path is wrong. Fix the path and run it again.
 
 > [!NOTE]
-> **The tool checks itself.** Every script of the package is signed by its author, and a list of the other files with their fingerprints is signed too. Each time the tool starts, it verifies them. If a file was changed or is missing, the tool stops and names the file: download the ZIP again (see chapter 9, line 25). You do not have to do anything for this check.
+> **The tool checks itself.** Every script of the package is signed by its author, and a list of the other files with their fingerprints is signed too. Each time the tool starts, it verifies them. If a file was changed or is missing, the tool stops and names the file: download the ZIP again (see chapter 10, topic 26). You do not have to do anything for this check.
 
 ### 3. Write your two numbers
 
@@ -294,7 +294,7 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 
 **If not:**
 
-- *An amber note: "Auxiliary archive 1 is still being filled by Microsoft".* Normal on a very big archive. Some folders will say **not ready**. The tool tries them again later. Nothing is exported as empty. See chapter 9, topic 3.
+- *An amber note: "Auxiliary archive 1 is still being filled by Microsoft".* Normal on a very big archive. Some folders will say **not ready**. The tool tries them again later. Nothing is exported as empty. See chapter 10, topic 3.
 - *The archive is missing from the list.* Click **The archive is missing from this list**. Your administrator can give you its id once (see the reference guide).
 - *A shared mailbox.* Click **A shared mailbox, or another user's mailbox** and type its address. You need the FullAccess right (chapter 2).
 
@@ -306,7 +306,7 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 
 **You should see:** the box **Your selection** (and the line at the bottom of the window) counts the items, the size and the folders you ticked. A half-filled checkbox means "some of this folder".
 
-![Browsing a mailbox. 1: the box Mailbox. 2: the box Where to look. 3: the folders (a number is the count of items) and, beside them, the messages of the open folder with their checkboxes. 4: the reading pane: click a message to read it. 5: the box Include deleted items (Recoverable Items); your selection is counted under the browser and in the line at the bottom](images/console-from-browse-light.png)
+![Browsing a mailbox. 1: the box Mailbox. 2: the box Where to look. 3: the folders (a number is the count of items) and, beside them, the messages of the open folder with their checkboxes. 4: the reading pane: click a message to read it. 5: the box Include deleted items (Recoverable Items); your selection is counted under the browser and in the line at the bottom. 6: the Period line, under the browser](images/console-from-browse-light.png)
 
 **If not:** if you see *headers only until export* for an auxiliary archive, it is normal: Microsoft gives only sizes and dates for it until it is exported. If the messages show no subject, the permission `Mail.Read` is missing: you can still export, but you cannot see the subjects.
 
@@ -314,6 +314,8 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 > **This is read only.** Browsing never changes the mailbox. Deleted items you ticked are exported like any folder, but saved **apart**, under a folder named *Recoverable Items*, never mixed with your normal folders.
 
 **Only some dates (optional).** Under the browser, the line under your selection says **Period: all dates (recommended)**. Click **Change** to open two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The line then says *Period: items that arrived between 2026-01-01 and 2026-03-31*; **Done** closes the day boxes and **All dates** puts everything back. The same period applies to everything you ticked, in every place you looked in. If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
+
+![The Period line opened. 1: the line, with Done and All dates. 2: the day boxes From and To. 3: what arrived means](images/console-from-period-light.png)
 
 > [!NOTE]
 > **What "arrived" means.** It is the date the item was created in the mailbox, the one Microsoft gives when it lists the items. For mail that was **migrated or imported** into the mailbox, it is the date of that import, not the original date of the message. A day is a whole day of the time zone of this PC. An item that has no date at all is **kept**, and counted.
@@ -360,6 +362,8 @@ Click **Continue to Verify**.
 > [!NOTE]
 > **With a period, the numbers are "at most".** Microsoft cannot say how many items of a folder arrived in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31`). The period is applied while the items are listed; the exact numbers come at the end of the job.
 
+![The Verify page of an export with a period. 1: the checks. 2: the Period line of what will be done. 3: the note under what is in it. 4: the command line with the two days. 5: the Start button](images/console-verify-export-period-light.png)
+
 > [!NOTE]
 > **Expert mode** holds four numbers for this run only (how many requests in parallel, how long to wait before a retry, how many tries per item, how long to wait before checking an uncertain item) and the box **Keep this PC awake while it runs**. You do not need it, and nothing in it is saved.
 
@@ -369,7 +373,7 @@ Click **Continue to Verify**.
 
 **You should see:** the **Run** page: a bar, the number of items, the size, the time elapsed, and **About 5 min left**. Below: the **Steps** with a tick, a triangle or a clock, and the **Folders** with their counts.
 
-![The run. 1: the summary and the bar. 2: the steps. 3: the folders. 4: the details of the folder you clicked. 5: Stop and keep progress](images/console-run-export-light.png)
+![The run. 1: the summary and the bar. 2: the steps. 3: the folders. 4: the details of the folder you clicked. 5: Stop and keep progress. 6: the small Pause button of the running step](images/console-run-export-light.png)
 
 Before the first item is counted, the page says **Preparing** with the folders read so far:
 
@@ -396,7 +400,7 @@ What the steps mean:
 | *Resumed after sleep* | The PC slept. | Nothing. It carries on. |
 | A **red** message | A real problem. | Read it, chapter 10. |
 
-To stop on purpose, click **Stop and keep progress** (bottom left), or the small **Pause** button on the running step: both ask you to confirm, and nothing is lost. After a stop, the same small button reads **Resume** and carries on where it stopped, as **Continue** does. See chapter 8.
+To stop on purpose, click **Stop and keep progress** (bottom left), or the small **Pause** button on the running step: both ask you to confirm, and nothing is lost. After a stop, the same small button reads **Resume** and carries on where it stopped, as **Continue** does. See chapter 9.
 
 ### 4.8 Next steps: read the end
 
@@ -923,11 +927,11 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 | 23 | A folder *Restored deleted items* appears after an import | The export held deleted items. Exchange does not accept an import there, so they are put in a normal folder. | Nothing. They are ordinary items now. See 5.2. |
 | 24 | *The mailbox … cannot be reached by the mailbox import-export API* | The mailbox is **soft-deleted** (its user was deleted less than 30 days ago) or **inactive** (kept on hold after its user was deleted). Microsoft gives no way to read such a mailbox with this tool. | Ask your administrator to restore the user within 30 days, or to recover the inactive mailbox into an active one (reference guide, 13.1). Then run the export again. |
 | 25 | *Microsoft does not accept the sign-in window for this application yet... redirect URI...* (error AADSTS50011) | The registration of the application lacks the redirect address of the Windows sign-in window. | Send the address shown in the message (`ms-appx-web://microsoft.aad.brokerplugin/<application id>`) to your administrator (step A of chapter 2). Meanwhile use **Use a code instead**. |
-| 25 | *Package integrity: SHA256 mismatch*, *missing inventory path*, *unexpected stable file* or *verifier must have the trusted, timestamped owner signature* | The tool checks its own files each time it starts. A file was changed, deleted or added inside the tool's folder, or the files are not the ones of the release (a copy of the repository, a ZIP re-saved by another program). | Download the ZIP again from the **latest release** page (not *Source code*), extract it into a clean folder and unblock it. Do not edit the files of the tool. Your settings go in `config\MailboxTransfer.config.local.psd1`, which is never checked. Keep your exports outside the tool's folder. |
-| 26 | *PackageIntegrity.psd1 is missing* | You started a copy of the repository, not the release. | Use the ZIP of the latest release. Only the maintainer starts a copy of the repository, with `-DevelopmentMode`. |
-| 27 | The window closes by itself at the first click, and shows nothing | You use PowerShell **7.6** with version 1.1.0 of the tool. | Use version **1.2.0** or later (the **Latest release** link at the top right of the window). |
-| 28 | On the Verify page of an import, **Start** stays grey: *Tick the box to unlock Start.* | The box that names what will be written is not ticked, or you changed the mailbox, the folder or the source after you ticked it: the tick clears by itself. | Tick the box again (5.3). |
-| 29 | On the **From** page, **Continue to destination** is grey and the bottom line says *Sign in first.* | You are not signed in yet. | Sign in on the **From** page (4.2). To change *Me* or *The application*, go **Back** to **Setup**. |
+| 26 | *Package integrity: SHA256 mismatch*, *missing inventory path*, *unexpected stable file* or *verifier must have the trusted, timestamped owner signature* | The tool checks its own files each time it starts. A file was changed, deleted or added inside the tool's folder, or the files are not the ones of the release (a copy of the repository, a ZIP re-saved by another program). | Download the ZIP again from the **latest release** page (not *Source code*), extract it into a clean folder and unblock it. Do not edit the files of the tool. Your settings go in `config\MailboxTransfer.config.local.psd1`, which is never checked. Keep your exports outside the tool's folder. |
+| 27 | *PackageIntegrity.psd1 is missing* | You started a copy of the repository, not the release. | Use the ZIP of the latest release. Only the maintainer starts a copy of the repository, with `-DevelopmentMode`. |
+| 28 | The window closes by itself at the first click, and shows nothing | You use PowerShell **7.6** with version 1.1.0 of the tool. | Use version **1.2.0** or later (the **Latest release** link at the top right of the window). |
+| 29 | On the Verify page of an import, **Start** stays grey: *Tick the box to unlock Start.* | The box that names what will be written is not ticked, or you changed the mailbox, the folder or the source after you ticked it: the tick clears by itself. | Tick the box again (5.3). |
+| 30 | On the **From** page, **Continue to destination** is grey and the bottom line says *Sign in first.* | You are not signed in yet. | Sign in on the **From** page (4.2). To change *Me* or *The application*, go **Back** to **Setup**. |
 
 <!-- icon: book -->
 ## 11. Picture dictionary and words

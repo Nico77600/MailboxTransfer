@@ -44,7 +44,7 @@ Edit only `config\MailboxTransfer.config.psd1` and `config\MailboxTransfer.confi
 
 | Item | Role |
 |---|---|
-| `Invoke-MailboxTransfer.ps1` | The command line: `Export`, `ExportPst`, `Import`, `ImportPst`, `ExportEml`, `ImportEml`, `Browse`, `Status`, `CheckPst`, `RepairPst`. |
+| `Invoke-MailboxTransfer.ps1` | The command line: `Export`, `ExportPst`, `Import`, `ImportPst`, `ExportEml`, `ImportEml`, `Copy`, `Browse`, `Status`, `CheckPst`, `RepairPst`. |
 | `Start-MailboxTransferConsole.ps1`, `Start-MailboxTransferConsole.cmd` | The console (WPF) and its double-click launcher. |
 | `MailboxTransfer.psd1`, `MailboxTransfer.psm1` | The module: sign-in, configuration, mailbox tree, export, import, store, PST, EML. |
 | `module\` | The console (pages, state, jobs), the events file of a job, the EML commands. |

@@ -2,18 +2,18 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
-## 1.3.0 — 2026-11-24
+## 1.3.0 — 2026-11-25
 
 ### Added
-- **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` keep the items that arrived in the mailbox between two days (the console: the **Period** line under the browser of the From page). One period for the whole export, a list of mailboxes included. Messages you tick one by one are always exported; an item with no date is kept. The items left out are skipped, not an error; the summary, the report and the page of all the jobs say how many.
-- **Import many mailboxes from a list**: `-Mode Import`, `ImportPst` or `ImportEml` with `-MailboxCsv list.csv` imports a list of sources into a list of mailboxes, one ordinary import job for each, up to 4 at a time. The file and every source are checked first; lines that write into the same mailbox run one after the other; the same command again continues, and nothing is imported twice.
-- **Copy a mailbox into another, in one task**: `-Mode Copy` (or **Copy to another mailbox** in the console) reads a mailbox, some of its folders or one period into a store, then imports the store into another mailbox. One plan with `-WhatIf`, the same command again continues where it stopped and creates nothing twice, and `-MailboxCsv` copies a list, one job each. The store stays on disk.
+- **Copy a mailbox into another, in one task**: `-Mode Copy` (console: **Copy to another mailbox**) reads a mailbox, some folders or one period into a store, then adds the store to another mailbox; resumable, nothing created twice, a list of copies with `-MailboxCsv`.
+- **Export only some dates**: `-ArrivedFrom` and `-ArrivedTo` (console: the **Period** line under the browser) keep the items that arrived between two days; the report says how many were left out.
+- **Import many mailboxes from a list**: `-MailboxCsv` with `-Mode Import`, `ImportPst` or `ImportEml`, one ordinary import job for each, up to 4 at a time, resumable.
 
 ### Changed
-- **PowerShell 7.6 or later is the minimum**, for the console and for the command line (it was 7.5 and 7.4). Install it with `winget install Microsoft.PowerShell`, or update it with `winget upgrade Microsoft.PowerShell`.
-- **Runs from a OneDrive-synced folder**: the package check judges a link by its type, not by the link attribute. Symbolic links, junctions and unknown types are still refused; OneDrive, deduplicated and CompactOS files are accepted and still hashed, and a OneDrive file that cannot be downloaded offline is named with the way out.
-- **The browser fits the window**: the folder tree and the list of messages are no longer cut off when the window is small.
-- **Pause and Resume on the running step**: a small button in the place of its icon pauses the job (stop and keep progress) and resumes it where it stopped.
+- **PowerShell 7.6 or later is the minimum**, for the console and the command line (`winget install Microsoft.PowerShell`).
+- **Runs from a OneDrive-synced folder**: the package check accepts OneDrive, deduplicated and CompactOS files; symbolic links and junctions are still refused.
+- **The browser fits the window**: the folder tree and the message list are no longer cut off in a small window.
+- **Pause and Resume** on the running step of a job.
 
 ## 1.2.0 — 2026-11-14
 

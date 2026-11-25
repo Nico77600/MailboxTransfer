@@ -3,7 +3,7 @@ title: Mailbox Transfer
 subtitle: Reference guide
 version: 1.3.0
 author: Nicolas Fabert
-updated: 2026-11-24
+updated: 2026-11-25
 runtime: PowerShell 7.6+ (engine, window and command line)
 safety: Import only adds. Export only reads. Nothing is deleted. Nothing is overwritten.
 ---
@@ -149,7 +149,7 @@ All examples run from the `package` folder. `-WhatIf` prints the plan in every m
 |---|---|---|
 | `Status` (default) | The state of a store: trees, counts, packs, import jobs; `-Locations` lists the locations; `-Unknown -Check` looks for uncertain items; `-ResolveUnknown <key> -As Imported\|NotImported` settles one. Without a store: version, configuration, whether the engine compiles. | No |
 | `Browse` | Live view of a mailbox before any export: tree, rows, previews; `-SaveSelection` writes a selection. | No |
-| `Export` | Mailbox to an export store (resumable, each item checked), all the items or only the ones that arrived in a period (`-ArrivedFrom`, `-ArrivedTo`). With `-OutputPst`, then converts to PST. With `-MailboxCsv`, the mailboxes of a list, one job for each (a batch, user guide chapter 8, "Exporting many mailboxes"). | No |
+| `Export` | Mailbox to an export store (resumable, each item checked), all the items or only the ones that arrived in a period (`-ArrivedFrom`, `-ArrivedTo`). With `-OutputPst`, then converts to PST. With `-MailboxCsv`, the mailboxes of a list, one job for each (a batch, user guide chapter 9, "Exporting many mailboxes"). | No |
 | `ExportPst` | Store to PST files; with `-PstPath`, chosen folders and messages of a PST to new PST files. | No |
 | `ExportEml` | Messages to `.eml` files, from the live mailbox (a period is possible there), a store or a PST. | No |
 | `Import` | Store to a mailbox. With `-MailboxCsv`, several stores into several mailboxes (a batch, 7.6). | Adds only |
