@@ -943,7 +943,7 @@ if (-not $EventsFile -and -not $batchMode -and -not $dryRun -and $Mode -in 'Expo
         $JobId = $cliJob.JobId
     } catch { Write-Warning "The job folder could not be written ($($_.Exception.Message)): the job runs without it, and the console will not list it."; $cliJob = $null }
 }
-$bannerDetails = [ordered]@{ Mode = @('Mode', $Mode + $(if ($batchMode) { ' - a list of mailboxes' }) + $(if ($dryRun) { ' - WhatIf (nothing is written)' })) }
+$bannerDetails = [ordered]@{ Mode = @('Mode', ($Mode + $(if ($batchMode) { ' - a list of mailboxes' }) + $(if ($dryRun) { ' - WhatIf (nothing is written)' }))) }
 if ($batchMode) { $bannerDetails.Mailboxes = @('Folder', $(if ($MailboxCsv) { $MailboxCsv } else { "batch $ResumeBatch" })) }
 elseif ($Mode -in 'Export', 'ExportPst', 'Import', 'Status', 'ExportEml', 'Copy') { $bannerDetails.Store = @('Store', $StorePath) }
 if ($Mode -eq 'Copy' -and -not $batchMode) {
