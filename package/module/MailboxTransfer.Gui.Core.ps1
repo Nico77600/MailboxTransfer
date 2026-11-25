@@ -235,11 +235,12 @@ function New-GuiText {
     ConvertTo-MbtGuiRuns $t $Text
     $t.TextWrapping = $(if ($NoWrap) { 'NoWrap' } else { 'Wrap' })
     $primary = 'TextFillColorPrimaryBrush'; $secondary = 'TextFillColorSecondaryBrush'
+    # Body and Muted carry the size of the body text (14) themselves: it does not depend on inheritance through the content of a button or an option.
     switch ($Style) {
-        'Body' { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
+        'Body' { $t.FontSize = 14; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
         'Hint' { $t.FontSize = 12; $t.Margin = [Windows.Thickness]::new(0, 6, 0, 0); Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
         'Label' { $t.FontSize = 12; $t.Margin = [Windows.Thickness]::new(0, 10, 0, 4); Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
-        'Muted' { Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
+        'Muted' { $t.FontSize = 14; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
         'Small' { $t.FontSize = 12; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $secondary }
         'Title' { $t.FontSize = 14; $t.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }
         'H2' { $t.FontSize = 20; $t.FontWeight = [Windows.FontWeights]::SemiBold; $t.Margin = [Windows.Thickness]::new(0, 2, 0, 10); Set-MbtGuiResource $t ([Windows.Controls.TextBlock]::ForegroundProperty) $primary }

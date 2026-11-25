@@ -656,6 +656,34 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'repair: a damaged file offers a repair, a clean one does not' { Reset-State; Set-MbtGuiScenario 'RepairFromDamaged'; $a = $g.C.PrimaryLabel.Text; Reset-State; Set-MbtGuiScenario 'RepairFromClean'; $b = $g.C.PrimaryLabel.Text; $a -eq 'Repair into a new file' -and $b -eq 'Start a new task' }
     Check 'repair: the destination is never the original and never AUX' { (Test-MbtGuiRepairDestination @{ RpDest = 'D:\a.pst'; RpPath = 'D:\a.pst' }) -match 'original' -and (Test-MbtGuiRepairDestination @{ RpDest = 'D:\aux.pst'; RpPath = 'D:\a.pst' }) -match 'AUX' }
     Check 'closing without a job is allowed' { $e = [ComponentModel.CancelEventArgs]::new(); $g.Job = $null; Invoke-MbtGuiClosing $e; -not $e.Cancel }
+    Check 'text sizes: in a shown window the stepper labels and the titles of the options are 14, and no text block falls back to the default size' {
+        $w3 = New-MbtGuiWindow -Engine $engine -Theme Light -WorkFolder $Work -EntryScript $entry -Version '0.3.0'
+        $w3.Opacity = 0; $w3.ShowInTaskbar = $false; $w3.ShowActivated = $false; $w3.Show()
+        $fontSize = [Windows.Controls.TextBlock]::FontSizeProperty
+        $collect = {
+            param($o, $list)
+            if ($o -is [Windows.Controls.TextBlock]) { $list.Add($o) }
+            if ($o -is [Windows.Media.Visual]) { for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($o); $i++) { & $collect ([Windows.Media.VisualTreeHelper]::GetChild($o, $i)) $list } }
+        }
+        $problems = [Collections.Generic.List[string]]::new()
+        foreach ($scn in 'Setup', 'ExportTo', 'CopyTo', 'Start') {
+            Reset-State; Set-MbtGuiScenario $scn; Measure-Window $w3
+            $blocks = [Collections.Generic.List[object]]::new(); & $collect $w3.Content $blocks
+            foreach ($tb in $blocks) {
+                $parent = [Windows.Media.VisualTreeHelper]::GetParent($tb)
+                $source = [Windows.DependencyPropertyHelper]::GetValueSource($tb, $fontSize).BaseValueSource
+                if ($parent -and $source -eq [Windows.BaseValueSource]::Default -and $parent.GetValue($fontSize) -ne $tb.FontSize) { $problems.Add("$scn : '$(Get-TextBlockText $tb)' is $($tb.FontSize), its parent says $($parent.GetValue($fontSize))") }
+            }
+            if ($scn -eq 'Setup') {
+                $label = $blocks | Where-Object { (Get-TextBlockText $_) -eq 'Task' -and [Windows.Media.VisualTreeHelper]::GetParent($_) -is [Windows.Controls.StackPanel] } | Select-Object -First 1
+                $title = $blocks | Where-Object { (Get-TextBlockText $_) -like 'Me (delegated*' } | Select-Object -First 1
+                if (-not $label -or $label.FontSize -ne 14) { $problems.Add("the stepper label is $(if ($label) { $label.FontSize } else { 'missing' })") }
+                if (-not $title -or $title.FontSize -ne 14) { $problems.Add("the option title is $(if ($title) { $title.FontSize } else { 'missing' })") }
+            }
+        }
+        $script:Gui.ForceClose = $true; $w3.Close()
+        if ($problems.Count) { throw (($problems | Select-Object -First 5) -join '; ') }
+        $true }
     Check 'the real engine adapter builds (no sign-in): capabilities, readiness, jobs' {
         $real = New-MbtGuiRealEngine -PackageRoot $Package -EntryScript (Join-Path $Package 'Invoke-MailboxTransfer.ps1') -WorkFolder $Work
         $lights = @((& $real.Readiness).Lights)

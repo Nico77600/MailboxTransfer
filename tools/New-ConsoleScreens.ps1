@@ -53,18 +53,6 @@ if ($Flow) { $shots = @(Get-MbtGuiFlowShots) } else {
 }
 $stateOnly = $null
 
-# A TextBlock that holds a resource reference (its brush) inside the content of a Button or a RadioButton keeps the default font size of WPF under .NET 10
-# instead of the size of the window (14). Invalidating the property gives it the inherited size, so that the pictures show the sizes the XAML sets.
-function Update-InheritedFontSize($Element) {
-    if ($Element -is [Windows.Controls.TextBlock] -and
-        [Windows.DependencyPropertyHelper]::GetValueSource($Element, [Windows.Controls.TextBlock]::FontSizeProperty).BaseValueSource -eq [Windows.BaseValueSource]::Default) {
-        $Element.InvalidateProperty([Windows.Controls.TextBlock]::FontSizeProperty)
-    }
-    if ($Element -is [Windows.Media.Visual]) {
-        for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($Element); $i++) { Update-InheritedFontSize ([Windows.Media.VisualTreeHelper]::GetChild($Element, $i)) }
-    }
-}
-
 function Wait-Dispatcher {
     for ($i = 0; $i -lt 4; $i++) {
         $frame = [Windows.Threading.DispatcherFrame]::new()
@@ -91,7 +79,6 @@ foreach ($t in $Theme) {
         Set-MbtGuiScenario -Name $name
         Wait-Dispatcher
         $root = $window.Content
-        Update-InheritedFontSize $root
         $root.UpdateLayout()
         $w = $Width; $h = $Height
         $bmp = [Windows.Media.Imaging.RenderTargetBitmap]::new($w, $h, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)

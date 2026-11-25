@@ -47,7 +47,7 @@
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <TextBlock x:Name="T" Text="{TemplateBinding Content}" TextDecorations="Underline" Foreground="{TemplateBinding Foreground}" TextWrapping="Wrap"/>
+            <TextBlock x:Name="T" Text="{TemplateBinding Content}" FontSize="{TemplateBinding FontSize}" TextDecorations="Underline" Foreground="{TemplateBinding Foreground}" TextWrapping="Wrap"/>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
