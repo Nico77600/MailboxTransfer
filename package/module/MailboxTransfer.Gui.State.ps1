@@ -323,6 +323,8 @@ function Show-MbtGuiDialog {
     <# The console's own dialog. Buttons: @{ Text; Accent; Danger; Action } (Action runs after the dialog closes). #>
     param([Parameter(Mandatory)][string]$Title, $Body, [object[]]$Buttons)
     $g = $script:Gui; $c = $g.C
+    # the card of a dialog is opaque: the page under the scrim does not show through the text of the dialog
+    $c.DialogCard.Background = New-MbtGuiBrush $(if ($g.Theme.Dark) { '#FF2B2B2B' } else { '#FFFFFFFF' })
     $c.DialogTitle.Text = $Title
     $c.DialogBody.Content = $(if ($Body -is [string]) { New-GuiText $Body 'Body' } else { $Body })
     $c.DialogButtons.Children.Clear()
