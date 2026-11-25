@@ -402,6 +402,10 @@ What the steps mean:
 
 To stop on purpose, click **Stop and keep progress** (bottom left), or the small **Pause** button on the running step: both ask you to confirm, and nothing is lost. After a stop, the same small button reads **Resume** and carries on where it stopped, as **Continue** does. See chapter 9.
 
+In **Continue a job**, **Continue** on an export first shows the **Resume** page: what is already downloaded and is not downloaded again, what is read again, and where the job restarts (chapter 5.6).
+
+![The Resume page of an export that stopped on an error: what is kept, what is read again, where it restarts](images/console-resume-export-light.png)
+
 ### 4.8 Next steps: read the end
 
 **Do:** read the **Next steps** page.
@@ -503,17 +507,43 @@ Tick the box: the line at the bottom says *Ready. Nothing is written before you 
 
 ### 5.6 If you stopped, or the PC slept
 
-**Do:** open the window again. On the **Task** page, in **Continue a job**, click **Continue** on the line of your job.
+**Do:** open the window again. On the **Task** page, in **Continue a job**, find the line of your job. The jobs that are not finished are at the top, all of them; the list scrolls when there are many. The jobs that are finished are in the fold **Finished (n)** below. Click **Continue** on the line of your job.
 
-**You should see:** the job picks up. Only what is left is done. Items done before are skipped.
+![Continue a job: why each job stopped, when, and the step it reached, with Continue, Open the report and Delete](images/console-jobs-light.png)
 
-![The list of jobs to continue on the Task page](images/console-task-light.png)
+**You should see:** each line says **why the job stopped**, **when**, and **the step it reached**, for example *Interrupted on 2026-11-24 22:41: the PC was shut down or restarted, or the tool was closed, while it was running. What was done is kept.* and under it *Step 3 of 5, Send the items, 5,120 of 9,860 done*. Then the **Resume** page opens. Nothing starts yet. It says, for your kind of job, what is **already done and will not be done again**, what is **checked again**, and **where it restarts**.
+
+![The Resume page: what is already done, what is checked again, where it restarts](images/console-resume-import-light.png)
+
+Read it, then click **Continue** at the bottom right. If you do not want to go on, click **Back to the jobs**.
+
+**Then:** the Run page opens and its first step is *Resume: reading what is already done*. Only what is left is done. Items done before are skipped.
+
+![The Run page of a job that is continued: the first step reads what is already done](images/console-run-export-resumed-light.png)
+
+If you click **Stop and keep progress** while a job runs, the Run page stays and its button says **Continue**: nothing is lost.
 
 ![An import that was stopped: nothing is lost, the button says Continue](images/console-run-import-stopped-light.png)
+
+**If not:** a line with no **Continue** button is a job that is *Running now, in another window or process*: wait for it, or stop it where it runs. A job of a batch is continued from the command line: a dialog says the command.
+
+What the first line of a job can say:
+
+| The line says | What happened | What to do |
+|---|---|---|
+| *Interrupted on …: the PC was shut down or restarted, or the tool was closed, while it was running* | The tool did not get the time to stop. Everything that was saved is kept. An item that was being sent is uncertain and is looked for in the mailbox, never guessed. | **Continue**. |
+| *Stopped by you on … (Stop and keep progress)* | You pressed **Stop and keep progress**. | **Continue** when you want. |
+| *Stopped by an error on …: the short reason* | For instance *The disk is full*. What was done is kept. | Fix the reason, then **Continue**. |
+| *Stopped on … because the sign-in expired* | Your company asked for a new sign-in. | Sign in again (Setup), then **Continue**. |
+| *Almost done on …: an item needs your decision* | Microsoft never answered for an item. | **Continue**: the item is looked for again; if it still cannot be settled, the Next steps page asks you (5.7). |
+| *Not finished on …: what is left is done when you continue* | For instance a folder that was not ready. | **Continue** later. |
+| *Finished on …* | Nothing left. | **Open the report**, or **Delete** the job when you no longer need it (chapter 9). |
 
 If the PC slept while the job ran, the page says *Resumed after sleep* and carries on by itself.
 
 ![An import after the PC slept: the page says so and carries on](images/console-run-import-sleep-light.png)
+
+A job that you started from the command line is in the same list, and **Continue** runs its command again in the folder it first ran in. It can also be continued from the command line (chapter 9, "From the command line").
 
 ### 5.7 An item needs your decision
 
@@ -664,6 +694,10 @@ Tick the box: the line at the bottom says *Ready. Nothing is written before you 
 ![The second part of a copy: the items are added to the mailbox. The steps of the first part are done](images/console-run-copy-light.png)
 
 To stop on purpose, click **Stop and keep progress**, or the small **Pause** button on the running step: it works in both parts. **Continue** starts only what is left: a part that is finished is not done again, and no item is added twice.
+
+In **Continue a job**, **Continue** on a copy first shows the **Resume** page, which says which part it resumes: the reading of the source mailbox, or, when that is complete, the adding of the items to the target mailbox (chapter 5.6).
+
+![The Resume page of a copy: the first part, reading the source mailbox, is the one that resumes](images/console-resume-copy-light.png)
 
 ### 8.5 Next steps: look in Outlook, keep or delete the store
 
@@ -893,6 +927,49 @@ To change the delay, set `Jobs.RetentionDays` in `config\MailboxTransfer.config.
 ```
 
 <!-- icon: lifebuoy -->
+
+### Delete a job you do not need
+
+The list **Continue a job** grows. A job that you will never continue (a test, a copy that is finished and checked) can be deleted.
+
+**Do:** on the **Task** page, in **Continue a job**, click **Delete** on the line of the job. A dialog opens.
+
+![The question before a job is deleted: it names the job and says exactly what goes](images/console-delete-job-light.png)
+
+**You should see:** the title of the job, where it came from and where it went, when it started, and what is deleted: **the folder of the job on this PC (its log, its report and its events)**. It also says what is never deleted: **your export store, your PST files, your source files and the mailboxes are not touched**. A job that is not finished says so: you can no longer continue it afterwards. Click **Delete the job**, or **Cancel**; nothing is deleted before you click. The list is drawn again without the job.
+
+**A copy that is finished** has one more choice, **Also delete the copy store (4.2 GiB)**, unticked. The copy store is the folder of the items that were read from the source mailbox; it stays on the PC as a proof, and you can delete it with the job when the copy is finished and you do not need the proof. Tick it only then. For a copy that is **not** finished the box is grey and says why: the second part of the copy, adding the items to the target mailbox, reads this store, so it must stay.
+
+![A copy that is not finished: the box for the copy store is grey, and says why](images/console-delete-job-unfinished-light.png)
+
+**If not:** the dialog may refuse, with the reason, and the job stays:
+
+| The dialog says | Why |
+|---|---|
+| *The job … is running now, in another window or process* | A running job is not deleted. Stop it (**Stop and keep progress**) where it runs, then delete it. |
+| *The job … belongs to the batch …, which is not complete* | The batch may be run again (`-ResumeBatch`). Finish the batch first. |
+| *The job … keeps files that the job … uses* or *its export store is inside its folder* | Another job needs what is in this folder. |
+
+> [!NOTE]
+> A PST import keeps the record of what it already imported in its job folder. If you delete the job before it is finished and import the same PST file again later, the messages are added a second time. The dialog says so.
+
+### From the command line
+
+The same list, and the same actions, exist for a job that you started from the command line. A single job (`-Mode Export`, `ExportPst`, `Import`, `ImportPst`, `ImportEml`, `ExportEml` or `Copy`) leaves its job folder in the work folder, like the jobs of the console, so the console lists it too.
+
+**Do:** in PowerShell 7, in the folder of the tool:
+
+```powershell
+.\Invoke-MailboxTransfer.ps1 -Mode Status
+```
+
+**You should see:** *Jobs in …\jobs*, the jobs that are not finished first. Each one has its name (the first column), why it stopped and when, the step it reached, and the line `continue: -ResumeJob <name>`.
+
+- **Continue a job:** `.\Invoke-MailboxTransfer.ps1 -ResumeJob 20261124-2241-export-3fa2`. It runs the command that was recorded, in the folder it first ran in (so a relative path, and the journal of a PST import, are found again), in the same job folder. You can run it from any folder. The name is not case sensitive. Running the same command again does the same.
+- **Delete a job:** `.\Invoke-MailboxTransfer.ps1 -RemoveJob 20261124-2241-export-3fa2`. It asks first (`-Confirm:$false` does not ask; `-WhatIf` only shows what would be deleted). For a finished copy, `-RemoveCopyStore` deletes the copy store as well. The refusals are the same as in the dialog.
+
+At the end of a run that is not complete, the card **Next steps** says the short command to continue it.
+
 ## 10. When something goes wrong
 
 > [!WARNING]

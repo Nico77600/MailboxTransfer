@@ -349,7 +349,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <p><strong>Limits.</strong> A soft-deleted or inactive mailbox cannot be reached (13.1). Recoverable Items cannot be written to by this tool, only read.</p>
 <h3 id="job-plan-selection">Job, plan, selection</h3>
 <ul>
-<li><p>A <strong>job</strong> is one run of the entry script. It has an id, a folder and a state. The same command run again does only what is left.</p>
+<li><p>A <strong>job</strong> is one run of the entry script. It has an id, a folder and a state. The same command run again does only what is left. A single job started from the command line has its job folder in the work folder, like a job of the console (chapter 9); <code>-ResumeJob &lt;name&gt;</code> runs it again.</p>
 </li>
 <li><p>A <strong>plan</strong> is the read-only run of a mode (<code>-WhatIf</code>): locations, folders, item counts, sizes, the number of PST files, the estimated time.</p>
 </li>
@@ -390,7 +390,7 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <tbody>
 <tr>
 <td><code>Status</code> (default)</td>
-<td>The state of a store: trees, counts, packs, import jobs; <code>-Locations</code> lists the locations; <code>-Unknown -Check</code> looks for uncertain items; <code>-ResolveUnknown &lt;key&gt; -As Imported\|NotImported</code> settles one. Without a store: version, configuration, whether the engine compiles.</td>
+<td>The jobs of the work folder first (the ones that are not finished first, why they stopped, the step reached, the command that continues them; chapter 9), then the state of a store: trees, counts, packs, import jobs; <code>-Locations</code> lists the locations; <code>-Unknown -Check</code> looks for uncertain items; <code>-ResolveUnknown &lt;key&gt; -As Imported\|NotImported</code> settles one. Without a store: version, configuration, whether the engine compiles.</td>
 <td>No</td>
 </tr>
 <tr>
@@ -693,6 +693,24 @@ footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--cp-bor
 <td><code>-BatchId</code></td>
 <td>Export, Import, ImportPst, ImportEml</td>
 <td>The batch a job belongs to (<code>status.json</code>: <code>batch</code>). A batch sets it for its jobs.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-ResumeJob &lt;name&gt;</code></td>
+<td>alone</td>
+<td>Runs again a job of the work folder, by the name of its folder or its job id (not case sensitive): the recorded command, in the folder it first ran in, in the same job folder (chapter 9). <code>-WorkFolder</code>, <code>-StopFile</code>, <code>-LogFolder</code>, <code>-NoPrompt</code>, <code>-KeepAwake</code> and <code>-WhatIf</code> are passed on.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-RemoveJob &lt;name&gt;</code>, <code>-RemoveCopyStore</code></td>
+<td>alone</td>
+<td>Deletes the folder of a job (asks first; <code>-WhatIf</code>, <code>-Confirm:$false</code>); never an export store you chose, a PST file, a source file or a mailbox. Refused for a job that runs and for a job of a batch that is not complete. <code>-RemoveCopyStore</code>: also the copy store of a complete copy, when it is in the stores folder of the work folder (chapter 9).</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-WorkFolder</code></td>
+<td>all</td>
+<td>The work folder: jobs, batches, stores and logs. Default: the environment variable <code>MAILBOXTRANSFER_WORK_FOLDER</code>, else <code>%LOCALAPPDATA%\MailboxTransfer</code> (the folder of the console). The job folder of a single command-line job is there (chapter 9).</td>
 <td></td>
 </tr>
 <tr>
@@ -1274,6 +1292,77 @@ D:\store\export.lock           held while the store is open for writing (one pro
 <li><code>&lt;work folder&gt;\jobs\overview.html</code> is the page of all the jobs (<code>Write-MbtJobOverview -WorkFolder &lt;dir&gt;</code>, or <code>-JobFolder &lt;job folder&gt;</code>; <code>-Batch &lt;name&gt;</code> lists one batch, <code>-FileName</code> writes another page in the same folder, <code>-NoCache</code> reads every job): one row for each job from its <code>status.json</code> only (the <code>counts</code> of <code>report.json</code> when <code>status.json</code> has none), the jobs of a plan check left out, the jobs that failed, wait for a decision or never wrote their end first, filters by result, task and period, a search, sortable columns, a link to <code>report.html</code> (else <code>report.csv</code>, else <code>status.json</code>) of each job. It is rewritten at the end of every job (the summary card of the command line gives its path on the line <code>All jobs</code>) and after the folders of old jobs were removed (<code>Invoke-MbtJobRetention</code>, <code>Jobs.RetentionDays</code>, chapter 12); the console button <strong>All jobs</strong> writes it again and opens it. The page lists the 20,000 newest jobs and says so beyond. A folder that did not change since the last build is not read again: <code>jobs\overview.cache.json</code> keeps what the build learned of it (delete the file at will). A job that sets <code>batch</code> in <code>status.json</code> (<code>Open-MbtEventLog -Batch</code>) is listed with it; a job without one is not affected. A build can be given a time budget (<code>-TimeBudgetSeconds</code>): it stops, keeps what it read for the next build and leaves the page that is there; the command line uses 20 seconds, so a job never waits long for it (a virus scanner can make the first read of thousands of small files take minutes). <code>-JobFolderName</code> lists only some job folders and <code>-OutputPath</code> / <code>-LinkBase</code> write the page elsewhere (the report of a batch).</li>
 <li><code>&lt;work folder&gt;\batches\&lt;name&gt;\</code> is a batch (<code>-MailboxCsv</code> with <code>-Mode Export</code>, <code>Import</code>, <code>ImportPst</code>, <code>ImportEml</code> or <code>Copy</code>; <code>batch.json</code> says which, <code>mode</code>): <code>batch.json</code> (version, name, the mode, the CSV file, the options without any secret, and for each mailbox its address, <code>location</code>, <code>selection</code>, <code>output</code>, <code>store</code> (an import: <code>source</code>, <code>targetRoot</code>, <code>sourceMailbox</code>, <code>key</code>, <code>journal</code>), <code>state</code> pending, running, complete, partial or failed, its <code>job</code> folder, the tries, the exit code, the reason, the counts), <code>batch.log</code>, <code>batch.lock</code> (held while a command runs the batch) and <code>report.html</code>, the overview of its jobs (<code>Write-MbtBatchReport</code>). Each mailbox is an ordinary job in <code>jobs</code>, started by a child process of the entry script with <code>-NoPrompt -EventsFile -StopFile -JobId -BatchId</code>, and has a <code>request.json</code>, so <strong>Continue</strong> in the console works on it. <code>Get-MbtBatchList -WorkFolder &lt;dir&gt;</code> lists the batches; the retention of the job folders keeps every job of a batch that is not complete (<code>Get-MbtBatchProtection</code>). The retention removes the folders of the checks of a plan (task <code>...-plan</code>) after one day, whatever their state.</li>
 </ul>
+<h3 id="the-job-folder-of-a-command-line-run">The job folder of a command-line run</h3>
+<p>A single job started from the command line (<code>Export</code>, <code>ExportPst</code>, <code>Import</code>, <code>ImportPst</code>, <code>ImportEml</code>, <code>ExportEml</code>, <code>Copy</code>; not a plan with <code>-WhatIf</code>, not a batch, which has its own folders) writes its job folder in the work folder, as the console does: <code>&lt;work folder&gt;\jobs\&lt;yyyyMMdd-HHmm&gt;-&lt;task&gt;-&lt;4 hexadecimal digits&gt;\</code> with <code>events.jsonl</code>, <code>status.json</code>, <code>report.html</code> and a <code>request.json</code> that records what it needs to be run again:</p>
+<ul>
+<li><code>Source</code> (<code>cli</code>), <code>CommandLine</code> (the command as one line an operator can type), <code>WorkingDirectory</code> (the folder it ran in), <code>Parameters</code> (every parameter that was given, a switch as <code>true</code>, a list as a list, a date as ISO text; <strong>a certificate password is never written</strong>, <code>NeedsSecret</code> says that one was given), <code>Key</code> (a fingerprint of the command and its folder);</li>
+<li>the absolute paths the script settled: <code>StorePath</code>, <code>TempPath</code> and, for <code>ImportPst</code>, <code>JournalPath</code> (<code>&lt;TempPath&gt;\pstimport.db</code>). The default places of the stores and of the journals are <strong>not moved</strong>: they are still relative to the folder the command runs in, which is why a job is resumed in that folder;</li>
+<li>the values the console reads to continue the job (<code>Task</code>, <code>Mailbox</code>, <code>Dest</code>, <code>ImSrc</code>, <code>TgtLoc</code>...), so that the console lists the job and its <strong>Continue</strong> runs <code>-ResumeJob</code>.</li>
+</ul>
+<p>The work folder is <code>-WorkFolder</code>, else the environment variable <code>MAILBOXTRANSFER_WORK_FOLDER</code>, else <code>%LOCALAPPDATA%\MailboxTransfer</code> (the folder of the console). The same command in the same folder, while the job of that command is not complete and not running, <strong>continues that job folder</strong> instead of making another one (how the command signs in, <code>-NoPrompt</code>, <code>-DeviceCode</code>, <code>-KeepAwake</code> and <code>-ConfigPath</code>, does not make it another command). If the folder cannot be written the job runs without it and a warning says so.</p>
+<ul>
+<li><strong><code>-Mode Status</code></strong> (without <code>-StorePath</code>, <code>-Unknown</code>, <code>-Locations</code>, <code>-ResolveUnknown</code>, <code>-ResolveAbsent</code>) first lists the jobs of the work folder: the ones that are not finished first (newest first), then the 10 newest finished ones; for each, the name of the folder, the title, why it stopped and when, the step reached, and <code>continue: -ResumeJob &lt;name&gt;</code>. The state of a store follows as before.</li>
+<li><strong><code>-ResumeJob &lt;name&gt;</code></strong>: <code>&lt;name&gt;</code> is the name of the job folder or the job id, not case sensitive. For a job of the command line the recorded parameters are run again in <code>WorkingDirectory</code> (<code>Push-Location</code>), into the same job folder; this run's <code>-WorkFolder</code>, <code>-StopFile</code>, <code>-LogFolder</code>, <code>-NoPrompt</code>, <code>-KeepAwake</code> and <code>-WhatIf</code> are passed on. It refuses a job whose folder is gone and a job that was started with a certificate password. A job of the console has its command lines in <code>request.json</code> (<code>Commands</code>): they run one after the other. Exit code: the one of the command that ran.</li>
+<li><strong><code>-RemoveJob &lt;name&gt;</code></strong>: deletes the folder of the job (a link inside it is removed and never followed). It asks first (<code>ConfirmImpact</code> High; <code>-Confirm:$false</code> does not ask, <code>-WhatIf</code> shows). Refused (exit 1, an error block): a job that is running, a job of a batch that is not complete (<code>Get-MbtBatchProtection</code>), a job whose folder holds the export store of its request or is named by the request of another job, a folder that is a link. A warning says that a job that is not finished can no longer be continued, and that the journal of a PST import in the folder goes with it. <strong><code>-RemoveCopyStore</code></strong> also deletes the copy store of a <strong>complete</strong> copy, when the store is inside <code>&lt;work folder&gt;\stores</code> (never a link) and no other job that is not finished uses it; the import part of the copy must be complete.</li>
+<li>At the end of a run that is not complete, the <strong>Next steps</strong> card says <code>Continue this job: .\Invoke-MailboxTransfer.ps1 -ResumeJob &lt;name&gt;</code> (and that the same command again continues it).</li>
+</ul>
+<h3 id="what-continuing-a-job-does-mode-by-mode">What continuing a job does, mode by mode</h3>
+<p>Every sentence of the <strong>Resume</strong> page of the console, and of the lines of <code>-Mode Status</code>, is what the engine does when the same command runs again.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Already done, not done again</th>
+<th>Checked again</th>
+<th>Where it restarts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Export</code></td>
+<td>The items <strong>Exported</strong> in the catalog of the store (<code>catalog.db</code>).</td>
+<td>The folder tree and the list of the items are read again from the mailbox; an item whose change key moved is exported again; <strong>Failed</strong> items are tried again while they were tried fewer than <code>-MaxAttempts</code> times. With <code>-OutputPst</code>, the PST parts that the manifest lists and that are complete.</td>
+<td>Step 1 (the tree), then only the items still <strong>Pending</strong>.</td>
+</tr>
+<tr>
+<td><code>ExportPst</code></td>
+<td>The parts of the manifest (<code>&lt;name&gt;.manifest.json</code>) that are complete: file present, the size the manifest says, a valid PST header.</td>
+<td>The part that was being written is deleted and written again from its start. The store or the PST that is read is only read. <code>-Force</code> (not used by a resume) starts from zero.</td>
+<td>Step <em>Write the PST files</em>, after the last complete part.</td>
+</tr>
+<tr>
+<td><code>Import</code></td>
+<td>The rows <strong>Done</strong> of the import job (<code>-JobName</code>) in the store.</td>
+<td>The store and the target folders (a missing folder is created, an existing one is used). <strong>InFlight</strong> rows of a stopped run became <strong>Unknown</strong> when the store was opened: they are looked up in the target folder after <code>-ReconcileDelaySeconds</code> (found: done; not found: sent again; several candidates: you decide). <strong>Failed</strong> rows are tried again while attempts remain.</td>
+<td>Step 1 (<em>Verify the export store</em>), then only the rows left.</td>
+</tr>
+<tr>
+<td><code>ImportPst</code></td>
+<td>The messages <strong>Done</strong> in the journal (<code>&lt;TempPath&gt;\pstimport.db</code>), keyed by file, node and fingerprint; an unchanged message is never added twice, even if the same PST is given again.</td>
+<td>The PST files. Unknown, Failed and Refused rows as for <code>Import</code> (a <strong>Refused</strong> message is final and is not tried again).</td>
+<td>Step 1 (<em>Check the PST files</em>), then only the messages left.</td>
+</tr>
+<tr>
+<td><code>ImportEml</code></td>
+<td>The files <strong>Done</strong> in <code>import-state.jsonl</code> of the folder of the <code>.eml</code> files (for this mailbox and target folder).</td>
+<td>The folder is listed again. A file that was <strong>InFlight</strong> or <strong>Unknown</strong> is <strong>not</strong> sent again: it may exist; it is listed as uncertain until you settle it (<code>-ResolveEml</code>). <strong>Failed</strong> files are tried again.</td>
+<td>Its only step, <em>Import the messages</em>.</td>
+</tr>
+<tr>
+<td><code>ExportEml</code></td>
+<td>The files of the manifest that are <strong>Exported</strong> and still in their place.</td>
+<td>The items are listed again; a missing file is written again. <code>-NoResume</code> turns this off.</td>
+<td>Its only step, <em>Write the .eml files</em>.</td>
+</tr>
+<tr>
+<td><code>Copy</code></td>
+<td><strong>First part</strong> (reading): the items already <strong>Exported</strong> in the store. <strong>Second part</strong> (adding): when the export half is complete (<code>copy.export</code> is recorded in the store) the source mailbox is not read again; the rows <strong>Done</strong> of the import are not sent again.</td>
+<td>First part: as <code>Export</code>. Second part: as <code>Import</code>. <code>-Force</code> reads the source again.</td>
+<td>The part where it stopped: the tool goes straight to the second part when the first is complete (step 5 of 9, <em>Verify the export store</em>), else it starts the first (step 1 of 9, <em>Read the folder tree</em>).</td>
+</tr>
+</tbody>
+</table></div>
+<p>A job that ran again writes a first step, <code>resume</code> (<em>Resume: reading what is already done</em>), in its <code>plan</code> event; the console shows it as the first line of the Run page. The step ends when the first step of the job begins.</p>
 </div></section><section class="section" id="exit-codes"><div class="section-head"><div class="section-icon"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></div><div><div class="section-eyebrow">Chapter 10</div><h2>Exit codes</h2></div></div><div class="section-body">
 <p>One rule for every mode. When several apply, the order is <strong>3, 2, 1, 0</strong>.</p>
 <div class="table-wrap"><table>
@@ -1661,7 +1750,7 @@ D:\store\export.lock           held while the store is open for writing (one pro
 <hr />
 <p><strong>Back to</strong> the <a href="MailboxTransfer-UserGuide.html">user guide</a>.</p>
 </div></section>
-<footer>Mailbox Transfer 1.3.0 · Nicolas Fabert · generated 2026-11-25 01:06 from MailboxTransfer-Guide.md</footer></main>
+<footer>Mailbox Transfer 1.3.0 · Nicolas Fabert · generated 2026-11-25 13:36 from MailboxTransfer-Guide.md</footer></main>
 <button type="button" id="to-top" title="Back to top"><svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
 <dialog id="zoom"><img alt=""></dialog>
 <script>
