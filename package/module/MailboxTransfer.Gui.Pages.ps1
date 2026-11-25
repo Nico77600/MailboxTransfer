@@ -146,6 +146,7 @@ function New-MbtGuiJobRow {
     $isBatch = ((Get-MbtGuiProp $Job 'Task' '') -eq 'batch')
     $glyphName = switch ($state) { 'ok' { 'check' } 'warn' { 'warn' } default { 'pause' } }
     $brush = switch ($state) { 'ok' { 'MbtSuccess' } 'warn' { 'MbtCaution' } default { 'MbtBrandText' } }
+    if ([bool](Get-MbtGuiProp $Job 'Alive' $false)) { $glyphName = 'play'; $brush = 'MbtSuccess' }
     $row = [Windows.Controls.Grid]::new()
     foreach ($w in 'Auto', '*') { $cd = [Windows.Controls.ColumnDefinition]::new(); $cd.Width = if ($w -eq '*') { [Windows.GridLength]::new(1, 'Star') } else { [Windows.GridLength]::Auto }; $row.ColumnDefinitions.Add($cd) }
     $ic = New-GuiIcon $glyphName 14 $brush; $ic.Margin = [Windows.Thickness]::new(0, 2, 12, 0); $ic.VerticalAlignment = 'Top'
