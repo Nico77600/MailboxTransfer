@@ -37,12 +37,12 @@ function Get-MbtGuiRootNode {
 
 function New-MbtGuiBrowser {
     <# Loads the card. Title, Info and Badge (a pill text) sit in its header; TrayEmpty is the text of an empty tray (Markup **bold**). #>
-    param([Parameter(Mandatory)][string]$Name, [string]$Title = 'Browse', [string]$Info = 'Tick folders or messages. The reading pane shows what is inside.', [string]$Badge, [string]$TrayEmpty = 'Nothing ticked yet.', [string]$Kind = 'live')
+    param([Parameter(Mandatory)][string]$Name, [string]$Title = 'Browse', [string]$Info = 'Tick folders or messages. The reading pane shows what is inside.', [string]$Badge, [string]$TrayEmpty = 'Nothing ticked yet.', [string]$Kind = 'live', [string]$ModeKey)
     Initialize-MbtGuiBrowseEvents
     $xaml = Get-Content -LiteralPath (Join-Path $script:GuiRoot 'module\MailboxTransfer.Gui.Browse.xaml') -Raw
     $root = [Windows.Markup.XamlReader]::Parse($xaml)
     $c = @{}
-    foreach ($n in 'BrowseTitle', 'BrowseInfo', 'BrowseBadge', 'FolderTree', 'ListTitle', 'ListNote', 'ListHeader', 'PickAll', 'MessageList', 'ListMore', 'ListEmpty', 'ReadingHeader', 'ReadSubject', 'ReadFrom', 'ReadDetails', 'ReadAttachment', 'ReadAttachmentText', 'ReadBody', 'ReadEmpty', 'TrayPanel', 'PeriodRow', 'PeriodDetail') {
+    foreach ($n in 'BrowseTitle', 'BrowseInfo', 'BrowseBadge', 'FolderTree', 'ListTitle', 'ListNote', 'ListHeader', 'PickAll', 'MessageList', 'ListMore', 'ListEmpty', 'ReadingHeader', 'ReadSubject', 'ReadFrom', 'ReadDetails', 'ReadAttachment', 'ReadAttachmentText', 'ReadBody', 'ReadEmpty', 'TrayPanel', 'PeriodRow', 'PeriodDetail', 'ModeRow', 'ModeOptions', 'ModeNote') {
         $c[$n] = $root.FindName($n)
     }
     $c.BrowseTitle.Text = $Title
@@ -52,14 +52,56 @@ function New-MbtGuiBrowser {
     $rows = [Collections.ObjectModel.ObservableCollection[MailboxTransferGui.MessageRow]]::new()
     $c.FolderTree.ItemsSource = $roots
     $c.MessageList.ItemsSource = $rows
-    $b = @{ Name = $Name; Root = $root; C = $c; Roots = $roots; Rows = $rows; Current = $null; Next = $null; TrayEmpty = $TrayEmpty; Kind = $Kind; Ready = $false; OnChange = $null; Loading = $false; Pending = 0; Reading = $null; NoPicks = $false }
+    $b = @{ Name = $Name; Root = $root; C = $c; Roots = $roots; Rows = $rows; Current = $null; Next = $null; TrayEmpty = $TrayEmpty; Kind = $Kind; Ready = $false; OnChange = $null; Loading = $false; Pending = 0; Reading = $null; NoPicks = $false; ModeKey = $ModeKey }
     $script:Gui.Browsers[$Name] = $b
 
     Add-MbtGuiHandler $c.FolderTree 'SelectedItemChanged' { param($sender, $e) if ($e.NewValue) { Open-MbtGuiFolder $e.NewValue } }
     Add-MbtGuiHandler $c.MessageList 'SelectionChanged' { param($sender, $e) if ($sender.SelectedItem) { Show-MbtGuiMessage $b $sender.SelectedItem } }
     Add-MbtGuiHandler $c.PickAll 'Click' { param($sender, $e) if ($b.Current) { $b.Current.TickOwnOnly([bool]$sender.IsChecked); Sync-MbtGuiRows $b } }
+    if ($ModeKey) { Update-MbtGuiModeRow $b }
     Update-MbtGuiTray $b
     return $b
+}
+
+function Get-MbtGuiSelectionMode {
+    <# What the operator chose for a browser: all (everything, the default) or ticks (only what is ticked). A browser without the choice is always ticks. #>
+    param([Parameter(Mandatory)]$Browser)
+    $key = [string]$Browser.ModeKey
+    if (-not $key) { return 'ticks' }
+    $mode = [string]$script:Gui.S[$key]
+    if ($mode -eq 'ticks') { return 'ticks' }
+    return 'all'
+}
+
+function Set-MbtGuiTicksEnabled {
+    <# With Everything chosen the tick boxes of the tree and of the message list are greyed and cannot be used (mouse or keyboard); the ticks themselves are kept for "Only what I tick". #>
+    param([Parameter(Mandatory)]$Browser)
+    $c = $Browser.C
+    $off = [bool]($Browser.ModeKey -and (Get-MbtGuiSelectionMode $Browser) -eq 'all')
+    $c.FolderTree.Tag = $(if ($off) { 'noticks' } else { $null })
+    $c.MessageList.Tag = $(if ($off) { 'noticks' } else { $null })
+    $c.PickAll.IsEnabled = -not $off
+    $c.PickAll.Opacity = $(if ($off) { 0.35 } else { 1.0 })
+}
+
+function Update-MbtGuiModeRow {
+    <# The two choices above the tree, "Everything (recommended)" and "Only what I tick", and the line that says what the ticks do now. #>
+    param([Parameter(Mandatory)]$Browser)
+    $c = $Browser.C
+    if (-not $Browser.ModeKey) { $c.ModeRow.Visibility = 'Collapsed'; return }
+    $c.ModeRow.Visibility = 'Visible'
+    $mode = Get-MbtGuiSelectionMode $Browser
+    $key = [string]$Browser.ModeKey
+    $b = $Browser
+    $state = $script:Gui.S
+    $c.ModeOptions.Children.Clear()
+    $all = New-GuiOption -Type Radio -Group ('mode-' + $Browser.Name) -Title 'Everything (recommended)' -Checked ($mode -eq 'all') -Margin '0,0,24,0' -OnChange { $state[$key] = 'all'; Update-MbtGuiModeRow $b; Update-MbtGuiBrowseTrays }.GetNewClosure()
+    $some = New-GuiOption -Type Radio -Group ('mode-' + $Browser.Name) -Title 'Only what I tick' -Checked ($mode -eq 'ticks') -Margin '0' -OnChange { $state[$key] = 'ticks'; Update-MbtGuiModeRow $b; Update-MbtGuiBrowseTrays }.GetNewClosure()
+    [Windows.Automation.AutomationProperties]::SetName($all, 'Everything')
+    [Windows.Automation.AutomationProperties]::SetName($some, 'Only what I tick')
+    $c.ModeOptions.Children.Add($all) | Out-Null; $c.ModeOptions.Children.Add($some) | Out-Null
+    $c.ModeNote.Content = $null
+    Set-MbtGuiTicksEnabled $Browser
 }
 
 function Set-MbtGuiBrowserRoots {
@@ -247,6 +289,50 @@ function Get-MbtGuiSelection {
     [pscustomobject]@{ Entries = $entries.ToArray(); Items = $t.Items; Bytes = $t.Bytes; Folders = $t.Folders; UnknownSize = $t.UnknownSize; SubtreeUnread = $t.SubtreeUnread }
 }
 
+function Get-MbtGuiBrowserEverything {
+    <#
+        Everything in the places a live browser shows (the locations ticked in "Where to look"): the places, and what is counted of their folders so far (a folder is counted when its level is read).
+        Shaped like a selection (no entries: nothing is ticked), with Everything = $true.
+    #>
+    param([Parameter(Mandatory)]$Browser)
+    $places = [Collections.Generic.List[object]]::new()
+    $t = @{ Items = 0L; Bytes = 0L; Folders = 0; UnknownSize = 0; Unread = $false }
+    foreach ($r in $Browser.Roots) {
+        $kind = switch ([string]$r.Kind) { 'primary' { 'Primary' } 'archive' { 'Archive' } 'aux' { 'AuxArchive' } default { [string]$r.Kind } }
+        $places.Add([pscustomobject]@{ Kind = $kind; Id = [string]$r.Id; Label = [string]$r.Name })
+        foreach ($d in $r.Descendants()) {
+            if ($d.ChildrenNotRead) { $t.Unread = $true }
+            if ($d.IsRoot -or $d.Count -le 0) { continue }
+            $t.Items += $d.Count; $t.Folders++
+            if ($d.SizeBytes -lt 0) { $t.UnknownSize++ } else { $t.Bytes += $d.SizeBytes }
+        }
+    }
+    [pscustomobject]@{ Everything = $true; Entries = @(); Places = $places.ToArray(); Items = $t.Items; Bytes = $t.Bytes; Folders = $t.Folders; UnknownSize = $t.UnknownSize; SubtreeUnread = $t.Unread }
+}
+
+function Get-MbtGuiPlacesText {
+    <# "Primary + Archive": the places of an Everything selection, in words. #>
+    param($Selection)
+    # the auxiliary archives are part of the Archive
+    $kinds = @(@($Selection.Places) | ForEach-Object { if ([string]$_.Kind -eq 'AuxArchive') { 'Archive' } else { [string]$_.Kind } } | Select-Object -Unique)
+    return ($kinds -join ' + ')
+}
+
+function Format-MbtGuiEverythingText {
+    <# What the tray and the footer say when Everything is chosen: the places, and the counts when known. #>
+    param([Parameter(Mandatory)]$Selection)
+    if (-not @($Selection.Places).Count) { return 'Everything is chosen, but no place is ticked in Where to look.' }
+    $counts = if ($Selection.Items -gt 0) { " ($(Format-MbtGuiQuantity $Selection.Items 'item')$(if ($Selection.SubtreeUnread) { ' counted so far' }))" } else { '' }
+    return ('**Everything:** {0}{1}' -f (Get-MbtGuiPlacesText $Selection), $counts)
+}
+
+function Test-MbtGuiSelectionEmpty {
+    <# Nothing to go on with: no place for Everything (an auxiliary archive follows the Archive, it is no place of its own), no item for ticks. #>
+    param($Selection)
+    if ($Selection.PSObject.Properties['Everything'] -and $Selection.Everything) { return (@($Selection.Places | Where-Object { $_.Kind -ne 'AuxArchive' }).Count -eq 0) }
+    return ($Selection.Items -le 0)
+}
+
 function Clear-MbtGuiSelection {
     param($Browser)
     foreach ($r in $Browser.Roots) { foreach ($k in @($r.Children)) { if ($k.Id -ne "`0placeholder") { $k.TickWholeFolder($false) } } }
@@ -258,6 +344,17 @@ function Update-MbtGuiTray {
     $p = $Browser.C.TrayPanel
     $p.Children.Clear()
     $sel = Get-MbtGuiSelection -Roots @($Browser.Roots)
+    $ticked = [bool]($sel.Items -gt 0 -or $sel.Folders -gt 0)
+    Set-MbtGuiTicksEnabled $Browser
+    if ($Browser.ModeKey -and (Get-MbtGuiSelectionMode $Browser) -eq 'all') {
+        # Everything: the ticks are kept but not used, and the tray says so
+        $t = New-GuiText $(if ($Browser.Kind -eq 'live') { (Format-MbtGuiEverythingText (Get-MbtGuiBrowserEverything $Browser)) } elseif ($Browser.ContainsKey('EverythingText') -and $Browser.EverythingText) { $Browser.EverythingText } else { $Browser.TrayEmpty }) 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
+        $p.Children.Add($t) | Out-Null
+        $Browser.C.ModeNote.Content = $(if ($ticked) { New-GuiMessage -Kind info -Icon info -Text "**Your ticks are ignored while Everything is chosen** ($(Format-MbtGuiQuantity $sel.Folders 'folder') ticked, $(Format-MbtGuiQuantity $sel.Items 'item')). Choose **Only what I tick** to use them." } else { $null })
+        if ($Browser.Name -eq 'export') { Update-MbtGuiPeriodRow $Browser }
+        return
+    }
+    if ($Browser.ModeKey) { $Browser.C.ModeNote.Content = $null }
     if ($sel.Items -gt 0 -or $sel.Folders -gt 0) {
         $txt = '**{0}** in {1} {2} {3}' -f (Format-MbtGuiQuantity $sel.Items 'item'), (Format-MbtGuiQuantity $sel.Folders 'folder'), [char]0x00B7, (Format-MbtGuiSelectionSize $sel)
         if ($sel.SubtreeUnread) { $txt += ' (folders below are counted as you open them)' }

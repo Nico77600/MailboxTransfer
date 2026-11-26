@@ -20,6 +20,8 @@ function Get-MbtGuiTaskSelection {
     $g = $script:Gui; $s = $g.S
     $use = switch ($s.Task) { 'import' { 'import' } 'copy' { 'open' } default { $null } }
     if (-not $use) { return $g.ExportSelection }
+    # an import takes everything unless "Only what I tick" is chosen: the ticks are then not looked at
+    if ($use -eq 'import' -and [string]$s.ImSelMode -ne 'ticks') { return [pscustomobject]@{ Entries = @(); Items = 0L; Bytes = 0L; Folders = 0; UnknownSize = 0; SubtreeUnread = $false } }
     if ($g.Browsers.ContainsKey($use)) { return (Get-MbtGuiSelection -Roots @($g.Browsers[$use].Roots)) }
     return $null
 }
@@ -40,9 +42,14 @@ function Get-MbtGuiPlanKey {
     # what is typed or picked (addresses, names, paths) does not depend on the case; the ids of the folders ticked are machine ids and stay exact
     [void]$sb.Append("$($s.Task)|$($s.Dest)|$($s.OutFolder)|$($s.OutName)|$($s.SplitGB)|$($s.CheckEach)|$($s.SepAux)|$($s.KeepStore)|$($s.Conc)|$($s.Retry)|$($s.Tries)|$($s.Reconcile)|$($s.ImSrc)|$($s.ImPath)|$($s.TgtLoc)|$($s.TgtMode)|$($s.TgtName)|$($s.Mapping)|$($s.Shared)|$($s.ImShared)|$($s.McTarget)|$($s.RecoverableItems)|$($s.RpPath)|$($s.RpDest)|$($s.RpLevel)|$($s.RpKeep)|$($s.OpPath)|$($s.Mailbox)|$($s.AuthMode)|$($s.TenantId)|$($s.ClientId)|$($s.AppTenant)|$($s.AppClient)|$($s.AppThumb)|$($s.Awake)".ToLowerInvariant())
     $period = Get-MbtGuiPeriod $s
-    [void]$sb.Append("|$($period.Active)|$($period.From)|$($period.To)")
+    [void]$sb.Append("|$($period.Active)|$($period.From)|$($period.To)|$($s.SelMode)|$($s.ImSelMode)|$($s.McLayout)|$($s.TgtMode2)|$($s.TgtName2)|$($s.PrimaryIdValue)|$($s.ArchiveIdValue)".ToLowerInvariant())
     $sel = Get-MbtGuiTaskSelection
-    if ($sel) { foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") } }
+    if ($sel) {
+        foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") }
+        if ($sel.PSObject.Properties['Places']) { foreach ($p in @($sel.Places)) { [void]$sb.Append("|all:$($p.Kind):$($p.Id)") } }
+    }
+    $typedArchive = Get-MbtGuiProp $s 'McArchive' $null
+    if ($typedArchive -is [Collections.IDictionary]) { foreach ($k in @($typedArchive.Keys | Sort-Object)) { [void]$sb.Append("|archive:$k=$($typedArchive[$k])") } }
     $bytes = [Text.Encoding]::UTF8.GetBytes($sb.ToString())
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
 }
@@ -51,9 +58,12 @@ function Get-MbtGuiSelectionKey {
     <# What was chosen for the operation (the source, the mailbox, the ticks): the selection file and the folder files are named after it, so the same choice is the same file. #>
     $g = $script:Gui; $s = $g.S
     $sb = [Text.StringBuilder]::new()
-    [void]$sb.Append("$($s.Task)|$($s.Mailbox)|$($s.Shared)|$($s.ImSrc)|$($s.ImPath)|$($s.OpPath)|$($s.RecoverableItems)".ToLowerInvariant())
+    [void]$sb.Append("$($s.Task)|$($s.Mailbox)|$($s.Shared)|$($s.ImSrc)|$($s.ImPath)|$($s.OpPath)|$($s.RecoverableItems)|$($s.SelMode)|$($s.ImSelMode)".ToLowerInvariant())
     $sel = Get-MbtGuiTaskSelection
-    if ($sel) { foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") } }
+    if ($sel) {
+        foreach ($e in $sel.Entries) { [void]$sb.Append("|$($e.Kind):$($e.Node.Id):$($e.Items)") }
+        if ($sel.PSObject.Properties['Places']) { foreach ($p in @($sel.Places)) { [void]$sb.Append("|all:$($p.Kind):$($p.Id)") } }
+    }
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sb.ToString())))
 }
 
@@ -268,7 +278,7 @@ function Write-MbtGuiRequestFile {
     <# request.json: what was asked, no secrets; the Continue list and a resumed job read it. #>
     param([Parameter(Mandatory)][hashtable]$Job)
     $s = $script:Gui.S
-    $keys = 'Task', 'OpSrc', 'OpPath', 'Mailbox', 'Shared', 'ImShared', 'McTarget', 'McFromKind', 'AuthMode', 'RecoverableItems', 'Period', 'ArrFrom', 'ArrTo', 'Dest', 'KeepStore', 'SplitGB', 'CheckEach', 'SepAux', 'OutFolder', 'OutName', 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake', 'ImSrc', 'ImPath', 'TgtLoc', 'TgtMode', 'TgtName', 'Mapping', 'RpPath', 'RpLevel', 'RpDest', 'RpKeep'
+    $keys = 'Task', 'OpSrc', 'OpPath', 'Mailbox', 'Shared', 'ImShared', 'McTarget', 'McFromKind', 'AuthMode', 'RecoverableItems', 'Period', 'ArrFrom', 'ArrTo', 'Dest', 'KeepStore', 'SplitGB', 'CheckEach', 'SepAux', 'OutFolder', 'OutName', 'Conc', 'Retry', 'Tries', 'Reconcile', 'Awake', 'ImSrc', 'ImPath', 'TgtLoc', 'TgtMode', 'TgtName', 'TgtMode2', 'TgtName2', 'McLayout', 'McArchive', 'SelMode', 'ImSelMode', 'EvPlaces', 'PrimaryIdValue', 'ArchiveIdValue', 'Mapping', 'RpPath', 'RpLevel', 'RpDest', 'RpKeep'
     $req = [ordered]@{ Title = (Get-MbtGuiRunTitle); Created = [datetime]::UtcNow.ToString('o'); JobId = $Job.Id; JobName = $Job.JobName; StorePath = $Job.StorePath; SelectionFiles = @($Job.SelectionFiles); Commands = @($Job.Queue | ForEach-Object { , $_.Arguments }) }
     foreach ($k in $keys) { $req[$k] = $s[$k] }
     $req | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $Job.Folder 'request.json') -Encoding utf8
@@ -282,7 +292,7 @@ function Get-MbtGuiRunTitle {
         'import' { return "Import $mid $([IO.Path]::GetFileName($s.ImPath)) $arrow $($s.Mailbox) ($($s.TgtLoc))" }
         'repair' { return "Repair $mid $([IO.Path]::GetFileName($s.RpPath)) $arrow $([IO.Path]::GetFileName($s.RpDest))" }
         'copy' { return "Copy $mid $([IO.Path]::GetFileName($s.OpPath)) $arrow $($s.OutName)" }
-        'mailcopy' { $ends = Get-MbtGuiMailCopyEnds; return "Copy $mid $($ends.From) ($($ends.FromKind)) $arrow $($ends.To) ($($s.TgtLoc))" }
+        'mailcopy' { $ends = Get-MbtGuiMailCopyEnds; return "Copy $mid $($ends.From) ($($ends.FromKind)) $arrow $($ends.To) ($($ends.ToKind))" }
         default { return $script:Tasks[$s.Task].Title }
     }
 }
@@ -754,7 +764,7 @@ function New-MbtGuiObjectDetailsColumn {
     $h = New-GuiText $o.Key 'Body'; $h.FontWeight = [Windows.FontWeights]::SemiBold; $items.Add($h)
     $rel = @($run.Items | Where-Object { $_.Step -eq $o.Step -and ($_.Detail -eq $o.Key -or $_.Key -like "$($o.Key)*") -or $_.Detail -eq $o.Key })
     if ($o.State -in 'notready', 'not-ready') {
-        $items.Add((New-GuiMessage -Kind warn -Icon warn -Text '**Not ready.** Microsoft is still moving this folder into the auxiliary archive, so it cannot be read yet. It is kept on the list. Press **Continue** later (the same day is usually enough).'))
+        $items.Add((New-GuiMessage -Kind warn -Icon warn -Text '**Not ready.** Microsoft is still moving this folder inside the archive, so it cannot be read yet. It is kept on the list. Press **Continue** later (the same day is usually enough).'))
     } elseif ($o.Tone -eq 'bad' -or $o.State -eq 'refused') {
         $items.Add((New-GuiText $(if ($o.Msg) { $o.Msg } else { 'Microsoft refused it. Nothing was created.' }) 'Hint'))
     } elseif ($rel.Count) {
@@ -975,7 +985,8 @@ function Get-MbtGuiNextSteps {
             $ends = Get-MbtGuiMailCopyEnds
             $store = (New-MbtGuiRequest -Task mailcopy).StorePath
             $open = @{ Text = 'Open the store'; Icon = 'open'; Action = { Start-MbtGuiOpenOf -Path $store }.GetNewClosure() }
-            return @{ Text = "The items are in the mailbox $($ends.To). Open Outlook, or Outlook on the web, and look in $(if ($s.TgtMode -eq 'new') { "the folder **$($s.TgtName)**" } else { 'the folders of the same names' }): nothing that was there before was changed. The store of the copy stays on this PC as proof and as a resume point; you can look inside it, or delete its folder when you no longer need it."; Buttons = @($open) }
+            $lookIn = if ($ends.Both) { "the folders **$(if ($s.TgtMode -eq 'new') { $s.TgtName } else { 'of the same names' })** (Primary part) and **$(if ($s.TgtMode2 -eq 'new') { $s.TgtName2 } else { 'of the same names' })** (Archive part)" } elseif ($s.TgtMode -eq 'new') { "the folder **$($s.TgtName)**" } else { 'the folders of the same names' }
+            return @{ Text = "The items are in the mailbox $($ends.To). Open Outlook, or Outlook on the web, and look in ${lookIn}: nothing that was there before was changed. The store of the copy stays on this PC as proof and as a resume point; you can look inside it, or delete its folder when you no longer need it."; Buttons = @($open) }
         }
         'mailcopy/partial' { return @{ Text = 'Press Continue: a part that is finished is not done again, and no item is copied twice.'; Buttons = @($again) } }
         'mailcopy/decision' { return @{ Text = 'Decide for each uncertain item above. When every one is decided, the job is finished.'; Buttons = @() } }
@@ -1184,7 +1195,8 @@ function New-MbtGuiMailCopyDone {
     switch ($Outcome) {
         'complete' {
             $t = New-MbtGuiTiles @($readTile, @((Format-MbtGuiCount $done), ((Get-MbtGuiPlural $done 'item') + ' in the mailbox'), 'ok'), @((Format-MbtGuiCount $folders), ((Get-MbtGuiPlural $folders 'folder') + ' created'), 'ok'), @((Format-MbtGuiCount $failed), 'refused', 'ok'))
-            $facts = New-GuiFacts @(@('From', "$($ends.From) $mid $($ends.FromKind) $mid **not changed**"), @('Into', "$($ends.To) $mid $($ends.ToKind)$(if ($s.TgtMode -eq 'new') { " $mid folder **$($s.TgtName)**" })"), @('Store', "$((New-MbtGuiRequest -Task mailcopy).StorePath) (kept)"), @('Final check', 'every item of the job is done'))
+            $into = if ($ends.Both) { "$($ends.To) $mid Primary part: $(if ($s.TgtMode -eq 'new') { "folder **$($s.TgtName)**" } else { 'same folder names' }) $mid Archive part: $(if ($s.TgtMode2 -eq 'new') { "folder **$($s.TgtName2)**" } else { 'same folder names' }) ($($ends.ToKind))" } else { "$($ends.To) $mid $($ends.ToKind)$(if ($s.TgtMode -eq 'new') { " $mid folder **$($s.TgtName)**" })" }
+            $facts = New-GuiFacts @(@('From', "$($ends.From) $mid $($ends.FromKind) $mid **not changed**"), @('Into', $into), @('Store', "$((New-MbtGuiRequest -Task mailcopy).StorePath) (kept)"), @('Final check', 'every item of the job is done'))
             return @($t, $periodNote, $facts)
         }
         'refused' {

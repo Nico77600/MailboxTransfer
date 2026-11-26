@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-banner-dark.svg">
-    <img alt="Mailbox Transfer: exports and imports Exchange Online mailboxes (primary, archive and auxiliary archives) to a verified store or to PST files, imports PST files, stores and EML files, and checks and repairs PST files; verified, resumable, with a guided Windows console and a PowerShell 7 command line" src="package/docs/images/readme-banner-light.svg">
+    <img alt="Mailbox Transfer: exports and imports Exchange Online mailboxes (primary and archive) to a verified store or to PST files, imports PST files, stores and EML files, and checks and repairs PST files; verified, resumable, with a guided Windows console and a PowerShell 7 command line" src="package/docs/images/readme-banner-light.svg">
   </picture>
 </p>
 
@@ -40,7 +40,7 @@
 
 ## Why
 
-Mailbox Transfer exports Exchange Online mailboxes (**primary, archive and auxiliary archives**) to a verified local store or to **PST files**, imports PST files, stores and `.eml` files into a mailbox, copies a mailbox into another, and **checks and repairs PST files**. A guided Windows console for the person who does not want to type commands, a PowerShell 7 command line for the rest.
+Mailbox Transfer exports Exchange Online mailboxes (**primary mailbox and archive**) to a verified local store or to **PST files**, imports PST files, stores and `.eml` files into a mailbox, copies a mailbox into another, and **checks and repairs PST files**. A guided Windows console for the person who does not want to type commands, a PowerShell 7 command line for the rest.
 
 Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC sleeps. A PST export hides the archive that grew into several archives. A copy that dies at 80 % leaves you guessing what arrived. Mailbox Transfer is made for the big, boring, long job.
 
@@ -64,7 +64,7 @@ Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC slee
   <img alt="The guided path. Get ready once: 1 get your rights, 2 put the tool on the PC, 3 write your two numbers, 4 open the console. Then task A, browse and export: 5 sign in and pick the mailbox, 6 tick, choose where to save, read the checks and the plan, 7 read the result. Or task B, import: 5 pick the file and the mailbox, 6 read the checks and tick the box that names the target, 7 read the result. Or task C, check and repair a PST: 5 pick the file, 6 check then repair into a new file, 7 read before and after" src="package/docs/images/readme-start-light.png">
 </picture>
 
-One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. Two more tasks need no step of their own: *Copy to another mailbox* (a mailbox into another in one task, user guide chapter 8) and *Open an export or a PST*, which reads a file like a mailbox. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
+One path for everyone. Set the tool up once (**1 to 4**), then take task **A** to browse and export, **B** to import, **C** to check and repair a PST, or all three. Two more tasks need no step of their own: *Copy to another mailbox* (a mailbox into another in one task, the Primary and the Archive together if you want; with the application sign-in; user guide chapter 8) and *Open an export or a PST*, which reads a file like a mailbox. The commands use one example: the tool in `C:\Tools\MailboxTransfer`. Change only this folder to yours. The [user guide](package/docs/MailboxTransfer-UserGuide.md) explains each step with a picture, what you should see and what to do if not, in plain words.
 
 ### Set up once · 1 to 4
 

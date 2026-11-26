@@ -28,7 +28,7 @@ function Open-MbtGuiSource {
         if ($Use -eq 'import') { $s.ImInfo = $info; $s.ImChecking = $false } else { $s.OpInfo = $info }
         if ($info.Ok) {
             Set-MbtGuiBrowserRoots -Browser $browser -Roots @($info.Roots)
-            if ($Use -eq 'import') { $browser.TrayEmpty = "Nothing ticked: **everything will be imported** ($(Format-MbtGuiQuantity $info.Items 'item'), $(Format-MbtGuiBytes $info.Bytes))."; Update-MbtGuiTray $browser }
+            if ($Use -eq 'import') { $browser.TrayEmpty = "Nothing ticked: **everything will be imported** ($(Format-MbtGuiQuantity $info.Items 'item'), $(Format-MbtGuiBytes $info.Bytes))."; $browser.EverythingText = "**Everything** will be imported ($(Format-MbtGuiQuantity $info.Items 'item'), $(Format-MbtGuiBytes $info.Bytes))."; Update-MbtGuiTray $browser }
         }
         Show-MbtGuiPage
     }.GetNewClosure() {
@@ -95,9 +95,11 @@ function Build-MbtGuiImportFromPage {
     $left = New-GuiStack @((New-MbtGuiSourceCard -Use import))
     if ($s.ImSrc -in 'pst', 'eml') {
         $what = if ($s.ImSrc -eq 'pst') { 'a PST' } else { 'a folder of EML files' }
-        $left.Children.Add((New-GuiMessage -Kind info -Icon info -Text "**Tick folders to import only those.** A ticked folder takes the folders below it. Nothing ticked: the whole of $what is imported. Single messages are not chosen here; the folders the tick leaves out are not created.")) | Out-Null
+        $left.Children.Add((New-GuiMessage -Kind info -Icon info -Text "**Everything imports the whole of $what.** Choose **Only what I tick** to import only the folders you tick: a ticked folder takes the folders below it. Single messages are not chosen here; the folders the tick leaves out are not created.")) | Out-Null
     }
     $right = [Windows.Controls.Grid]::new()
+    Update-MbtGuiModeRow $browser
+    Update-MbtGuiTray $browser
     if ($s.ImInfo -and $s.ImInfo.Ok) { Place-MbtGuiBrowser $browser $right }
     else {
         $ico = New-GuiIcon pst 22 'MbtBrandText'; $ico.HorizontalAlignment = 'Center'
@@ -128,7 +130,8 @@ function Build-MbtGuiImportToPage {
     $left = New-GuiStack @((New-MbtGuiSignInCard 'import'))
     $right = if ($s.Signed) {
         $items = [Collections.Generic.List[object]]::new()
-        $items.Add((New-MbtGuiSharedMailboxSection -Use import))
+        if ($s.AuthMode -eq 'app') { $items.Add((New-MbtGuiSharedMailboxSection -Use import)) }
+        else { $items.Add((New-GuiMessage -Kind info -Icon shield -Text "**Into your own mailbox, $($s.Mailbox).** A sign-in as you writes only into your mailbox: its Primary mailbox or its Archive. To write into another mailbox, sign in as the application (Setup).")) }
         $items.Add((New-GuiText 'Part of the mailbox' 'Label'))
         $locs = @($s.Locations | Where-Object { $_.Kind -in 'Primary', 'Archive' })
         if ($s.ImShared) { $locs = @([pscustomobject]@{ Kind = 'Primary'; Label = "Primary mailbox of $($s.ImShared)"; Hint = 'The primary mailbox. Its archive is not reached by its address.' }) }
@@ -211,7 +214,7 @@ function Build-MbtGuiImportPlanPage {
     $g = $script:Gui; $s = $g.S
     $info = $s.ImInfo
     $browser = Get-MbtGuiBrowser 'import'
-    $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
+    $sel = Get-MbtGuiTaskSelection
     $items = if ($sel.Items -gt 0) { $sel.Items } else { [long]$info.Items }
     $bytes = if ($sel.Items -gt 0) { $sel.Bytes } else { [long]$info.Bytes }
     $sizeUnknown = ($sel.Items -gt 0 -and $sel.UnknownSize -gt 0 -and $bytes -le 0)
@@ -498,18 +501,101 @@ function Build-MbtGuiCopyPlanPage {
 
 #region Copy to another mailbox (a mailbox read into a store, then added to another mailbox) -----------------------------------
 
-function Get-MbtGuiMailCopyEnds {
-    <# The two ends of a copy to another mailbox as the pages say them: the mailbox that is read and its place (from what is ticked), the mailbox that receives and its place. Same: they are the same place. #>
+function Get-MbtGuiTargetArchive {
+    <# What is known of the archive of the mailbox that receives the copy: State Known, None (the mailbox has none), Unknown (the lookup could not tell), Reading, or Unasked (no address yet). Id: the one typed or found. #>
+    param([string]$Address, [bool]$App)
     $g = $script:Gui; $s = $g.S
-    $fromKind = if ($s.McFromKind) { $s.McFromKind } else { 'Primary' }
-    $sel = if ($g.ContainsKey('ExportSelection')) { $g.ExportSelection } else { $null }
-    if ($sel -and @($sel.Entries).Count) {
-        $fromKind = switch (([string](Get-MbtGuiRootNode @($sel.Entries)[0].Node).Kind).ToLowerInvariant()) { 'archive' { 'Archive' } default { 'Primary' } }
+    $key = ([string]$Address).Trim().ToLowerInvariant()
+    if ($App) {
+        $typed = if ($s.McArchive -is [Collections.IDictionary] -and $key -and $s.McArchive.Contains($key)) { [string]$s.McArchive[$key] } else { '' }
+        if ($typed) { return [pscustomobject]@{ State = 'Known'; Id = $typed; Typed = $true; Detail = '' } }
+        $st = Get-MbtGuiProp $g 'McTargetArchive' $null
+        if ($st -and $key -and [string](Get-MbtGuiProp $st 'Key' '') -eq $key) { return [pscustomobject]@{ State = [string]$st.State; Id = [string](Get-MbtGuiProp $st 'Id' ''); Typed = $false; Detail = [string](Get-MbtGuiProp $st 'Detail' '') } }
+        return [pscustomobject]@{ State = 'Unasked'; Id = ''; Typed = $false; Detail = '' }
     }
+    # a delegated sign-in writes into its own mailbox: what Where to look found of it
+    $has = @($s.Locations | Where-Object { $_.Kind -eq 'Archive' }).Count -gt 0
+    $state = [string](Get-MbtGuiProp $s.ArchiveState 'State' '')
+    return [pscustomobject]@{ State = $(if ($has) { 'Known' } elseif ($state -in 'None', 'Unknown') { $state } else { 'Known' }); Id = ''; Typed = $false; Detail = '' }
+}
+
+function Start-MbtGuiTargetArchiveLookup {
+    <# The application is going to write into a mailbox that is typed: look up whether it has an archive (Microsoft Graph, User.Read.All), once for each address. #>
+    $g = $script:Gui; $s = $g.S
+    if ($s.AuthMode -ne 'app') { return }
+    $address = ([string]$s.McTarget).Trim()
+    if ($address -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { return }
+    $key = $address.ToLowerInvariant()
+    $current = Get-MbtGuiProp $g 'McTargetArchive' $null
+    if ($current -and [string](Get-MbtGuiProp $current 'Key' '') -eq $key) { return }
+    $g.McTargetArchive = @{ Key = $key; State = 'Reading'; Id = ''; Detail = '' }
+    $typed = if ($s.McArchive.Contains($key)) { [string]$s.McArchive[$key] } else { '' }
+    $refresh = { if ((Get-MbtGuiScreen) -eq 'mcTo') { Show-MbtGuiPage } }
+    & $g.Engine.Locations $address '' {
+        param($locs, $archive)
+        $found = @($locs | Where-Object { $_.Kind -eq 'Archive' })
+        $state = if ($found.Count) { 'Known' } elseif ($archive -and [string]$archive.State -eq 'None') { 'None' } else { 'Unknown' }
+        $g.McTargetArchive = @{ Key = $key; State = $state; Id = $(if ($found.Count) { [string]$found[0].MailboxId } else { '' }); Detail = [string](Get-MbtGuiProp $archive 'Detail' '') }
+        & $refresh
+    }.GetNewClosure() {
+        param($msg)
+        $g.McTargetArchive = @{ Key = $key; State = 'Unknown'; Id = ''; Detail = [string]$msg }
+        & $refresh
+    }.GetNewClosure() $null $null $typed $null
+}
+
+function Get-MbtGuiMailCopyLayout {
+    <# Where the two parts of a copy of both places go: the choice of the page, except that a target without an archive (or whose archive is not known yet) takes both into the Primary. #>
+    param($Archive)
+    $want = [string]$script:Gui.S.McLayout
+    if ($want -notin 'Mirror', 'Primary', 'Archive') { $want = 'Mirror' }
+    if ($Archive.State -notin 'Known', 'Unasked', 'Reading' -and $want -ne 'Primary') { return 'Primary' }
+    return $want
+}
+
+function Get-MbtGuiMailCopyEnds {
+    <# The two ends of a copy to another mailbox as the pages say them: the mailbox that is read and its places (from what is ticked, or Everything), the mailbox that receives and where each part goes. Same: a part would write into the place it reads. #>
+    $g = $script:Gui; $s = $g.S
+    $found = [Collections.Generic.List[string]]::new()
+    $sel = if ($g.ContainsKey('ExportSelection')) { $g.ExportSelection } else { $null }
+    if ($sel -and $sel.PSObject.Properties['Everything'] -and $sel.Everything) {
+        foreach ($p in @($sel.Places)) { if ([string]$p.Kind -in 'Primary', 'Archive' -and -not $found.Contains([string]$p.Kind)) { $found.Add([string]$p.Kind) } }
+    }
+    elseif ($sel -and @($sel.Entries).Count) {
+        foreach ($e in @($sel.Entries)) {
+            $k = switch (([string](Get-MbtGuiRootNode $e.Node).Kind).ToLowerInvariant()) { 'archive' { 'Archive' } 'primary' { 'Primary' } default { '' } }
+            if ($k -and -not $found.Contains($k)) { $found.Add($k) }
+        }
+    }
+    if (-not $found.Count) { $found.Add($(if ($s.McFromKind -in 'Primary', 'Archive') { [string]$s.McFromKind } else { 'Primary' })) }
+    $fromKinds = @('Primary', 'Archive' | Where-Object { $found.Contains($_) })
+    $both = ($fromKinds.Count -eq 2)
     $from = if ($s.Shared) { [string]$s.Shared } else { [string]$s.Mailbox }
     $app = ($s.AuthMode -eq 'app')
     $to = if ($app) { ([string]$s.McTarget).Trim() } elseif ($s.Account) { [string]$s.Account } else { [string]$s.Mailbox }
-    return [pscustomobject]@{ From = $from; FromKind = $fromKind; To = $to; ToKind = [string]$s.TgtLoc; App = $app; Same = [bool]($from -and $to -and $from -ieq $to -and $fromKind -ieq [string]$s.TgtLoc) }
+    $archive = Get-MbtGuiTargetArchive -Address $to -App $app
+    $layout = if ($both) { Get-MbtGuiMailCopyLayout $archive } else { '' }
+    # the parts: each reads one place of the source and writes into one place of the target
+    $pairs = [Collections.Generic.List[object]]::new()
+    if ($both) {
+        $pairs.Add(@('Primary', $(if ($layout -eq 'Archive') { 'Archive' } else { 'Primary' })))
+        $pairs.Add(@('Archive', $(if ($layout -eq 'Primary') { 'Primary' } else { 'Archive' })))
+    } else { $pairs.Add(@($fromKinds[0], [string]$s.TgtLoc)) }
+    $toKinds = @($pairs | ForEach-Object { $_[1] } | Select-Object -Unique)
+    $sameMailbox = [bool]($from -and $to -and $from -ieq $to)
+    [pscustomobject]@{
+        From = $from; FromKinds = $fromKinds; FromKind = ($fromKinds -join ' + '); Both = $both; To = $to; ToKinds = $toKinds; ToKind = ($toKinds -join ' + '); ToPlaces = ($toKinds -join ' / ')
+        Layout = $layout; Pairs = $pairs.ToArray(); App = $app; Archive = $archive; Same = [bool]($sameMailbox -and @($pairs | Where-Object { $_[0] -eq $_[1] }).Count)
+    }
+}
+
+function Get-MbtGuiMailCopyFolderText {
+    <# Where the items of a copy are created, in words: the folder of each part. #>
+    param($Ends)
+    $s = $script:Gui.S
+    $one = { param($mode, $name) if ($mode -eq 'new') { "new folder $name" } else { 'folders with the same names' } }
+    if ($Ends.Both) { return ('Primary part: {0}; Archive part: {1}' -f (& $one $s.TgtMode $s.TgtName), (& $one $s.TgtMode2 $s.TgtName2)) }
+    return (& $one $s.TgtMode $s.TgtName)
 }
 
 function Test-MbtGuiMailCopyTarget {
@@ -519,9 +605,13 @@ function Test-MbtGuiMailCopyTarget {
     if ($ends.App) {
         if (-not $ends.To) { return 'Type the address of the mailbox that receives the copy.' }
         if ($ends.To -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') { return 'Type the address of the mailbox like adele.vance@contoso.com.' }
+        if ($ends.Archive.State -eq 'Reading') { return 'Looking up whether this mailbox has an archive...' }
     }
     if ($ends.Same) { return 'This is the mailbox you copy from. Choose the other part of the mailbox, or another mailbox: a copy writes into a different place.' }
-    if ($S.TgtMode -eq 'new') { return (Test-MbtGuiFolderName $S.TgtName) }
+    if (-not $ends.Both -and $S.TgtLoc -eq 'Archive' -and $ends.Archive.State -eq 'None') { return 'This mailbox has no archive. Choose its Primary mailbox.' }
+    if (-not $ends.Both -and $S.TgtLoc -eq 'Archive' -and $ends.Archive.State -eq 'Unknown') { return 'The archive of this mailbox could not be looked up. Type its archive mailbox id, or choose the Primary mailbox.' }
+    if ($S.TgtMode -eq 'new') { $p = Test-MbtGuiFolderName $S.TgtName; if ($p) { return $p } }
+    if ($ends.Both -and $S.TgtMode2 -eq 'new') { $p = Test-MbtGuiFolderName $S.TgtName2; if ($p) { return $p } }
     return $null
 }
 
@@ -532,41 +622,74 @@ function Update-MbtGuiMailCopyTo {
     Update-MbtGuiPrimary -Enabled (-not $problem) -Footer $(if ($problem) { $problem } else { 'Choose the mailbox and where in it the items go.' })
 }
 
+function New-MbtGuiMailCopyFolderOptions {
+    <# The folder choice of one part: a new folder (named), or the same folder names. Which: 1 (the only part, or the Primary part) or 2 (the Archive part). #>
+    param([ValidateSet(1, 2)][int]$Which, [string]$Title)
+    $s = $script:Gui.S
+    $modeKey = if ($Which -eq 1) { 'TgtMode' } else { 'TgtMode2' }; $nameKey = if ($Which -eq 1) { 'TgtName' } else { 'TgtName2' }; $group = if ($Which -eq 1) { 'tm' } else { 'tm2' }
+    $out = [Collections.Generic.List[object]]::new()
+    $out.Add((New-GuiText $Title 'Label'))
+    $out.Add((New-GuiOption -Type Radio -Group $group -Title 'A new folder (recommended)' -Hint 'Everything goes under one folder of this name. If a folder of this name already exists, it is used as it is. Easy to find, easy to move or delete later.' -Checked ($s[$modeKey] -eq 'new') -Margin '0' -OnChange { $s[$modeKey] = 'new'; Show-MbtGuiPage }.GetNewClosure()))
+    if ($s[$modeKey] -eq 'new') {
+        $name = New-GuiTextBox -Text $s[$nameKey] -Automation $(if ($Which -eq 1) { 'Folder name' } else { 'Archive folder name' }) -OnChange { param($x, $e) $s[$nameKey] = $x.Text; Update-MbtGuiMailCopyTo }.GetNewClosure()
+        $name.Margin = [Windows.Thickness]::new(30, 6, 0, 0)
+        $out.Add($name)
+    }
+    $out.Add((New-GuiOption -Type Radio -Group $group -Title 'The same folder names' -Hint 'Items are added to folders with the same names. Existing items are left alone. Duplicates are possible.' -Checked ($s[$modeKey] -eq 'same') -OnChange { $s[$modeKey] = 'same'; Show-MbtGuiPage }.GetNewClosure()))
+    return $out.ToArray()
+}
+
 function Build-MbtGuiMailCopyToPage {
     $g = $script:Gui; $s = $g.S
+    if ($s.AuthMode -eq 'app') { Start-MbtGuiTargetArchiveLookup }
     $ends = Get-MbtGuiMailCopyEnds
-    $s.McFromKind = $ends.FromKind
+    $s.McFromKind = if ($ends.Both) { 'All' } else { [string]$ends.FromKinds[0] }
     $sel = $g.ExportSelection
     $how = New-GuiCard -Title 'How the copy works' -Content @(
-        (New-GuiText 'It has two parts, one after the other. First the items you ticked are read from the mailbox and saved in a store on this PC. Then the store is added to the mailbox that receives the copy.' 'Body'),
+        (New-GuiText 'It has two parts, one after the other. First what you chose is read from the mailbox and saved in a store on this PC. Then the store is added to the mailbox that receives the copy.' 'Body'),
         (New-GuiText 'The mailbox you copy from is only read. When the copy is over, the store stays on this PC: it is the proof of what was read, and the point where a stopped copy continues.' 'Body'))
     $left = New-GuiStack @((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s)), $how)
     $items = [Collections.Generic.List[object]]::new()
     if ($ends.App) {
         $items.Add((New-GuiText 'Mailbox that receives the copy' 'Label'))
-        $items.Add((New-GuiTextBox -Text $s.McTarget -Automation 'Target mailbox address' -OnChange { param($x, $e) $s.McTarget = $x.Text; Update-MbtGuiMailCopyTo }))
+        $box = New-GuiTextBox -Text $s.McTarget -Automation 'Target mailbox address' -OnChange { param($x, $e) $s.McTarget = $x.Text; Update-MbtGuiMailCopyTo }
+        Add-MbtGuiHandler $box 'LostFocus' { param($sender, $e) if ((Get-MbtGuiScreen) -eq 'mcTo') { $before = $g.McTargetArchive; Start-MbtGuiTargetArchiveLookup; if ($g.McTargetArchive -ne $before) { Show-MbtGuiPage } } }.GetNewClosure()
+        $items.Add($box)
         $items.Add((New-GuiText 'Required: the application has no mailbox of its own. The mailbox must be in the scope of the application.' 'Hint'))
+        foreach ($i in @(New-MbtGuiTargetArchiveItem $ends)) { $items.Add($i) }
     } else {
         $items.Add((New-GuiMessage -Kind info -Icon shield -Text "**The copy goes into your own mailbox, $($ends.To).** A delegated sign-in can write only into the mailbox of the account that signs in: Microsoft refuses a write into another person's or a shared mailbox. To write into another mailbox, sign in as the application (Setup)."))
     }
-    $items.Add((New-GuiText 'Part of the mailbox' 'Label'))
-    foreach ($place in @(@('Primary', 'Primary mailbox', ''), @('Archive', 'Archive', 'If this mailbox has no archive, the check on the next page says so.'))) {
-        $kind = $place[0]
-        $items.Add((New-GuiOption -Type Radio -Group loc -Title $place[1] -Hint $place[2] -Checked ($s.TgtLoc -eq $kind) -OnChange { $s.TgtLoc = $kind; Show-MbtGuiPage }.GetNewClosure()))
+    $archiveOk = $ends.Archive.State -in 'Known', 'Unasked', 'Reading'
+    if ($ends.Both) {
+        $items.Add((New-GuiText 'Where does each part go?' 'Label'))
+        $target = if ($ends.To) { $ends.To } else { 'the mailbox' }
+        $choices = @(
+            @('Mirror', 'Mirror (recommended)', "The Primary part goes into a folder of the Primary mailbox of $target, the Archive part into a folder of its Archive.", $archiveOk),
+            @('Primary', 'All into the Primary mailbox', "Both parts go into folders of the Primary mailbox of $target.", $true),
+            @('Archive', 'All into the Archive', "Both parts go into folders of the Archive of $target.", $archiveOk))
+        foreach ($c in $choices) {
+            $layout = $c[0]
+            $items.Add((New-GuiOption -Type Radio -Group layout -Title $c[1] -Hint $(if ($c[3]) { $c[2] } else { 'This mailbox has no archive that can be used.' }) -Checked ($ends.Layout -eq $layout) -Disabled:(-not $c[3]) -OnChange { $s.McLayout = $layout; Show-MbtGuiPage }.GetNewClosure()))
+        }
+        if (-not $archiveOk) { $items.Add((New-GuiMessage -Kind info -Icon info -Text '**The Archive part goes into the Primary mailbox.** This mailbox has no archive that can be used, so the two parts go into folders of its Primary mailbox.')) }
+        if (-not $s.TgtName) { $s.TgtName = "Copy of $(($ends.From -split '@')[0]) $((Get-Date).ToString('yyyy-MM-dd'))" }
+        if (-not $s.TgtName2) { $s.TgtName2 = "$($s.TgtName) (Archive)" }
+        foreach ($i in @(New-MbtGuiMailCopyFolderOptions -Which 1 -Title 'Folder of the Primary part')) { $items.Add($i) }
+        foreach ($i in @(New-MbtGuiMailCopyFolderOptions -Which 2 -Title 'Folder of the Archive part')) { $items.Add($i) }
+    } else {
+        $items.Add((New-GuiText 'Part of the mailbox' 'Label'))
+        foreach ($place in @(@('Primary', 'Primary mailbox', ''), @('Archive', 'Archive', $(switch ($ends.Archive.State) { 'None' { 'This mailbox has no archive.' } 'Unknown' { 'The archive could not be looked up: type its archive mailbox id.' } default { '' } })))) {
+            $kind = $place[0]
+            $disabled = ($kind -eq 'Archive' -and -not $archiveOk)
+            $items.Add((New-GuiOption -Type Radio -Group loc -Title $place[1] -Hint $place[2] -Checked ($s.TgtLoc -eq $kind) -Disabled:$disabled -OnChange { $s.TgtLoc = $kind; Show-MbtGuiPage }.GetNewClosure()))
+        }
+        if (-not $s.TgtName) { $s.TgtName = "Copy of $(($ends.From -split '@')[0]) $((Get-Date).ToString('yyyy-MM-dd'))" }
+        foreach ($i in @(New-MbtGuiMailCopyFolderOptions -Which 1 -Title 'Folder')) { $items.Add($i) }
     }
-    $items.Add((New-GuiText 'Folder' 'Label'))
-    if (-not $s.TgtName) { $s.TgtName = "Copy of $(($ends.From -split '@')[0]) $((Get-Date).ToString('yyyy-MM-dd'))" }
-    $newOpt = New-GuiOption -Type Radio -Group tm -Title 'A new folder (recommended)' -Hint 'Everything goes under one new folder. Easy to find, easy to move or delete later.' -Checked ($s.TgtMode -eq 'new') -Margin '0' -OnChange { $s.TgtMode = 'new'; Show-MbtGuiPage }
-    $items.Add($newOpt)
-    if ($s.TgtMode -eq 'new') {
-        $name = New-GuiTextBox -Text $s.TgtName -Automation 'Folder name' -OnChange { param($x, $e) $s.TgtName = $x.Text; Update-MbtGuiMailCopyTo }
-        $name.Margin = [Windows.Thickness]::new(30, 6, 0, 0)
-        $items.Add($name)
-    }
-    $items.Add((New-GuiOption -Type Radio -Group tm -Title 'The same folder names' -Hint 'Items are added to folders with the same names. Existing items are left alone. Duplicates are possible.' -Checked ($s.TgtMode -eq 'same') -OnChange { $s.TgtMode = 'same'; Show-MbtGuiPage }))
     $items.Add((New-GuiMessage -Kind info -Icon shield -Text '**Nothing is deleted. Nothing is overwritten.** The copy only adds items. A folder is never renamed.'))
     if (Test-MbtGuiSelectionHasDeletedItems $sel) {
-        $items.Add((New-GuiMessage -Kind info -Icon shield -Text '**Your ticks hold deleted items (Recoverable Items).** They are put in a normal folder named **Restored deleted items** (inside your new folder if you chose one), never back into Recoverable Items.'))
+        $items.Add((New-GuiMessage -Kind info -Icon shield -Text '**Your selection holds deleted items (Recoverable Items).** They are put in a normal folder named **Restored deleted items** (inside your new folder if you chose one), never back into Recoverable Items.'))
     }
     $mapBtn = New-GuiButton -Text 'Use a mapping file...' -Small -Icon open -OnClick { $f = Select-MbtGuiFile -Title 'Mapping file' -Filter 'Mapping (*.psd1;*.json)|*.psd1;*.json'; if ($f) { $s.Mapping = $f; Show-MbtGuiPage } }
     $mapLine = if ($s.Mapping) { New-GuiText "Mapping file: $($s.Mapping)" 'Small' } else { New-GuiText 'For renaming folders while copying (source path to target path). Optional.' 'Hint' }
@@ -580,27 +703,36 @@ function Build-MbtGuiMailCopyToPage {
 
 function New-MbtGuiMailCopyConfirmCard {
     <# "Before anything is written": the target, the volume, what the copy does, and ONE box that says exactly what, from where and into where. Start stays grey until it is ticked. #>
-    param([string]$ItemsQuantity, [long]$Bytes, [bool]$SizeUnknown, [bool]$AtMost)
+    param([string]$ItemsQuantity, [long]$Bytes, [bool]$SizeUnknown, [bool]$AtMost, [bool]$Everything)
     $g = $script:Gui; $s = $g.S
     $mid = [char]0x00B7
     $ends = Get-MbtGuiMailCopyEnds
-    $folderText = if ($s.TgtMode -eq 'new') { "new folder $($s.TgtName)" } else { 'folders with the same names' }
+    $folderText = Get-MbtGuiMailCopyFolderText $ends
     $target = [Windows.Controls.Border]::new(); $target.CornerRadius = [Windows.CornerRadius]::new(8); $target.Padding = [Windows.Thickness]::new(14, 10, 14, 12); $target.Margin = [Windows.Thickness]::new(0, 4, 0, 0)
     Set-MbtGuiResource $target ([Windows.Controls.Border]::BackgroundProperty) 'MbtAccentSoft'
     $eyebrow = New-GuiText 'INTO' 'Small' -NoWrap; $eyebrow.FontWeight = [Windows.FontWeights]::SemiBold; Set-MbtGuiResource $eyebrow ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtBrandText'
     $big = New-GuiText $ends.To 'Big' -NoWrap; $big.FontSize = 22
-    $line = [Windows.Controls.StackPanel]::new(); $line.Orientation = 'Horizontal'; $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
-    $pill = New-GuiPill $ends.ToKind 'run'; $pill.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
-    $fi = New-GuiIcon folder 14; $fi.Margin = [Windows.Thickness]::new(0, 0, 6, 0)
-    $ft = New-GuiText $(if ($s.TgtMode -eq 'new') { "in a new folder named **$($s.TgtName)**" } else { 'in the folders that have the same names' }) 'Body'; $ft.VerticalAlignment = 'Center'
-    $line.Children.Add($pill) | Out-Null; $line.Children.Add($fi) | Out-Null; $line.Children.Add($ft) | Out-Null
+    $lines = [Collections.Generic.List[object]]::new()
+    $parts = if ($ends.Both) { @(@('Primary', $s.TgtMode, $s.TgtName), @('Archive', $s.TgtMode2, $s.TgtName2)) } else { @(, @([string]$s.TgtLoc, $s.TgtMode, $s.TgtName)) }
+    $index = 0
+    foreach ($part in $parts) {
+        $place = if ($ends.Both) { [string]$ends.Pairs[$index][1] } else { [string]$part[0] }
+        $line = [Windows.Controls.StackPanel]::new(); $line.Orientation = 'Horizontal'; $line.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
+        $pill = New-GuiPill $place 'run'; $pill.Margin = [Windows.Thickness]::new(0, 0, 10, 0)
+        $fi = New-GuiIcon folder 14; $fi.Margin = [Windows.Thickness]::new(0, 0, 6, 0)
+        $prefix = if ($ends.Both) { "$($part[0]) part " + [char]0x2192 + ' ' } else { '' }
+        $ft = New-GuiText $(if ($part[1] -eq 'new') { "$prefix" + "in a new folder named **$($part[2])**" } else { "$prefix" + 'in the folders that have the same names' }) 'Body'; $ft.VerticalAlignment = 'Center'
+        $line.Children.Add($pill) | Out-Null; $line.Children.Add($fi) | Out-Null; $line.Children.Add($ft) | Out-Null
+        $lines.Add($line); $index++
+    }
     $from = New-GuiText "copied from **$($ends.From)** $mid $($ends.FromKind)" 'Body'; $from.Margin = [Windows.Thickness]::new(0, 8, 0, 0)
-    $target.Child = (New-GuiStack @($eyebrow, $big, $line, $from))
+    $target.Child = (New-GuiStack (@($eyebrow, $big) + $lines.ToArray() + @($from)))
     $volume = if ($SizeUnknown) { "$ItemsQuantity" } else { "$ItemsQuantity $mid $(if ($AtMost) { 'at most ' })$(Format-MbtGuiBytes $Bytes)" }
     $vol = New-GuiText $volume 'Big'; $vol.Margin = [Windows.Thickness]::new(0, 12, 0, 0)
     $sub = New-GuiText 'will be added to this mailbox.' 'Hint'; $sub.Margin = [Windows.Thickness]::new(0)
     $warn = New-GuiMessage -Kind warn -Icon shield -Text '**Adds only.** Nothing is deleted or overwritten. This tool cannot undo a copy: you would delete the items yourself.'
-    $claim = "I checked: copy $ItemsQuantity from $($ends.From) $mid $($ends.FromKind) into $($ends.To) $mid $($ends.ToKind) $mid $folderText"
+    $what = if ($Everything) { 'everything' } else { $ItemsQuantity }
+    $claim = "I checked: copy $what from $($ends.FromKind) of $($ends.From) into $($ends.ToPlaces) of $($ends.To) $mid $folderText"
     $box = New-GuiOption -Type Check -Title $claim -Checked $s.Confirmed -Margin '0,12,0,0' -OnChange {
         param($x, $e)
         $s.Confirmed = [bool]$x.IsChecked
@@ -620,25 +752,35 @@ function Build-MbtGuiMailCopyPlanPage {
     $ends = Get-MbtGuiMailCopyEnds
     $period = Get-MbtGuiPeriod $s
     $mid = [char]0x00B7
+    $everything = [bool]($sel.PSObject.Properties['Everything'] -and $sel.Everything)
     $bytes = [long]$sel.Bytes
     $sizeUnknown = ($sel.UnknownSize -gt 0 -and $bytes -le 0)
     $itemsQuantity = Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)
     $store = (New-MbtGuiRequest -Task mailcopy).StorePath
     $target = if ($s.TgtMode -eq 'new') { $s.TgtName } else { 'the same folder names' }
-    $steps = @(
-        $(if ($period.Active) { "Read the folder tree and list the items you ticked, keeping the ones that $($period.Text)." } else { 'Read the folder tree and list the items you ticked.' }),
-        'Download them into the store on this PC, checking each one.',
-        'Open the store again and check it. Here the second part begins.',
-        "Create the folders under **$target** in the mailbox that receives the copy.",
-        "Send $itemsQuantity, one by one, into that mailbox.",
-        'For any item Microsoft does not answer for, look in the folder and decide by itself. Then a final check of the whole job.')
+    $targetArchive = if ($s.TgtMode2 -eq 'new') { $s.TgtName2 } else { 'the same folder names' }
+    $readText = if ($everything) { "Read the folder tree of $($ends.FromKind) and list everything in it." } else { 'Read the folder tree and list the items you ticked.' }
+    $steps = [Collections.Generic.List[string]]::new()
+    $steps.Add($(if ($period.Active) { "Read the folder tree and list $(if ($everything) { 'everything' } else { 'the items you ticked' }), keeping the ones that $($period.Text)." } else { $readText }))
+    $steps.Add('Download them into the store on this PC, checking each one.')
+    $steps.Add('Open the store again and check it. Here the second part begins.')
+    if ($ends.Both) {
+        $steps.Add("Primary part: create the folders under **$target** in the $($ends.Pairs[0][1]) mailbox of $($ends.To), then send the items, one by one.")
+        $steps.Add("Archive part: create the folders under **$targetArchive** in the $($ends.Pairs[1][1]) mailbox of $($ends.To), then send the items, one by one.")
+    } else {
+        $steps.Add("Create the folders under **$target** in the mailbox that receives the copy.")
+        $steps.Add("Send $itemsQuantity, one by one, into that mailbox.")
+    }
+    $steps.Add('For any item Microsoft does not answer for, look in the folder and decide by itself. Then a final check of the whole job.')
     $ol = [Windows.Controls.StackPanel]::new(); $i = 1
     foreach ($t in $steps) { $r = New-GuiText ("$i.  $t") 'Body'; $r.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($r) | Out-Null; $i++ }
     $eta = Get-MbtGuiPlanEta -Task import -Bytes $bytes
     $etaText = if ($sizeUnknown) { 'cannot be estimated yet: Microsoft does not give the size of every folder in advance. It shows once the copy runs.' } else { "**$($eta.Text)**, mostly the second part: Microsoft accepts only about 4 GiB per hour into one mailbox" }
     $sizeText = if ($sizeUnknown) { 'size unknown before the check' } else { "$(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)" }
-    $facts = New-GuiFacts @(@('From', "$($ends.From) $mid $($ends.FromKind) mailbox $mid **only read**"), @('Into', "$($ends.To) $mid $($ends.ToKind) mailbox"), @('Store', "$store (stays on this PC)"),
-        @('Size', "$itemsQuantity $mid $sizeText"), @('Time', (New-GuiText $etaText 'Body')))
+    $intoText = if ($ends.Both) { "$($ends.To) $mid Primary part into the $($ends.Pairs[0][1]), Archive part into the $($ends.Pairs[1][1])" } else { "$($ends.To) $mid $($ends.ToKind) mailbox" }
+    $factRows = @(@('From', "$($ends.From) $mid $($ends.FromKind) $mid **only read**"), @('Into', $intoText), @('Store', "$store (stays on this PC)"),
+        @('Size', "$(if ($everything) { 'Everything: ' })$itemsQuantity $mid $sizeText"), @('Time', (New-GuiText $etaText 'Body')))
+    $facts = New-GuiFacts $factRows
     $warn = New-GuiMessage -Kind warn -Icon clock -Text '**This is a long job.** The first part is quick, the second is not: Microsoft accepts only about 4 GiB per hour into one mailbox, whatever the speed of your PC or network. You can stop and continue as often as you like: the part that is finished is not done again, and no item is added twice.'
     $g.PlanHolder = [Windows.Controls.ContentControl]::new(); $g.PlanHolder.Content = New-MbtGuiPlanStateMessage
     $free = $null; try { $free = [double](& $g.Engine.FreeSpace $s.WorkFolder) } catch { $free = $null }
@@ -648,10 +790,11 @@ function Build-MbtGuiMailCopyPlanPage {
     $diskRow = New-MbtGuiCheckRow -State $(if ($enough) { 'ok' } else { 'bad' }) -Text $(if ($enough) { 'Enough disk space for the store' } else { 'Not enough disk space for the store' }) -Detail $(if ($bytes -le 0) { "$(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' }) free on $drive" } else { "about $(Format-MbtGuiBytes $need) needed, $(if ($null -ne $free) { Format-MbtGuiBytes $free } else { 'unknown' }) free on $drive" })
     $placeRow = New-MbtGuiCheckRow -State $(if ($ends.Same) { 'bad' } else { 'ok' }) -Text $(if ($ends.Same) { 'The mailbox you copy from is the target' } else { 'A different place' }) -Detail "from $($ends.From) ($($ends.FromKind)) into $($ends.To) ($($ends.ToKind))"
     $ruleRow = New-MbtGuiCheckRow -State ok -Text $(if ($ends.App) { 'The application writes into the target' } else { 'You write into your own mailbox' }) -Detail $(if ($ends.App) { 'the target must be in the scope of the application; the check above looks at it' } else { "$($ends.To), the account that is signed in (a delegated sign-in cannot write into another mailbox)" })
-    $checks = New-GuiCard -Title 'Checks' -Content @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $placeRow, $ruleRow, $diskRow)
+    $checkRows = @($g.PlanHolder, (New-MbtGuiSignInCheckRow), $placeRow, $ruleRow, $diskRow)
+    $checks = New-GuiCard -Title 'Checks' -Content $checkRows
     $left = New-GuiStack @($checks, (New-GuiCard -Title 'What will be done' -Content @($ol, $facts, $warn)))
     $before = New-GuiCard -Title 'Before you start' -Content @((New-GuiText ([char]0x2022 + '  Keep the PC plugged in and awake (the console does this for you).') 'Body'), (New-GuiText ([char]0x2022 + '  The mailbox you copy from is only read. The store stays on this PC after the copy: it is the proof of what was read.') 'Body'), (New-MbtGuiSleepInfo))
-    $right = New-GuiStack @((New-MbtGuiMailCopyConfirmCard -ItemsQuantity $itemsQuantity -Bytes $bytes -SizeUnknown $sizeUnknown -AtMost $period.Active), $before)
+    $right = New-GuiStack @((New-MbtGuiMailCopyConfirmCard -ItemsQuantity $itemsQuantity -Bytes $bytes -SizeUnknown $sizeUnknown -AtMost $period.Active -Everything $everything), $before)
     $key = Get-MbtGuiPlanKey
     if ($s.PlanKey -ne $key) { $s.PlanState = 'idle'; $s.PlanKey = $key; Start-MbtGuiPlanCheck }
     if ($s.ConfirmKey -ne $key) { $s.Confirmed = $false; $s.ConfirmKey = '' }

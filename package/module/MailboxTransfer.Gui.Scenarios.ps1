@@ -20,6 +20,7 @@ function Get-MbtGuiScenarioName {
         'RepairFromDamaged', 'RepairFromClean', 'RepairTo', 'RepairPlan', 'DoneRepair', 'Open',
         'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing', 'ExportFromPeriod', 'ExportFromPeriodOpen', 'ExportPlanPeriod', 'RunExportPeriod', 'DoneExportPeriod',
         'CopyMailboxFrom', 'CopyMailboxTo', 'CopyMailboxPlan', 'CopyMailboxPlanTicked', 'RunCopyMailboxReading', 'RunCopyMailbox', 'DoneCopyMailbox', 'DoneCopyMailboxPartial',
+        'StartApplication', 'SetupExpert', 'ExportFromEverything', 'ExportPlanEverything', 'ImportToMe', 'StartJobsMe', 'CopyMailboxFromBoth', 'CopyMailboxToBoth', 'CopyMailboxToBothNoArchive', 'CopyMailboxToBothArchiveUnknown', 'CopyMailboxPlanBoth', 'RunCopyMailboxBoth', 'DoneCopyMailboxBoth',
         'StartJobs', 'ResumeExport', 'ResumeImport', 'ResumeCopy', 'RunExportResumed', 'JobDelete', 'JobDeleteUnfinished')
 }
 
@@ -27,7 +28,8 @@ function Get-MbtGuiEdgeScenarioName {
     <# The states with exactly one of something (one folder, one message, one finding, one step...) or with none, and a plan check that failed: the lists of the pages are built from loops that run once or not at all. Walked by the tests, not drawn for the documentation. #>
     @('StartOneJob', 'StartNoJob', 'ExportFromOneLocation', 'ExportFromNoLocation', 'ExportFromArchiveUnknown', 'ExportFromArchiveIdInvalid', 'ExportFromNoArchive', 'CopyMailboxFromArchiveUnknown', 'ExportFromOneMessage', 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ImportToOneLocation', 'ImportPlanOneFolder',
         'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused', 'ExportPlanFailed', 'ImportFromManyFolders', 'ExportFromPeriodInvalid', 'ExportFromPeriodOpenEnd',
-        'CopyMailboxFromSeveralPlaces', 'CopyMailboxToApplication', 'CopyMailboxToSame', 'CopyMailboxToArchive', 'CopyMailboxPlanChecking', 'DoneCopyMailboxError', 'DoneCopyMailboxDecision')
+        'CopyMailboxFromSeveralPlaces', 'CopyMailboxToApplication', 'CopyMailboxToSame', 'CopyMailboxToArchive', 'CopyMailboxPlanChecking', 'DoneCopyMailboxError', 'DoneCopyMailboxDecision',
+        'ExportFromOtherMailboxApp', 'ExportFromOtherMailboxArchiveUnknown', 'ExportFromOtherMailboxDelegated', 'ExportFromEverythingTicksIgnored', 'ExportFromEverythingNoPlace', 'ExportFromEverythingArchive', 'ImportFromTicks', 'SetupExpertInvalid', 'StartMeNoName', 'CopyMailboxToBothArchiveId', 'CopyMailboxToBothPrimary', 'CopyMailboxToBothArchive', 'CopyMailboxToBothSame', 'CopyMailboxToBothReading', 'CopyMailboxToOneNoArchive', 'CopyMailboxToOneArchiveUnknown', 'CopyMailboxPlanBothTicks', 'DoneCopyMailboxBothPartial')
 }
 
 function New-MbtGuiEvt {
@@ -39,14 +41,43 @@ function New-MbtGuiEvt {
 
 function New-MbtGuiScenarioRun {
     <# A run model for a task in a state, built from events. -Period: an export of a period (the listing says how many items it left out). #>
-    param([string]$Task, [string]$State = 'running', [switch]$Period)
-    $run = New-MbtGuiRun -Task $Task -Title $(switch ($Task) { 'export' { 'Export ' + [char]0x00B7 + ' adele.vance@contoso.com' } 'import' { 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' adele.vance@contoso.com (Archive)' } 'mailcopy' { 'Copy ' + [char]0x00B7 + ' projects@contoso.com (Primary) ' + [char]0x2192 + ' adele.vance@contoso.com (Primary)' } 'copy' { 'Copy ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' archive-2019-copy.pst' } default { 'Repair ' + [char]0x00B7 + ' contoso-archive-2019.pst ' + [char]0x2192 + ' contoso-archive-2019.repaired.pst' } })
+    param([string]$Task, [string]$State = 'running', [switch]$Period, [switch]$Both)
+    $run = New-MbtGuiRun -Task $Task -Title $(if ($Both -and $Task -eq 'mailcopy') { 'Copy ' + [char]0x00B7 + ' projects@contoso.com (Primary + Archive) ' + [char]0x2192 + ' adele.vance@contoso.com (Primary + Archive)' } else { switch ($Task) { 'export' { 'Export ' + [char]0x00B7 + ' adele.vance@contoso.com' } 'import' { 'Import ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' adele.vance@contoso.com (Archive)' } 'mailcopy' { 'Copy ' + [char]0x00B7 + ' projects@contoso.com (Primary) ' + [char]0x2192 + ' adele.vance@contoso.com (Primary)' } 'copy' { 'Copy ' + [char]0x00B7 + ' archive-2019.pst ' + [char]0x2192 + ' archive-2019-copy.pst' } default { 'Repair ' + [char]0x00B7 + ' contoso-archive-2019.pst ' + [char]0x2192 + ' contoso-archive-2019.repaired.pst' } } })
     $hours = switch ($Task) { 'import' { 6.33 } 'repair' { 0.05 } 'mailcopy' { $(if ($State -eq 'reading') { 0.18 } else { 6.33 }) } default { 0.18 } }
     $t0 = [datetime]::UtcNow.AddHours(-$hours)
     $at = { param($min) $t0.AddMinutes($min) }
     $ev = { param($k, $min, $f) $null = Add-MbtGuiEvent -Run $run -Event (New-MbtGuiEvt $k (& $at $min) $f) }
     switch ($Task) {
         'mailcopy' {
+            if ($Both) {
+                # the Primary and the Archive: the store is imported once for each part, the steps of the second part carry -2
+                $steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }, @{ id = 'verify'; title = 'Check the downloads' })
+                foreach ($p in 1, 2) { $suffix = $(if ($p -gt 1) { "-$p" } else { '' }); $of = $(if ($p -eq 1) { ' (Primary part)' } else { ' (Archive part)' }); $steps += @(@{ id = "check$suffix"; title = "Verify the export store$of" }, @{ id = "folders$suffix"; title = "Create the folders$of" }, @{ id = "send$suffix"; title = "Send the items$of" }, @{ id = "reconcile$suffix"; title = "Check the uncertain items$of" }, @{ id = "final$suffix"; title = "Final check$of" }) }
+                & $ev 'plan' 0 @{ steps = $steps }
+                & $ev 'step' 0.2 @{ id = 'tree'; state = 'done'; msg = '3,612 folders' }
+                & $ev 'step' 1.9 @{ id = 'list'; state = 'done'; msg = '13,566 items ' + [char]0x00B7 + ' 40.4 GiB'; total = 13566 }
+                & $ev 'step' 12 @{ id = 'download'; state = 'done'; done = 13566; total = 13566; bytes = [long](40.4GB); bytesTotal = [long](40.4GB) }
+                & $ev 'step' 12.5 @{ id = 'verify'; state = 'done'; msg = 'Each item is checked against its fingerprint as it arrives.' }
+                & $ev 'step' 13 @{ id = 'check'; state = 'done'; msg = 'The export store is open.' }
+                & $ev 'step' 14 @{ id = 'folders'; state = 'done'; msg = '214 folders created' }
+                & $ev 'step' 15 @{ id = 'send'; state = 'done'; done = 3496; total = 3496; bytes = [long](5.1GB); bytesTotal = [long](5.1GB) }
+                & $ev 'step' 15.5 @{ id = 'reconcile'; state = 'done' }
+                & $ev 'step' 16 @{ id = 'final'; state = 'done'; done = 3496; total = 3496; msg = 'complete: 3,496 of 3,496 done' }
+                & $ev 'step' 17 @{ id = 'check-2'; state = 'done'; msg = 'The export store is open.' }
+                & $ev 'step' 18 @{ id = 'folders-2'; state = 'done'; msg = '96 folders created' }
+                & $ev 'step' 18.2 @{ id = 'send-2'; state = 'running'; done = 2310; total = 10070; bytes = [long](8.1GB); bytesTotal = [long](35.3GB) }
+                & $ev 'step' 18.3 @{ id = 'reconcile-2'; state = 'running'; done = 0; total = 1; msg = '1 waiting for a check' }
+                & $ev 'object' 15 @{ step = 'send'; key = 'Inbox'; state = 'done'; done = 1180; total = 1180 }
+                & $ev 'object' 19 @{ step = 'send-2'; key = 'Archive/Finance/Budgets'; state = 'done'; done = 212; total = 212 }
+                & $ev 'object' 19 @{ step = 'send-2'; key = 'Archive/Old Mail/2019'; state = 'running'; done = 900; total = 3120 }
+                & $ev 'object' 19 @{ step = 'send-2'; key = 'Archive/Projects/Fabrikam Pilot'; state = 'check'; msg = '1 to check' }
+                foreach ($m in 330..380) {
+                    & $ev 'step' $m @{ id = 'send-2'; state = 'running'; done = 2200 + ($m - 330) * 2; total = 10070; bytes = [long](7.9GB + ($m - 330) * 4MB); bytesTotal = [long](35.3GB) }
+                    if ($m % 5 -eq 0) { & $ev 'rate' $m @{ window = '5m'; gibPerHour = 3.4 + (($m / 5) % 6) * 0.2 } }
+                }
+                $run.ImportHalf = $true
+                return $run
+            }
             & $ev 'plan' 0 @{ steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }, @{ id = 'verify'; title = 'Check the downloads' }, @{ id = 'check'; title = 'Verify the export store' }, @{ id = 'folders'; title = 'Create the folders' }, @{ id = 'send'; title = 'Send the items' }, @{ id = 'reconcile'; title = 'Check the uncertain items' }, @{ id = 'final'; title = 'Final check' }) }
             & $ev 'step' 0.2 @{ id = 'tree'; state = 'done'; msg = '312 folders' }
             & $ev 'step' 1.9 @{ id = 'list'; state = 'done'; msg = '1,208 items ' + [char]0x00B7 + ' 6.2 GiB'; total = 1208 }
@@ -88,7 +119,7 @@ function New-MbtGuiScenarioRun {
             & $ev 'object' 3 @{ step = 'download'; key = 'Inbox'; state = 'done'; done = 410; total = 410 }
             & $ev 'object' 5 @{ step = 'download'; key = 'Inbox/Projects/Contoso Rollout'; state = 'running'; done = 260; total = 410 }
             & $ev 'object' 5 @{ step = 'download'; key = 'Archive/Finance/Budgets'; state = 'planned'; done = 0; total = 212 }
-            & $ev 'object' 5.5 @{ step = 'download'; key = 'Auxiliary archive 1 / Old Mail/2018'; state = 'notready'; msg = 'not ready' }
+            & $ev 'object' 5.5 @{ step = 'download'; key = 'Archive / Old Mail/2018'; state = 'notready'; msg = 'not ready' }
             foreach ($m in 5, 6, 7, 8, 9, 10) { & $ev 'rate' $m @{ window = '5m'; gibPerHour = 38 + $m % 3 } }
             & $ev 'step' 11 @{ id = 'download'; state = 'running'; done = 744; total = 1208; bytes = [long](3.8GB); bytesTotal = [long](6.2GB) }
         }
@@ -171,15 +202,15 @@ function New-MbtGuiScenarioOneRun {
 
 function New-MbtGuiScenarioDone {
     <# A run model at its end: Task, Outcome complete / partial / decision / error. -Period: an export of a period (the result counts the items kept, outside the period and without a date). #>
-    param([string]$Task, [string]$Outcome, [switch]$Period)
-    $run = New-MbtGuiScenarioRun -Task $Task -Period:($Period)
+    param([string]$Task, [string]$Outcome, [switch]$Period, [switch]$Both)
+    $run = New-MbtGuiScenarioRun -Task $Task -Period:($Period) -Both:($Both)
     $exit = switch ($Outcome) { 'complete' { 0 } 'partial' { 2 } 'decision' { 3 } default { 1 } }   # refused: finished, some items refused for good (exit 1, reason refused-items)
     $counts = switch ("$Task/$Outcome") {
         'export/complete' { @{ done = 1208; failed = 0; bytes = [long](6.2GB); parts = 3 } }
         'export/partial' { @{ done = 1004; pending = 204; failed = 0 } }
         'export/error' { @{ done = 744; failed = 0 } }
-        'mailcopy/complete' { @{ exported = 1208; done = 1208; failed = 0; unknown = 0; pending = 0; total = 1208; foldersCreated = 37; bytes = [long](6.2GB) } }
-        'mailcopy/partial' { @{ exported = 1208; done = 523; failed = 0; unknown = 0; pending = 685; total = 1208; foldersCreated = 37; bytes = [long](6.2GB) } }
+        'mailcopy/complete' { if ($Both) { @{ exported = 13566; done = 13566; failed = 0; unknown = 0; pending = 0; total = 13566; foldersCreated = 310; bytes = [long](40.4GB) } } else { @{ exported = 1208; done = 1208; failed = 0; unknown = 0; pending = 0; total = 1208; foldersCreated = 37; bytes = [long](6.2GB) } } }
+        'mailcopy/partial' { if ($Both) { @{ exported = 13566; done = 5806; failed = 0; unknown = 0; pending = 7760; total = 13566; foldersCreated = 310; bytes = [long](40.4GB) } } else { @{ exported = 1208; done = 523; failed = 0; unknown = 0; pending = 685; total = 1208; foldersCreated = 37; bytes = [long](6.2GB) } } }
         'mailcopy/decision' { @{ exported = 1208; done = 1207; failed = 0; unknown = 1; pending = 0; total = 1208; foldersCreated = 37; bytes = [long](6.2GB) } }
         'mailcopy/error' { @{ exported = 1208; done = 523; failed = 0; pending = 685; total = 1208 } }
         'import/complete' { @{ done = 9860; failed = 0; unknown = 0; pending = 0; total = 9860; foldersCreated = 214 } }
@@ -221,7 +252,7 @@ function Show-MbtGuiRunScenario {
     param([string]$Task, $Run)
     $g = $script:Gui; $s = $g.S
     $s.Task = $Task; $s.Sel = $Task; $s.Signed = $true; $s.Mailbox = 'adele.vance@contoso.com'; $s.Account = $s.Mailbox
-    if ($Task -eq 'mailcopy') { Initialize-MbtGuiScenarioCopy }
+    if ($Task -eq 'mailcopy') { $both = ($s.McFromKind -eq 'All'); Initialize-MbtGuiScenarioCopy -Both:$both -Everything:($both -and $s.SelMode -eq 'all') }
     if ($Task -eq 'copy') { $s.OpSrc = 'pst'; $s.OpPath = 'D:\PST\archive-2019.pst'; $s.OutFolder = 'D:\PST'; $s.OutName = 'archive-2019-copy.pst' }
     $g.Run = $Run; $g.Job = $null
     $idx = $script:Flows[$Task].IndexOf($(if ($Run.Result -and $Run.State -ne 'stopped') { 'done' } else { 'run' }))
@@ -234,14 +265,19 @@ function Initialize-MbtGuiScenarioExport {
         Signed in, the three locations, some folders and messages ticked. -Kinds: only the locations of these kinds ('None': no location). -OneFolder: one folder ticked alone, nothing else.
         -OneMessage: the one message of a folder, ticked alone. -Archive: what the lookup of the archive answers (Known, None: the mailbox has no archive, Unknown: it could not be looked up).
     #>
-    param([switch]$Ticks, [string[]]$Kinds, [switch]$OneFolder, [switch]$OneMessage, [switch]$OnePlace, [ValidateSet('Known', 'None', 'Unknown')][string]$Archive = 'Known')
+    param([switch]$Ticks, [string[]]$Kinds, [switch]$OneFolder, [switch]$OneMessage, [switch]$OnePlace, [switch]$BothPlaces, [switch]$Everything, [string]$Shared, [switch]$Application, [ValidateSet('Known', 'None', 'Unknown')][string]$Archive = 'Known')
     $g = $script:Gui; $s = $g.S
     $g.Engine.State.Archive = $Archive
+    # the choice above the tree: Everything unless something is ticked on purpose (-Everything with ticks: the ticks are kept and ignored)
+    $s.SelMode = $(if ($Everything -or -not ($Ticks -or $OneFolder -or $OneMessage)) { 'all' } else { 'ticks' })
     $s.Task = 'export'; $s.Sel = 'export'; $s.Mailbox = 'adele.vance@contoso.com'; $s.Signed = $true; $s.Account = $s.Mailbox
     $s.Token = [pscustomobject]@{ Access = 'Delegated (you, with your rights)'; CanReadMail = $true; Missing = @(); TenantId = 'contoso.onmicrosoft.com' }
-    & $g.Engine.Locations $s.Mailbox '' { param($l, $archive) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds }); $s.ArchiveState = $archive; foreach ($x in $s.Locations) { $s.LocationChecked[$x.Kind] = $true } } { }
+    # another mailbox, open by its address: with the application every place is looked up, with a delegated sign-in only its Primary
+    $s.Shared = $Shared
+    if ($Application) { $s.AuthMode = 'app'; $s.Token = [pscustomobject]@{ Access = 'Application (certificate, no user)'; CanReadMail = $true; Missing = @(); TenantId = 'contoso.onmicrosoft.com' } }
+    & $g.Engine.Locations $s.Mailbox '' { param($l, $archive) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds }); $s.ArchiveState = $archive; foreach ($x in $s.Locations) { $s.LocationChecked[$x.Kind] = $true } } { } $Shared
     $browser = Get-MbtGuiBrowser 'export'
-    & $g.Engine.Roots $s.Locations { param($r) Set-MbtGuiBrowserRoots -Browser $browser -Roots @($r) } { }
+    & $g.Engine.Roots @($s.Locations | Where-Object { $_.Kind -ne 'AuxArchive' }) { param($r) Set-MbtGuiBrowserRoots -Browser $browser -Roots @($r) } { }
     $inbox = $null
     foreach ($r in $browser.Roots) { foreach ($n in $r.Descendants()) { if ($n.Id -eq 'inbox') { $inbox = $n } } }
     if ($inbox) {
@@ -257,25 +293,35 @@ function Initialize-MbtGuiScenarioExport {
         $browser.Rows[0].IsChecked = $true
     }
     if ($Ticks) {
-        $tickIds = if ($OnePlace) { 'p-c', 'p-f' } else { 'p-c', 'fin-b', 'x-18' }
+        $tickIds = if ($OnePlace) { 'p-c', 'p-f' } elseif ($BothPlaces) { 'p-c', 'fin-b' } else { 'p-c', 'fin-b', 'x-18' }
         foreach ($r in $browser.Roots) { foreach ($n in $r.Descendants()) { if ($n.Id -in $tickIds) { $n.Check = $true } } }
         $rows = @($browser.Rows | Select-Object -First 5)
         foreach ($row in $rows) { $row.IsChecked = $true }
         $browser.Rows[0].IsChecked = $true
     }
-    $g.ExportSelection = Get-MbtGuiSelection -Roots @($browser.Roots)
+    $g.ExportSelection = Get-MbtGuiExportSelection
     $s.OutFolder = 'D:\Exports\adele'; $s.OutName = 'adele.pst'
 }
 
 function Initialize-MbtGuiScenarioCopy {
     <# A copy to another mailbox: a shared mailbox is read, the signed-in account receives, the folder is named. -Ticks: the ticks, in one place. -Application: the application signs in, the target is typed. -Archive: the target is the archive. #>
-    param([switch]$Ticks, [switch]$Application, [switch]$Archive)
+    param([switch]$Ticks, [switch]$Application, [switch]$Archive, [switch]$Both, [switch]$Everything, [ValidateSet('Known', 'None', 'Unknown')][string]$TargetArchive = 'Known')
     $g = $script:Gui; $s = $g.S
-    if ($Ticks) { Initialize-MbtGuiScenarioExport -Ticks -OnePlace }
+    # "Copy to another mailbox" is a task of the application: the pages of its scenarios are the ones of that sign-in
+    if ($Both) { Initialize-MbtGuiScenarioExport -Ticks -BothPlaces -Everything:$Everything }
+    elseif ($Ticks) { Initialize-MbtGuiScenarioExport -Ticks -OnePlace -Everything:$Everything }
     $s.Task = 'mailcopy'; $s.Sel = 'mailcopy'; $s.Signed = $true
-    $s.Mailbox = 'adele.vance@contoso.com'; $s.Account = $s.Mailbox; $s.Shared = 'projects@contoso.com'; $s.McFromKind = 'Primary'
+    $s.Mailbox = 'adele.vance@contoso.com'; $s.Account = $s.Mailbox; $s.Shared = ''; $s.McFromKind = $(if ($Both) { 'All' } else { 'Primary' })
     $s.TgtLoc = $(if ($Archive) { 'Archive' } else { 'Primary' }); $s.TgtMode = 'new'; $s.TgtName = 'Copy of projects 2026-11-12'
-    if ($Application) { $s.AuthMode = 'app'; $s.AppThumb = '5D41402ABC4B2A76B9719D911017C59228F3D1AE'; $s.Mailbox = 'projects@contoso.com'; $s.Account = $s.Mailbox; $s.Shared = ''; $s.McTarget = 'adele.vance@contoso.com' }
+    $s.AuthMode = 'app'; $s.AppThumb = '5D41402ABC4B2A76B9719D911017C59228F3D1AE'; $s.Mailbox = 'projects@contoso.com'; $s.Account = $s.Mailbox; $s.McTarget = 'adele.vance@contoso.com'
+    $s.Token = [pscustomobject]@{ Access = 'Application (certificate, no user)'; CanReadMail = $true; Missing = @(); TenantId = 'contoso.onmicrosoft.com' }
+    # the tree shows the mailbox that is read
+    if ($Both -or $Ticks -or $Everything) { foreach ($root in (Get-MbtGuiBrowser 'export').Roots) { if ($root.Kind -eq 'primary') { $root.Name = 'Primary mailbox'; $root.Sub = $s.Mailbox } } }
+    if ($Both) { $s.McLayout = 'Mirror'; $s.TgtName2 = 'Archive of projects 2026-11-12' }
+    # what the lookup of the archive of the mailbox that receives the copy answers
+    $g.Engine.State.ArchiveOf = @{ 'adele.vance@contoso.com' = $TargetArchive }
+    $g.McTargetArchive = $null
+    if ($Ticks -or $Both -or $Everything) { $null = Get-MbtGuiExportSelection; $g.ExportSelection = Get-MbtGuiExportSelection }
 }
 
 function New-MbtGuiScenarioResumedRun {
@@ -308,6 +354,13 @@ function Set-MbtGuiScenario {
     $script:FakeJobCount = $null
     $script:FakePstExtraFolders = 0
     $g.Engine.State.Archive = 'Known'
+    $g.Engine.State.ArchiveOf = @{}
+    # what the earlier scenario chose does not carry over: signed in as you, Everything, nothing typed
+    $s.AuthMode = 'user'; $s.SelMode = 'all'; $s.ImSelMode = 'all'; $s.McLayout = 'Mirror'; $s.TgtMode = 'new'; $s.TgtMode2 = 'new'; $s.TgtName = ''; $s.TgtName2 = ''; $s.McTarget = ''; $s.McFromKind = ''
+    $s.McArchive = @{}; $s.McArchiveText = ''; $s.McArchiveProblem = ''; $s.PrimaryId = ''; $s.ArchiveId = ''; $s.PrimaryIdValue = ''; $s.ArchiveIdValue = ''; $s.EvPlaces = @(); $s.Shared = ''; $s.ImShared = ''
+    $g.McTargetArchive = $null
+    # a dialog of the earlier scenario does not stay on the page of this one
+    Close-MbtGuiDialog
     switch ($Name) {
         'Start' { $s.Step = 1; Show-MbtGuiPage }
         'StartImport' { $s.Step = 1; $s.Sel = 'import'; Show-MbtGuiPage }
@@ -355,8 +408,8 @@ function Set-MbtGuiScenario {
         'RepairPlan' { Set-MbtGuiScenario 'RepairFromDamaged'; $s.Step = (Get-MbtGuiScenarioStep 'repair' 'rpPlan'); $s.RpDest = 'D:\PST\contoso-archive-2019.repaired.pst'; Show-MbtGuiPage }
         'DoneRepair' { $s.RpPath = 'D:\PST\contoso-archive-2019.pst'; $s.RpDest = 'D:\PST\contoso-archive-2019.repaired.pst'; Show-MbtGuiRunScenario 'repair' (New-MbtGuiScenarioDone repair complete) }
         'Open' { $s.Task = 'open'; $s.Sel = 'open'; $s.Step = (Get-MbtGuiScenarioStep 'open' 'opFrom'); $s.OpSrc = 'pst'; $s.OpPath = 'D:\PST\archive-2019.pst'; Open-MbtGuiSource -Use open; Open-MbtGuiFirstFolder 'open' }
-        'ImportFromChoice' { Set-MbtGuiScenario 'ImportFrom'; Set-MbtGuiScenarioTicks 'import' 'o-p1', 'o-bud'; Show-MbtGuiPage }
-        'ImportPlanChoice' { Set-MbtGuiScenario 'ImportTo'; Set-MbtGuiScenarioTicks 'import' 'o-p1', 'o-bud'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imPlan'); Show-MbtGuiPage }
+        'ImportFromChoice' { Set-MbtGuiScenario 'ImportFrom'; $s.ImSelMode = 'ticks'; Set-MbtGuiScenarioTicks 'import' 'o-p1', 'o-bud'; Show-MbtGuiPage }
+        'ImportPlanChoice' { Set-MbtGuiScenario 'ImportTo'; $s.ImSelMode = 'ticks'; Set-MbtGuiScenarioTicks 'import' 'o-p1', 'o-bud'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imPlan'); Show-MbtGuiPage }
         'DoneImportRefused' { $s.ImSrc = 'pst'; $s.ImPath = 'D:\PST\archive-2019.pst'; $s.TgtLoc = 'Archive'; $s.TgtMode = 'new'; $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiRunScenario 'import' (New-MbtGuiScenarioDone import refused) }
         'OpenPreview' {
             Set-MbtGuiScenario 'Open'
@@ -375,7 +428,7 @@ function Set-MbtGuiScenario {
         'CopyMailboxFromSeveralPlaces' { Initialize-MbtGuiScenarioExport -Ticks; $s.Task = 'mailcopy'; $s.Sel = 'mailcopy'; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'exFrom'); Show-MbtGuiPage }
         'CopyMailboxTo' { Initialize-MbtGuiScenarioCopy -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
         'CopyMailboxToApplication' { Initialize-MbtGuiScenarioCopy -Ticks -Application; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
-        'CopyMailboxToSame' { Initialize-MbtGuiScenarioCopy -Ticks; $s.Shared = ''; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToSame' { Initialize-MbtGuiScenarioCopy -Ticks; $s.McTarget = $s.Mailbox; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
         'CopyMailboxToArchive' { Initialize-MbtGuiScenarioCopy -Ticks -Archive; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
         'CopyMailboxPlan' { Initialize-MbtGuiScenarioCopy -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcPlan'); Show-MbtGuiPage }
         'CopyMailboxPlanTicked' { Initialize-MbtGuiScenarioCopy -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcPlan'); Show-MbtGuiPage; $s.Confirmed = $true; $s.ConfirmKey = (Get-MbtGuiPlanKey); Show-MbtGuiPage }
@@ -388,8 +441,39 @@ function Set-MbtGuiScenario {
         'DoneCopyMailboxDecision' { Initialize-MbtGuiScenarioCopy -Ticks; Show-MbtGuiRunScenario 'mailcopy' (New-MbtGuiScenarioDone mailcopy decision) }
         'ExportPlanShared' { Initialize-MbtGuiScenarioExport -Ticks; $s.Shared = 'projects@contoso.com'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
         'Setup' { $s.Step = 0; Show-MbtGuiPage }
+        'SetupExpert' { $s.Step = 0; $s.PrimaryId = '{1A2B3C03-5E7F-4A1B-9C2D-3E4F5A6B7C8D}'; $s.PrimaryIdValue = 'MBX:1a2b3c03-5e7f-4a1b-9c2d-3e4f5a6b7c8d@contoso.onmicrosoft.com'; Show-MbtGuiPage; Expand-MbtGuiScenarioFold 'Expert'; $script:Gui.C.PageScroll.ScrollToEnd() }
+        'SetupExpertInvalid' { $s.Step = 0; $s.PrimaryId = '1a2b3c03-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; $s.PrimaryIdValue = 'MBX:1a2b3c03-5e7f-4a1b-9c2d-3e4f5a6b7c8d@contoso.onmicrosoft.com'; $s.ArchiveId = 'archive of adele'; Show-MbtGuiPage; Expand-MbtGuiScenarioFold 'Expert'; $script:Gui.C.PageScroll.ScrollToEnd() }
+        'StartApplication' { $s.Step = 1; $s.AuthMode = 'app'; $s.Sel = 'mailcopy'; Show-MbtGuiPage }
+        'StartJobsMe' { $s.Step = 1; $s.Sel = 'import'; $s.Mailbox = 'adele.vance@contoso.com'; $s.Account = $s.Mailbox; Show-MbtGuiPage }
+        'StartMeNoName' { $s.Step = 1; $s.Mailbox = ''; $s.Account = ''; $s.Sel = 'import'; Show-MbtGuiPage }
+        'ExportFromOtherMailboxApp' { Initialize-MbtGuiScenarioExport -Ticks -Shared projects@contoso.com -Application; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromOtherMailboxArchiveUnknown' { Initialize-MbtGuiScenarioExport -Ticks -Shared projects@contoso.com -Application -Archive Unknown; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromOtherMailboxDelegated' { Initialize-MbtGuiScenarioExport -Ticks -Shared projects@contoso.com; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromEverything' { Initialize-MbtGuiScenarioExport; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromEverythingTicksIgnored' { Initialize-MbtGuiScenarioExport -Ticks -Everything; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage; Update-MbtGuiBrowseTrays }
+        'ExportFromEverythingNoPlace' { Initialize-MbtGuiScenarioExport -Kinds None; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromEverythingArchive' { Initialize-MbtGuiScenarioExport -Kinds Archive; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportPlanEverything' { Initialize-MbtGuiScenarioExport; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
+        'ImportFromTicks' { Set-MbtGuiScenario 'ImportFrom'; $s.ImSelMode = 'ticks'; Set-MbtGuiScenarioTicks 'import' 'o-p1', 'o-bud'; Show-MbtGuiPage }
+        'ImportToMe' { Set-MbtGuiScenario 'ImportFrom'; Initialize-MbtGuiScenarioSignIn; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imTo'); $s.TgtLoc = 'Archive'; $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiPage }
+        'CopyMailboxFromBoth' { Initialize-MbtGuiScenarioCopy -Both; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'exFrom'); Show-MbtGuiPage }
+        'CopyMailboxToBoth' { Initialize-MbtGuiScenarioCopy -Both; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToBothReading' { Initialize-MbtGuiScenarioCopy -Both; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); $g.McTargetArchive = @{ Key = 'adele.vance@contoso.com'; State = 'Reading'; Id = ''; Detail = '' }; Show-MbtGuiPage }
+        'CopyMailboxToBothNoArchive' { Initialize-MbtGuiScenarioCopy -Both -TargetArchive None; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToBothArchiveUnknown' { Initialize-MbtGuiScenarioCopy -Both -TargetArchive Unknown; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToBothArchiveId' { Initialize-MbtGuiScenarioCopy -Both -TargetArchive Unknown; $s.McArchive['adele.vance@contoso.com'] = 'MBX:1a2b3c04-5e7f-4a1b-9c2d-3e4f5a6b7c8d@contoso.onmicrosoft.com'; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToBothPrimary' { Initialize-MbtGuiScenarioCopy -Both; $s.McLayout = 'Primary'; $s.TgtMode2 = 'same'; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToBothArchive' { Initialize-MbtGuiScenarioCopy -Both; $s.McLayout = 'Archive'; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToBothSame' { Initialize-MbtGuiScenarioCopy -Both; $s.McTarget = $s.Mailbox; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToOneNoArchive' { Initialize-MbtGuiScenarioCopy -Ticks -Archive -TargetArchive None; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxToOneArchiveUnknown' { Initialize-MbtGuiScenarioCopy -Ticks -Archive -TargetArchive Unknown; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcTo'); Show-MbtGuiPage }
+        'CopyMailboxPlanBoth' { Initialize-MbtGuiScenarioCopy -Both -Everything; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcPlan'); Show-MbtGuiPage; $s.Confirmed = $true; $s.ConfirmKey = (Get-MbtGuiPlanKey); Show-MbtGuiPage }
+        'CopyMailboxPlanBothTicks' { Initialize-MbtGuiScenarioCopy -Both; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'mcPlan'); Show-MbtGuiPage }
+        'RunCopyMailboxBoth' { Initialize-MbtGuiScenarioCopy -Both -Everything; Show-MbtGuiRunScenario 'mailcopy' (New-MbtGuiScenarioRun -Task mailcopy -Both) }
+        'DoneCopyMailboxBoth' { Initialize-MbtGuiScenarioCopy -Both -Everything; Show-MbtGuiRunScenario 'mailcopy' (New-MbtGuiScenarioDone mailcopy complete -Both) }
+        'DoneCopyMailboxBothPartial' { Initialize-MbtGuiScenarioCopy -Both -Everything; Show-MbtGuiRunScenario 'mailcopy' (New-MbtGuiScenarioDone mailcopy partial -Both) }
         'SetupApplication' { $s.Step = 0; $s.AuthMode = 'app'; $s.AppThumb = '5D41402ABC4B2A76B9719D911017C59228F3D1AE'; Show-MbtGuiPage }
-        'TaskWhat' { $s.Step = 1; $s.Sel = 'export'; Show-MbtGuiPage }
+        'TaskWhat' { $s.Step = 1; $s.Sel = 'export'; $s.AuthMode = 'app'; Show-MbtGuiPage }
         'ExportToMore' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exTo'); Show-MbtGuiPage; Expand-MbtGuiScenarioFold 'More options' }
         'ExportPlanExpert' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage; Expand-MbtGuiScenarioFold 'Expert mode'; $script:Gui.C.PageScroll.ScrollToEnd() }
         'ImportPlanTicked' { Set-MbtGuiScenario 'ImportPlan'; $s.Confirmed = $true; $s.ConfirmKey = (Get-MbtGuiPlanKey); Show-MbtGuiPage }
@@ -407,7 +491,7 @@ function Set-MbtGuiScenario {
         'ExportPlanOneFolder' { Initialize-MbtGuiScenarioExport -OneFolder; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
         'ExportPlanOneMessage' { Initialize-MbtGuiScenarioExport -OneMessage; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
         'ImportToOneLocation' { Set-MbtGuiScenario 'ImportFrom'; Initialize-MbtGuiScenarioSignIn -Kinds Primary; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imTo'); $s.TgtName = 'Imported archive-2019 2026-11-12'; Show-MbtGuiPage }
-        'ImportPlanOneFolder' { Set-MbtGuiScenario 'ImportTo'; Set-MbtGuiScenarioTicks 'import' 'o-p1'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imPlan'); Show-MbtGuiPage }
+        'ImportPlanOneFolder' { Set-MbtGuiScenario 'ImportTo'; $s.ImSelMode = 'ticks'; Set-MbtGuiScenarioTicks 'import' 'o-p1'; $s.Step = (Get-MbtGuiScenarioStep 'import' 'imPlan'); Show-MbtGuiPage }
         'RepairFromOneFinding' { $script:FakePstState = 'one'; $s.Task = 'repair'; $s.Sel = 'repair'; $s.Step = (Get-MbtGuiScenarioStep 'repair' 'rpFrom'); $s.RpPath = 'D:\PST\contoso-archive-2019.pst'; Start-MbtGuiPstCheck; $script:FakePstState = 'damaged' }
         'CopyPlanOneFolder' { Set-MbtGuiScenario 'Open'; Set-MbtGuiScenarioTicks 'open' 'o-p1'; $s.Task = 'copy'; $s.Sel = 'copy'; $s.Step = (Get-MbtGuiScenarioStep 'copy' 'cpPlan'); Initialize-MbtGuiCopy; $s.OutFolder = 'D:\PST'; $s.OutName = 'archive-2019-copy.pst'; Show-MbtGuiPage }
         'RunOneStep' { Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioOneRun -Task export) }

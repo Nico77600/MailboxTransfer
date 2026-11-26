@@ -226,7 +226,7 @@ foreach ($case in @(
         @{ Name = 'no location when the primary mailbox cannot be found either'; Found = @(); Resolve = $false; Expect = @() }
         @{ Name = 'the primary mailbox alone'; Found = @('Primary'); Resolve = $true; Expect = @('Primary mailbox') }
         @{ Name = 'the archive alone (the primary mailbox is found by its address)'; Found = @('Archive'); Resolve = $true; Expect = @('Primary mailbox', 'Archive') }
-        @{ Name = 'three locations, the auxiliary one is being filled'; Found = @('Primary', 'Archive', 'AuxArchive'); Resolve = $true; Expect = @('Primary mailbox', 'Archive', 'Auxiliary archive 1') })) {
+        @{ Name = 'three locations, the third one, a part of the archive, is being filled'; Found = @('Primary', 'Archive', 'AuxArchive'); Resolve = $true; Expect = @('Primary mailbox', 'Archive', 'Archive (more of it)') })) {
     Check "locations: an array, $($case.Name)" {
         $script:Stub.ResolveFails = -not $case.Resolve
         $script:Stub.Locations = @($case.Found | ForEach-Object { New-TestLocation $_ })
@@ -263,6 +263,19 @@ Check 'locations: the answer carries what is known about the archive, and an arc
     Assert-That ($script:Stub.LocationParams.ArchiveMailboxId -eq 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@contoso.onmicrosoft.com') "the typed id was not used: '$($script:Stub.LocationParams.ArchiveMailboxId)'"
     & $engine.Locations 'adele.vance@contoso.com' '' { param($l, $archive) $script:Got2 = $archive } { param($m) throw $m } 'projects@contoso.com' $null ''
     Assert-That ($null -eq $script:Got2) 'a shared mailbox has no archive status'
+}
+Check 'locations: the ids typed in Setup are used, and the archive id typed in Where to look wins over the one of Setup' {
+    $primary = 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@contoso.onmicrosoft.com'
+    $setupArchive = 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3302@contoso.onmicrosoft.com'
+    $typedArchive = 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3303@contoso.onmicrosoft.com'
+    $script:Stub.ArchiveState = 'Known'
+    $script:Stub.LocationParams = $null
+    & $engine.Locations 'adele.vance@contoso.com' '' { param($l, $archive) } { param($m) throw $m } '' $null $setupArchive $primary
+    Assert-That ($script:Stub.LocationParams.PrimaryMailboxId -eq $primary) "the primary id of Setup: '$($script:Stub.LocationParams.PrimaryMailboxId)'"
+    Assert-That ($script:Stub.LocationParams.ArchiveMailboxId -eq $setupArchive) "the archive id of Setup: '$($script:Stub.LocationParams.ArchiveMailboxId)'"
+    $script:Stub.LocationParams = $null
+    & $engine.Locations 'adele.vance@contoso.com' '' { param($l, $archive) } { param($m) throw $m } '' $null $typedArchive $primary
+    Assert-That ($script:Stub.LocationParams.ArchiveMailboxId -eq $typedArchive) 'the id typed in Where to look is the one of the call (the page passes it instead of the one of Setup)'
 }
 Check 'locations: the typed mailbox id is read in any case, with spaces; a text that is not an id is refused in plain words' {
     $ok = & $engine.ParseMailboxId '  3F2504E0-4F89-11D3-9A0C-0305E82C3301 ' '6BA7B810-9DAD-11D1-80B4-00C04FD430C8'

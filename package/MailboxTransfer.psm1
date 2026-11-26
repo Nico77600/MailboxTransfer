@@ -2525,7 +2525,7 @@ function Export-MbtMailbox {
         Write-MbtItem INFO ("move in progress: {0} item(s) listed on both sides of a move were recorded once, {1} record(s) of items not exported yet followed the item to the mailbox that lists it now" -f $r.ItemsDeduplicated, $r.ItemsRehomed)
     }
     if ($r.FoldersDeferred.Count -gt 0) {
-        Write-MbtItem WARN ("{0} folder(s) DEFERRED, not exported (the service cannot read their content yet: a folder being moved to an auxiliary archive{1}); run the same command again later:" -f $r.FoldersDeferred.Count, $(if ($r.FoldersDeferredFast -gt 0) { "; $($r.FoldersDeferredFast) of them asked once because the location kept refusing, -NotReadyTrip" } else { '' }))
+        Write-MbtItem WARN ("{0} folder(s) DEFERRED, not exported (the service cannot read their content yet: a folder that Microsoft is still moving inside the archive{1}); run the same command again later:" -f $r.FoldersDeferred.Count, $(if ($r.FoldersDeferredFast -gt 0) { "; $($r.FoldersDeferredFast) of them asked once because the location kept refusing, -NotReadyTrip" } else { '' }))
         foreach ($d in $r.FoldersDeferred | Select-Object -First 50) { Write-MbtDetail $d.ToString() }
         if ($r.FoldersDeferred.Count -gt 50) { Write-MbtDetail "... $($r.FoldersDeferred.Count - 50) more" }
     }
@@ -2730,14 +2730,27 @@ function Show-MbtCopyPlan {
     param(
         [Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$SourceKind, [string]$What = 'the whole mailbox',
         [Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$TargetKind, [string]$TargetRoot, [string]$MappingFile,
-        [Parameter(Mandatory)][string]$StorePath, [long]$Items, [double]$Bytes, [switch]$SizeUnknown, [switch]$AtMost, [string]$Period, [switch]$AppOnly, [string]$SignedIn
+        [Parameter(Mandatory)][string]$StorePath, [long]$Items, [double]$Bytes, [switch]$SizeUnknown, [switch]$AtMost, [string]$Period, [switch]$AppOnly, [string]$SignedIn,
+        # a copy of the Primary and the Archive: one object per part (SourceKind, TargetKind, Root); the write line is then one line for each part
+        [object[]]$Parts
     )
     Write-MbtStep 'The copy in one plan'
     $size = if ($SizeUnknown -and $Bytes -le 0) { 'size not announced' } else { (Format-MbtBytes $Bytes) + $(if ($SizeUnknown) { ' announced, some folders give no size' } else { ' announced' }) }
     Write-MbtItem INFO ("read:  the {0} mailbox {1}, {2}{3}: {4}{5} items, {6}" -f $SourceKind, $Source, $What, $(if ($Period) { " ($Period)" } else { '' }), $(if ($AtMost) { 'at most ' } else { '' }), (Format-MbtNumber $Items), $size)
     Write-MbtItem INFO ("keep:  the export store $StorePath stays on disk after the copy: it is the resume point and the proof of what was read, and it can be imported again or opened in the console")
     $where = if ($MappingFile) { "following the mapping file $MappingFile" } elseif ($TargetRoot) { "below the folder '$TargetRoot'" } else { 'with the same folder names as the source' }
-    Write-MbtItem INFO ("write: the {0} mailbox {1}, {2}. Folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice" -f $TargetKind, $Target, $where)
+    if (@($Parts).Count -gt 1) {
+        $number = 0
+        foreach ($part in $Parts) {
+            $number++
+            $partWhere = if ($part.Root) { "below the folder '$($part.Root)'" } elseif ($MappingFile) { "following the mapping file $MappingFile" } else { 'with the same folder names as the source' }
+            Write-MbtItem INFO ("write: part {0}, the {1} of the source into the {2} mailbox {3}, {4}" -f $number, $part.SourceKind, $part.TargetKind, $Target, $partWhere)
+        }
+        Write-MbtItem INFO 'the parts are written one after the other, the Primary part first; folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice'
+    }
+    else {
+        Write-MbtItem INFO ("write: the {0} mailbox {1}, {2}. Folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice" -f $TargetKind, $Target, $where)
+    }
     $seconds = Get-MbtCopyEstimate -Bytes $Bytes
     if ($seconds -gt 0) { Write-MbtItem INFO ("time:  {0}{1}, dominated by the import at the observed rate of about 4 GiB per hour per target mailbox (the reading before it is faster). The real time depends on the service" -f $(if ($SizeUnknown -or $AtMost) { 'at least ' } else { '' }), (Format-MbtCopyDuration $seconds)) }
     else { Write-MbtItem INFO 'time:  cannot be estimated (the service announces no size); the import goes at about 4 GiB per hour per target mailbox' }

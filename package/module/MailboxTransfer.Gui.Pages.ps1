@@ -72,8 +72,8 @@ function Get-MbtGuiBrowser {
     $g = $script:Gui
     if ($g.Browsers.ContainsKey($Use)) { return $g.Browsers[$Use] }
     switch ($Use) {
-        'export' { return (New-MbtGuiBrowser -Name 'export' -Title 'Browse' -Info 'Live view of the mailbox. Read only.' -TrayEmpty 'Nothing ticked yet.') }
-        'import' { return (New-MbtGuiBrowser -Name 'import' -Title 'What is inside' -Info 'Read only. The default is to import everything. Tick only if you want part of it.' -Badge 'Read only' -TrayEmpty 'Nothing ticked: **everything will be imported**.' -Kind source) }
+        'export' { return (New-MbtGuiBrowser -Name 'export' -Title 'Browse' -Info 'Live view of the mailbox. Read only.' -TrayEmpty 'Nothing ticked yet.' -ModeKey SelMode) }
+        'import' { return (New-MbtGuiBrowser -Name 'import' -Title 'What is inside' -Info 'Read only. The default is to import everything. Tick only if you want part of it.' -Badge 'Read only' -TrayEmpty 'Nothing ticked: **everything will be imported**.' -Kind source -ModeKey ImSelMode) }
         'open' { return (New-MbtGuiBrowser -Name 'open' -Title 'Browse' -Info 'Folders, messages and attachments, like a mailbox.' -Badge 'Read only' -TrayEmpty 'Nothing ticked yet.' -Kind source) }
     }
 }
@@ -91,13 +91,20 @@ function Place-MbtGuiBrowser {
 
 function Format-MbtGuiSelectionFooter {
     param($Selection, [bool]$Signed)
-    if ($Selection.Items -gt 0) { return ('**{0}** ticked in {1}, {2}' -f (Format-MbtGuiSelectionItems $Selection -WithNoun), (Format-MbtGuiQuantity $Selection.Folders 'folder'), (Format-MbtGuiSelectionSize $Selection)) }
-    if ($Signed) { return 'Tick what to keep, then continue.' }
+    if ($Selection.PSObject.Properties['Everything'] -and $Selection.Everything) { if ($Signed) { return (Format-MbtGuiEverythingText $Selection) } else { return 'Sign in first.' } }
+    if ($Selection.Items -gt 0) { return ('**{0} ticked:** {1}, {2}' -f (Format-MbtGuiQuantity $Selection.Folders 'folder'), (Format-MbtGuiSelectionItems $Selection -WithNoun), (Format-MbtGuiSelectionSize $Selection)) }
+    if ($Signed) { return 'Choose Everything, or tick what to keep, then continue.' }
     return 'Sign in first.'
 }
 
 function New-MbtGuiSelectionCard {
     param($Selection, $Period)
+    if ($Selection.PSObject.Properties['Everything'] -and $Selection.Everything) {
+        $places = if (@($Selection.Places).Count) { Get-MbtGuiPlacesText $Selection } else { 'no place is ticked in Where to look' }
+        $rows = @(@('What', 'Everything'), @('Where', $places))
+        if ($Selection.Items -gt 0) { $rows += , @('Counted so far', "$(Format-MbtGuiQuantity $Selection.Items 'item'), $(Format-MbtGuiSelectionSize $Selection)") }
+        return (New-GuiCard -Title 'Your selection' -Content @((New-GuiFacts $rows), (New-GuiText 'The whole tree of each place. The numbers grow as folders are opened; the check on the Verify page counts them all.' 'Hint')))
+    }
     if ($Selection.Items -gt 0) {
         $atMost = [bool]($Period -and $Period.Active)
         $body = New-GuiFacts @(@('Items', (Format-MbtGuiSelectionItems $Selection -AtMost:$atMost)), @('Size', ($(if ($atMost) { 'at most ' } else { '' }) + (Format-MbtGuiSelectionSize $Selection))), @('Folders', [string]$Selection.Folders))
@@ -109,9 +116,38 @@ function New-MbtGuiSelectionCard {
 
 #region Start ----------------------------------------------------------------------------------------
 
+function Get-MbtGuiTaskKeys {
+    <# The tasks the What page offers: the ones of the sign-in chosen in Setup. A delegated sign-in (Me) writes only into its own mailbox, so "Copy to another mailbox" is left out; every task on a PST or a store is there in every mode. #>
+    $s = $script:Gui.S
+    return @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') -and -not ($_ -eq 'mailcopy' -and $s.AuthMode -ne 'app') })
+}
+
+function Get-MbtGuiTaskView {
+    <# The texts of a task for the sign-in chosen in Setup: as Me they name the mailbox that is signed in, never "any mailbox"; as the application they are the general ones. #>
+    param([Parameter(Mandatory)][string]$Key)
+    $s = $script:Gui.S
+    $t = $script:Tasks[$Key]
+    $view = @{ Title = $t.Title; Eyebrow = $t.Eyebrow; Icon = $t.Icon; Text = $t.Text; Will = @($t.Will); Safe = $t.Safe }
+    if ($s.AuthMode -eq 'app') { return $view }
+    $who = if ($s.Account) { [string]$s.Account } elseif ([string]$s.Mailbox -match '@') { [string]$s.Mailbox.Trim() } else { '' }
+    $mine = if ($who) { "your mailbox ($who)" } else { 'your mailbox' }
+    switch ($Key) {
+        'export' {
+            $view.Text = "Look inside $mine, or a mailbox you have full access to, tick what to keep, and save it on this computer as PST files or as an export store. Nothing is changed in the mailbox."
+            $view.Will = @('Sign in and pick the mailbox: your mailbox, or one you have full access to.', 'Browse it like a mailbox and tick what to keep, or take everything.', 'Choose where to save it.', 'Read the checks and the plan, then press Start.')
+        }
+        'import' {
+            $view.Text = "Put a PST file or an export into $mine, in its Primary mailbox or its Archive. Items are added. Nothing is deleted and nothing is overwritten."
+            $view.Will = @('Pick the PST file or the export.', "Choose where in $mine the items go: Primary or Archive.", 'Read the checks, tick the box that says what will be written, press Start.', 'Wait. A big import takes hours; you can stop and continue.')
+            $view.Safe = "This task adds items to $mine. It never deletes or overwrites."
+        }
+    }
+    return $view
+}
+
 function New-MbtGuiTaskCard {
     param([string]$Key, [bool]$Selected)
-    $t = $script:Tasks[$Key]
+    $t = Get-MbtGuiTaskView -Key $Key
     $btn = [Windows.Controls.Primitives.ToggleButton]::new()
     $btn.SetResourceReference([Windows.FrameworkElement]::StyleProperty, 'MbtTaskCard')
     $btn.IsChecked = $Selected
@@ -157,6 +193,11 @@ function New-MbtGuiJobRow {
     if ($why) { $txt.Children.Add((New-GuiText $why 'Small')) | Out-Null }
     $progress = [string](Get-MbtGuiProp $Job 'Sub2' '')
     if ($progress) { $txt.Children.Add((New-GuiText $progress 'Small')) | Out-Null }
+    if ((Get-MbtGuiProp $Job 'Task' '') -eq 'mailcopy' -and $script:Gui.S.AuthMode -ne 'app') {
+        $needs = New-GuiText 'This job needs the application sign-in: copying to another mailbox is not offered to a delegated sign-in. Choose the application in Setup, then continue it.' 'Small'
+        Set-MbtGuiResource $needs ([Windows.Controls.TextBlock]::ForegroundProperty) 'MbtCautionInk'
+        $txt.Children.Add($needs) | Out-Null
+    }
     $bar = [Windows.Controls.WrapPanel]::new(); $bar.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
     if ($isBatch) {
         $bar.Children.Add((New-GuiButton -Text ([string](Get-MbtGuiProp $Job 'Button' 'Open the report')) -Small -OnClick { Resume-MbtGuiJob $Job }.GetNewClosure())) | Out-Null
@@ -261,12 +302,41 @@ function New-MbtGuiValueLine {
     return (New-GuiStack @((New-GuiText $Label 'Label'), $line))
 }
 
+function Get-MbtGuiSetupId {
+    <# A mailbox id typed in Setup (a bare guid, or MBX:<guid>@<tenant>, any case, spaces around): Ok, the id in its one form, and the sentence that says what is wrong. An empty box is fine (the id is then found by itself). #>
+    param([string]$Text)
+    $t = ([string]$Text).Trim()
+    if (-not $t) { return [pscustomobject]@{ Ok = $true; Id = ''; Problem = '' } }
+    $tenant = [string](Get-MbtGuiProp (Get-MbtGuiEffectiveSignIn -S $script:Gui.S) 'Tenant' '')
+    $parsed = & $script:Gui.Engine.ParseMailboxId $t $tenant
+    return [pscustomobject]@{ Ok = [bool]$parsed.Ok; Id = [string]$parsed.Id; Problem = [string]$parsed.Problem }
+}
+
+function New-MbtGuiSetupIdsFold {
+    <# Expert: the Primary and the Archive mailbox id of the account that signs in, as the Tenant section of the configuration gives them (what is typed here wins over the file, for this run only). #>
+    $g = $script:Gui; $s = $g.S
+    $holder = [Windows.Controls.ContentControl]::new()
+    $show = {
+        $problems = @()
+        foreach ($pair in @(@('Primary mailbox id', $s.PrimaryId), @('Archive mailbox id', $s.ArchiveId))) { $r = Get-MbtGuiSetupId $pair[1]; if (-not $r.Ok) { $problems += "$($pair[0]): $($r.Problem)" } }
+        $holder.Content = $(if ($problems.Count) { New-GuiMessage -Kind bad -Icon warn -Text ($problems -join ' ') } else { $null })
+    }.GetNewClosure()
+    $primary = New-GuiTextBox -Text ([string]$s.PrimaryId) -Automation 'Primary mailbox id' -OnChange { param($x, $e) $s.PrimaryId = $x.Text; $r = Get-MbtGuiSetupId $x.Text; $s.PrimaryIdValue = $(if ($r.Ok) { $r.Id } else { '' }); $s.PlanState = 'idle'; & $show }.GetNewClosure()
+    $archive = New-GuiTextBox -Text ([string]$s.ArchiveId) -Automation 'Archive mailbox id' -OnChange { param($x, $e) $s.ArchiveId = $x.Text; $r = Get-MbtGuiSetupId $x.Text; $s.ArchiveIdValue = $(if ($r.Ok) { $r.Id } else { '' }); $s.PlanState = 'idle'; & $show }.GetNewClosure()
+    & $show
+    $items = @(
+        (New-GuiText 'Optional. The ids of the mailboxes of the account that signs in, when Microsoft cannot give them (the permission **User.Read.All** is missing). A bare guid or **MBX:<guid>@<tenant>**, in any case. They are used like PrimaryMailboxId and ArchiveMailboxId of the Tenant section of the configuration file, and win over it. They apply to this run only; nothing is saved.' 'Hint'),
+        (New-GuiText 'Primary mailbox id' 'Label'), $primary, (New-GuiText 'Archive mailbox id' 'Label'), $archive, $holder,
+        (New-GuiText 'An administrator finds them in Exchange Online PowerShell with **Get-MailboxLocation -User <address> | Select MailboxGuid, MailboxLocationType**.' 'Hint'))
+    return (New-GuiMore -Summary 'Expert' -Content $items -Open:([bool]($s.PrimaryId -or $s.ArchiveId)))
+}
+
 function New-MbtGuiSigninSetupCard {
     <# Sign in as Me or the application; the tenant, the application and the certificate come from the configuration file and can be changed for this run only. #>
     $g = $script:Gui; $s = $g.S
     $appOn = Get-MbtGuiCapability 'AppOnly'
     $app = ($s.AuthMode -eq 'app') -and $appOn
-    $switchTo = { param($mode) if ($s.AuthMode -ne $mode) { $s.AuthMode = $mode; $s.AuthEdit = $false; if ($s.Signed) { & $g.Engine.SignOut; $s.Signed = $false; $s.Locations = @(); $s.ArchiveState = $null; $s.ArchiveIds = @{}; $s.ArchiveText = ''; $s.ArchiveProblem = ''; $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() } }; $s.SignInError = ''; Show-MbtGuiPage } }.GetNewClosure()
+    $switchTo = { param($mode) if ($s.AuthMode -ne $mode) { $s.AuthMode = $mode; $s.AuthEdit = $false; if ($mode -ne 'app') { $s.ImShared = '' }; if ($s.Signed) { & $g.Engine.SignOut; $s.Signed = $false; $s.Locations = @(); $s.ArchiveState = $null; $s.ArchiveIds = @{}; $s.ArchiveText = ''; $s.ArchiveProblem = ''; $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() } }; $s.SignInError = ''; Show-MbtGuiPage } }.GetNewClosure()
     $content = [Collections.Generic.List[object]]::new()
     $content.Add((New-GuiText 'Sign in as' 'Label'))
     $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'Me (delegated, recommended)' -Hint 'A Microsoft sign-in window opens over the console. You see the mailboxes you are allowed to open.' -Checked (-not $app) -Margin '0,4,0,0' -OnChange { & $switchTo 'user' }.GetNewClosure()))
@@ -301,6 +371,7 @@ function New-MbtGuiSigninSetupCard {
     $inner.Add((New-GuiText $(if ($app) { 'Read from the configuration file. The certificate is looked up on this PC (your certificates, then the computer ones). A value you change applies to this run only; nothing is saved.' } else { 'Read from the configuration file. A value you change applies to this run only; nothing is saved.' }) 'Hint'))
     $box.Child = (New-GuiStack $inner.ToArray())
     $content.Add($box)
+    if (-not $app) { $content.Add((New-MbtGuiSetupIdsFold)) }
     return (New-GuiCard -Title 'Sign-in' -Right (New-GuiPill $(if ($app) { 'Application' } else { 'You' }) '') -Content $content.ToArray())
 }
 
@@ -343,8 +414,10 @@ function Build-MbtGuiSetupPage {
 function Build-MbtGuiStartPage {
     $g = $script:Gui; $s = $g.S; $engine = $g.Engine
     $sel = $s.Sel
-    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') }).Count
-    foreach ($k in @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })) {
+    if ($sel -eq 'mailcopy' -and $s.AuthMode -ne 'app') { $s.Sel = $null; $sel = $null }
+    $keys = @(Get-MbtGuiTaskKeys)
+    $grid = [Windows.Controls.Primitives.UniformGrid]::new(); $grid.Columns = $keys.Count
+    foreach ($k in $keys) {
         $card = New-MbtGuiTaskCard -Key $k -Selected ($sel -eq $k)
         $card.Margin = [Windows.Thickness]::new(0, 0, $(if ($k -eq 'open') { 0 } else { 12 }), 0)
         Add-MbtGuiHandler $card 'Click' { param($sender, $e) $script:Gui.S.Sel = [string]$sender.Tag; Show-MbtGuiPage }
@@ -352,7 +425,7 @@ function Build-MbtGuiStartPage {
     }
     $left = New-GuiCard -Title 'Continue a job' -Info ('Found in your work folder ' + $s.WorkFolder) -Right (New-GuiButton -Text 'All jobs' -Small -Icon doc -OnClick { Open-MbtGuiJobOverview }) -Content @((New-MbtGuiJobList))
     $right = if ($sel) {
-        $t = $script:Tasks[$sel]
+        $t = Get-MbtGuiTaskView -Key $sel
         $ol = [Windows.Controls.StackPanel]::new()
         $i = 1
         foreach ($w in $t.Will) { $row = New-GuiText ("$i.  $w") 'Body'; $row.Margin = [Windows.Thickness]::new(0, 0, 0, 4); $ol.Children.Add($row) | Out-Null; $i++ }
@@ -361,6 +434,7 @@ function Build-MbtGuiStartPage {
     $cols = New-GuiGrid -Children @($left, $right) -Widths @('1.4*', '1*')
     $stack = New-GuiStack @((New-GuiText 'What do you want to do?' 'H2'), $grid, (New-GuiStack @($cols) -Margin '0,12,0,0'))
     $footer = if ($sel) { "You chose **$($script:Tasks[$sel].Title)**." } else { 'Pick what you want to do. The console guides you from there.' }
+    if ($s.AuthMode -ne 'app') { $footer += ' Signed in as you (Me): copying to another mailbox needs the application sign-in (Setup).' }
     Set-MbtGuiActions -Footer $footer -Label 'Continue' -Enabled ([bool]$sel) -OnClick {
         $s = $script:Gui.S
         $s.Task = $s.Sel

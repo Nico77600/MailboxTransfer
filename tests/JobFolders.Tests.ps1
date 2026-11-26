@@ -394,6 +394,20 @@ Describe 'What Continue does, for each mode' {
         $old = Get-MbtJobResumeText -Job (Get-TestJobOf $script:W 'c-old')
         $old.From | Should -BeLike 'It resumes the part where it stopped*'
     }
+    It 'a copy of the Primary and the Archive counts 14 steps and says which part the step belongs to' {
+        $null = New-TestJob $script:W 'b-first' @{ mode = 'Copy'; task = 'mailcopy'; step = @{ id = 'send'; title = 'Send the items (Primary part)'; index = 7; of = 14 } }
+        $null = New-TestJob $script:W 'b-second' @{ mode = 'Copy'; task = 'mailcopy'; step = @{ id = 'send-2'; title = 'Send the items (Archive part)'; index = 12; of = 14 } }
+        (Get-MbtJobDescription -Job (Get-TestJobOf $script:W 'b-first')).Progress | Should -Be 'Step 7 of 14, Send the items (Primary part) (adding to the target mailbox)'
+        (Get-MbtJobDescription -Job (Get-TestJobOf $script:W 'b-second')).Progress | Should -Be 'Step 12 of 14, Send the items (Archive part) (adding to the target mailbox, part 2)'
+        $text = Get-MbtJobResumeText -Job (Get-TestJobOf $script:W 'b-second')
+        $text.From | Should -BeLike 'It resumes the second part, adding the items to the target mailbox: from step 5 of 14, Verify the export store.*'
+        $text.Already | Should -Contain 'A part of the copy that is complete (the Primary part, or the Archive part) is not done again: the next run continues with the part that is not.'
+    }
+    It 'the console takes a copy of both places of the command line with its layout and the folder of each part' {
+        $c = New-MbtCliJob -WorkFolder $script:W -Mode Copy -Task mailcopy -Parameter @{ Mode = 'Copy'; UserPrincipalName = 'alex@contoso.com'; Mailbox = 'All'; TargetLayout = 'Archive'; TargetRoot = 'A'; TargetArchiveRoot = 'B'; AppOnly = [switch]$true; TargetMailboxId = 'adele@contoso.com' } -WorkingDirectory $TestDrive -ScriptPath 'x' -Title 't'
+        $r = Read-MbtJobRequest -Folder $c.Folder
+        $r.McFromKind | Should -Be 'All'; $r.McLayout | Should -Be 'Archive'; $r.TgtName | Should -Be 'A'; $r.TgtName2 | Should -Be 'B'; $r.TgtMode2 | Should -Be 'new'
+    }
     It 'says why a job cannot be continued: it runs, it belongs to a batch, it has no request, a command-line job needs its folder or its secret' {
         $folder = Join-Path $TestDrive 'ran-here'
         $null = New-Item -ItemType Directory -Force -Path $folder

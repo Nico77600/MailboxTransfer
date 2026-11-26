@@ -68,6 +68,28 @@ BeforeAll {
 }
 
 Describe 'The HTML report of a job' {
+    It 'a copy of the Primary and the Archive shows the steps of both parts, with the part in their titles, in the chronology and in the data' {
+        $dir = New-JobFolder 'both-parts'
+        Write-Status $dir @{ jobId = 'mailcopy-1a2b'; task = 'mailcopy'; title = 'Copy - alex@contoso.com to adele@contoso.com'; mode = 'Copy'; state = 'resumable' }
+        $steps = @(@{ id = 'check'; title = 'Verify the export store (Primary part)' }, @{ id = 'send'; title = 'Send the items (Primary part)' }, @{ id = 'check-2'; title = 'Verify the export store (Archive part)' }, @{ id = 'send-2'; title = 'Send the items (Archive part)' })
+        Write-Events $dir @(
+            @{ at = 0; e = 'plan'; job = 'mailcopy-1a2b'; task = 'mailcopy'; mode = 'Copy'; steps = $steps }
+            @{ at = 1; e = 'step'; id = 'check'; state = 'done' }
+            @{ at = 2; e = 'step'; id = 'send'; state = 'done'; done = 10; total = 10 }
+            @{ at = 3; e = 'step'; id = 'check-2'; state = 'done' }
+            @{ at = 4; e = 'step'; id = 'send-2'; state = 'running'; done = 3; total = 7 }
+            @{ at = 5; e = 'object'; step = 'send-2'; key = 'Archive/Old'; state = 'running'; done = 3; total = 7 }
+            @{ at = 6; e = 'result'; exit = 2; complete = $false; counts = @{ done = 13; total = 17; failed = 0 }; next = 'continue'; reason = 'stopped' })
+        $html = Get-Content -LiteralPath (Write-MbtJobHtmlReport -Folder $dir) -Raw
+        $html | Should -Match 'Send the items \(Primary part\) done'
+        $html | Should -Match 'Verify the export store \(Archive part\) done'
+        $html | Should -Match 'Send the items \(Archive part\) started'
+        $data = Get-ReportData $html
+        @($data.steps).Count | Should -Be 4
+        (@($data.steps | Where-Object id -EQ 'send-2')[0]).state | Should -Be 'running'
+        (@($data.steps | Where-Object id -EQ 'check-2')[0]).title | Should -Be 'Verify the export store (Archive part)'
+    }
+
     It 'is written in the job folder and says the task, the result and the numbers' {
         $dir = New-StoppedImport 'full'
         $path = Write-MbtJobHtmlReport -Folder $dir

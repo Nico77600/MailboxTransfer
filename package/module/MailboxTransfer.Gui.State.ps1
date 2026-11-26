@@ -62,6 +62,8 @@ function New-MbtGuiState {
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
         Conc = 4; Retry = 2; Tries = 3; Reconcile = 5; Awake = $false; WorkFolder = $WorkFolder; Changed = @{}
         ImSrc = 'store'; ImPath = ''; ImInfo = $null; ImChecking = $false; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = ''; Mapping = ''; McTarget = ''; McFromKind = ''; Confirmed = $false; ConfirmKey = ''
+        SelMode = 'all'; ImSelMode = 'all'; EvPlaces = @(); McLayout = 'Mirror'; TgtMode2 = 'new'; TgtName2 = ''; McArchive = @{}; McArchiveText = ''; McArchiveProblem = ''
+        PrimaryId = ''; ArchiveId = ''; PrimaryIdValue = ''; ArchiveIdValue = ''
         SetupReturn = -1; AuthEdit = $false; ConfigPath = ''
         RpPath = ''; RpCheck = $null; RpChecking = $false; RpLevel = 'Automatic'; RpDest = ''; RpKeep = $false
         OpSrc = 'pst'; OpPath = ''; OpInfo = $null
@@ -237,7 +239,9 @@ function Update-MbtGuiStepper {
         $panel.Children.Add($cell) | Out-Null
     }
     $ctx = if ($s.Task) { $script:Tasks[$s.Task].Context } elseif ($screen -eq 'setup') { 'Setup' } else { 'Choose a task' }
-    if ($s.Task -in 'export', 'import', 'mailcopy' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $s.Mailbox }
+    # the mailbox the task works on: the one that is open (a shared or another user's mailbox, or the target of an import), else the signed-in one
+    $opened = switch ($s.Task) { 'export' { $s.Shared } 'import' { $s.ImShared } default { '' } }
+    if ($s.Task -in 'export', 'import', 'mailcopy' -and $s.Signed) { $ctx += ' ' + [char]0x00B7 + ' ' + $(if ($opened) { $opened } else { $s.Mailbox }) }
     $g.C.StepperContext.Text = $ctx
 }
 

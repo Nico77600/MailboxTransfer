@@ -80,7 +80,7 @@ Describe 'The CSV file of a batch of copies' {
         $text = "SourceAddress,SourceLocation,TargetAddress,TargetLocation,TargetRoot`r`n" + (@(
                 ',Primary,adele@contoso.com,Primary,R',
                 'not-an-address,Primary,adele@contoso.com,Primary,R',
-                'alex@contoso.com,Both,adele@contoso.com,Primary,R',
+                'alex@contoso.com,Neither,adele@contoso.com,Primary,R',
                 'alex@contoso.com,Primary,,Primary,R',
                 'alex@contoso.com,Primary,adele,Primary,R',
                 'alex@contoso.com,Primary,adele@contoso.com,Both,R',
@@ -94,7 +94,7 @@ Describe 'The CSV file of a batch of copies' {
         $t = $r.Problems -join "`n"
         $t | Should -Match 'line 2: SourceAddress is empty'
         $t | Should -Match "line 3: 'not-an-address' is not a mailbox address"
-        $t | Should -Match "line 4: SourceLocation 'Both' is not Primary or Archive \(a copy reads one mailbox location"
+        $t | Should -Match "line 4: SourceLocation 'Neither' is not Primary, Archive or All"
         $t | Should -Match 'line 5: TargetAddress is empty'
         $t | Should -Match "line 6: 'adele' is not a mailbox address"
         $t | Should -Match "line 7: TargetLocation 'Both' is not Primary or Archive"
@@ -105,7 +105,7 @@ Describe 'The CSV file of a batch of copies' {
     }
     It 'reports a column it does not know, a column twice, a missing required column, an empty file and a missing file' {
         $r = Read-MbtCopyBatchCsv -Path (New-Csv 'copy-col.csv' "SourceAddress,TargetAddress,Target,TargetAddress`r`nalex@contoso.com,adele@contoso.com,R,x`r`n")
-        ($r.Problems -join "`n") | Should -Match 'The column Target is not known \(the columns are SourceAddress, SourceLocation, TargetAddress, TargetLocation, TargetRoot, SelectionFile, Notes\)'
+        ($r.Problems -join "`n") | Should -Match 'The column Target is not known \(the columns are SourceAddress, SourceLocation, TargetAddress, TargetLocation, TargetLayout, TargetRoot, TargetArchiveRoot, SelectionFile, Notes\)'
         ($r.Problems -join "`n") | Should -Match 'The column TargetAddress is there twice'
         (Read-MbtCopyBatchCsv -Path (New-Csv 'copy-noto.csv' "SourceAddress,TargetLocation`r`nalex@contoso.com,Primary`r`n")).Problems | Should -Match 'SourceAddress and TargetAddress are required \(found: SourceAddress, TargetLocation\)'
         (Read-MbtCopyBatchCsv -Path (New-Csv 'copy-empty.csv' '')).Problems | Should -Match 'The CSV file is empty'
@@ -137,14 +137,14 @@ Describe 'The CSV file of a batch of copies' {
 { "Version": 1, "Kind": "Archive", "MailboxId": "MBX:11111111-2222-3333-4444-5555555555aa@1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d", "Entries": [ { "FolderId": "F1", "FolderPath": "Inbox", "IncludeSubfolders": true } ] }
 '@
         [IO.File]::WriteAllText((Join-Path $dir 'sel-one.json'), $one)
-        $two = "{ `"Version`": 1, `"Selections`": [ $($one.Trim()), $($one.Trim() -replace 'Archive', 'Primary' -replace '5555555555aa', '555555555555') ] }"
+        $two = "{ `"Version`": 1, `"Selections`": [ $($one.Trim()), $($one.Trim() -replace 'Archive', 'Primary' -replace '5555555555aa', '555555555555'), $($one.Trim() -replace 'Archive', 'AuxArchive' -replace '5555555555aa', '555555555556') ] }"
         [IO.File]::WriteAllText((Join-Path $dir 'sel-two.json'), $two)
         $r = Read-MbtCopyBatchCsv -Path (New-Csv 'copy-sel.csv' "SourceAddress,TargetAddress,SelectionFile,SourceLocation`r`nalex@contoso.com,adele@contoso.com,sel-one.json,`r`nalex@contoso.com,alina@contoso.com,sel-two.json,`r`nalex@contoso.com,anna@contoso.com,sel-one.json,Primary`r`nalex@contoso.com,ana@contoso.com,nowhere.json,`r`n")
         $r.Rows.Count | Should -Be 1
         $r.Rows[0].SourceLocation | Should -Be 'Archive' -Because 'the file says which location is read'
         $r.Rows[0].SelectionFile | Should -Be (Join-Path $dir 'sel-one.json')
         $t = $r.Problems -join "`n"
-        $t | Should -Match 'line 3: the SelectionFile names 2 mailbox locations: a copy takes one'
+        $t | Should -Match 'line 3: the SelectionFile names 3 mailbox locations'
         $t | Should -Match 'line 4: SourceLocation Primary does not match the SelectionFile, which is of the Archive mailbox'
         $t | Should -Match 'line 5: the SelectionFile was not found'
     }
@@ -355,7 +355,7 @@ Describe 'The command line of a batch of copies' {
             $x = Invoke-EntryChild (@('-Mode', 'Copy', '-MailboxCsv', $csv, '-WorkFolder', $w) + $single)
             $x.Text | Should -Match "$([regex]::Escape($single[0])) is for one mailbox"
         }
-        (Invoke-EntryChild @('-Mode', 'Copy', '-MailboxCsv', $csv, '-WorkFolder', $w, '-Mailbox', 'All')).Text | Should -Match 'is not for a batch'
+        (Invoke-EntryChild @('-Mode', 'Copy', '-MailboxCsv', $csv, '-WorkFolder', $w, '-Mailbox', 'AuxArchive')).Text | Should -Match 'is not for a batch'
     }
     It 'a delegated sign-in is checked against the file: a target that is not the signed-in account stops the batch before anything starts' {
         $w = New-Work 'cli-deleg'
@@ -363,5 +363,111 @@ Describe 'The command line of a batch of copies' {
         $r = Invoke-EntryChild @('-Mode', 'Copy', '-MailboxCsv', $csv, '-BatchName', 'Deleg', '-WorkFolder', $w, '-UserPrincipalName', 'adele@contoso.com', '-TenantId', '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d', '-ClientId', '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d', '-WhatIf')
         $r.Exit | Should -Be 1
         $r.Text | Should -Match 'alina@contoso.com is not the signed-in account \(adele@contoso.com\)'
+    }
+}
+
+Describe 'A line that copies the Primary and the Archive together' {
+    BeforeAll {
+        $script:BothJob = [pscustomobject]@{ Id = 'mailcopy-ab12'; Folder = 'D:\w\jobs\x-mailcopy-ab12'; EventsPath = 'D:\w\jobs\x-mailcopy-ab12\events.jsonl'; StopPath = 'D:\w\jobs\x-mailcopy-ab12\stop.request' }
+        function Read-BothCsv([string]$Name, [string]$Text, [hashtable]$More = @{}) {
+            $csv = New-Csv "$Name.csv" $Text
+            $a = @{ Path = $csv; StoreBase = (Join-Path $TestDrive 'stores-both') }
+            foreach ($k in $More.Keys) { $a[$k] = $More[$k] }
+            return (Read-MbtCopyBatchCsv @a)
+        }
+    }
+    It 'reads SourceLocation All, the layout, the two folders and the new columns; a file of an earlier version is read as before' {
+        $r = Read-BothCsv 'both1' ("SourceAddress,SourceLocation,TargetAddress,TargetLocation,TargetLayout,TargetRoot,TargetArchiveRoot`r`n" +
+            "alex@contoso.com,All,adele@contoso.com,,mirror,From Alex,Archive of Alex`r`n" +
+            "alex@contoso.com,archive,adele@contoso.com,Primary,,Old,`r`n" +
+            "bea@contoso.com,all,adele@contoso.com,,,Bea,")
+        $r.Problems | Should -BeNullOrEmpty
+        $r.Rows.Count | Should -Be 3
+        $r.Rows[0].SourceLocation | Should -Be 'All'
+        $r.Rows[0].TargetLayout | Should -Be 'Mirror'
+        $r.Rows[0].TargetLocation | Should -Be 'Primary + Archive'
+        $r.Rows[0].TargetRoot | Should -Be 'From Alex'
+        $r.Rows[0].TargetArchiveRoot | Should -Be 'Archive of Alex'
+        $r.Rows[1].SourceLocation | Should -Be 'Archive'
+        $r.Rows[1].TargetLayout | Should -Be ''
+        $r.Rows[2].TargetLayout | Should -Be 'Mirror' -Because 'Mirror unless the line or the command says otherwise'
+        $r.Rows[2].TargetArchiveRoot | Should -Be 'Bea' -Because 'the Archive part goes below TargetRoot when the line has no folder for it'
+        $old = Read-BothCsv 'both-old' "SourceAddress,TargetAddress`r`nalex@contoso.com,adele@contoso.com"
+        $old.Problems | Should -BeNullOrEmpty
+        $old.Rows[0].SourceLocation | Should -Be 'Primary'
+        $old.Rows[0].TargetLayout | Should -Be ''
+    }
+    It 'the command gives the default layout and the default folder of the Archive part to the lines that leave them empty' {
+        $r = Read-BothCsv 'both2' "SourceAddress,SourceLocation,TargetAddress`r`nalex@contoso.com,All,adele@contoso.com" @{ DefaultTargetLayout = 'Primary'; DefaultTargetRoot = 'Moved'; DefaultTargetArchiveRoot = 'Moved archive' }
+        $r.Problems | Should -BeNullOrEmpty
+        $r.Rows[0].TargetLayout | Should -Be 'Primary'
+        $r.Rows[0].TargetLocation | Should -Be 'Primary'
+        $r.Rows[0].TargetArchiveRoot | Should -Be 'Moved archive'
+        $all = Read-BothCsv 'both3' "SourceAddress,TargetAddress`r`nalex@contoso.com,adele@contoso.com" @{ DefaultSourceLocation = 'All' }
+        $all.Rows[0].SourceLocation | Should -Be 'All'
+    }
+    It 'says every problem of a line that copies both places, with its line' {
+        $r = Read-BothCsv 'both4' ("SourceAddress,SourceLocation,TargetAddress,TargetLocation,TargetLayout,TargetArchiveRoot`r`n" +
+            "alex@contoso.com,All,adele@contoso.com,Archive,,`r`n" +
+            "alex@contoso.com,Primary,adele@contoso.com,Primary,Mirror,`r`n" +
+            "alex@contoso.com,Primary,adele@contoso.com,Primary,,Old`r`n" +
+            "alex@contoso.com,All,adele@contoso.com,,Both,`r`n" +
+            "alex@contoso.com,All,alex@contoso.com,,Mirror,`r`n" +
+            "alex@contoso.com,All,alex@contoso.com,,Archive,")
+        $text = $r.Problems -join "`n"
+        $text | Should -Match 'line 2: TargetLocation ''Archive'' is for a line that copies one place'
+        $text | Should -Match 'line 3: TargetLayout is for a line that copies both places'
+        $text | Should -Match 'line 4: TargetArchiveRoot is for a line that copies both places'
+        $text | Should -Match 'line 5: TargetLayout ''Both'' is not Mirror, Primary or Archive'
+        $text | Should -Match 'line 6: the source and the target are the same mailbox location'
+        $text | Should -Match 'line 7: the source and the target are the same mailbox location'
+        $r.Rows.Count | Should -Be 0
+    }
+    It 'the same copy twice is told, with another layout it is another copy; a delegated sign-in cannot read the archive of another mailbox' {
+        $r = Read-BothCsv 'both5' ("SourceAddress,SourceLocation,TargetAddress,TargetLayout`r`n" + "alex@contoso.com,All,adele@contoso.com,Mirror`r`n" + "ALEX@contoso.com,all,Adele@contoso.com,mirror`r`n" + "alex@contoso.com,All,adele@contoso.com,Primary")
+        ($r.Problems -join "`n") | Should -Match 'line 3: alex@contoso.com \(All\) is already copied into'
+        $r.Rows.Count | Should -Be 2
+        $d = Read-BothCsv 'both6' "SourceAddress,SourceLocation,TargetAddress`r`nalex@contoso.com,All,adele@contoso.com" @{ SignedInUser = 'adele@contoso.com' }
+        ($d.Problems -join "`n") | Should -Match 'only its primary mailbox can be read'
+    }
+    It 'the arguments are the ones of a copy of both places: -Mailbox All, the layout and the folder of each part, no -TargetMailbox' {
+        $row = [ordered]@{ upn = 'adele@contoso.com'; location = 'Primary + Archive'; sourceUpn = 'alex@contoso.com'; sourceLocation = 'All'; targetRoot = 'From Alex'; layout = 'Mirror'; archiveRoot = 'Archive of Alex'; selection = ''; store = 'D:\w\stores\s1' }
+        $a = @(Get-MbtBatchChildArgument -Row $row -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{} } -Job $script:BothJob -BatchId 'B1' -Mode Copy)
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a[($a.IndexOf('-TargetLayout') + 1)] | Should -Be 'Mirror'
+        $a[($a.IndexOf('-TargetRoot') + 1)] | Should -Be 'From Alex'
+        $a[($a.IndexOf('-TargetArchiveRoot') + 1)] | Should -Be 'Archive of Alex'
+        $a | Should -Not -Contain '-TargetMailbox'
+        $declared = (Get-Command $script:Entry).Parameters.Keys
+        foreach ($t in $a) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because "$t" } }
+        $row.Remove('archiveRoot'); $row.layout = 'Archive'
+        $b = @(Get-MbtBatchChildArgument -Row $row -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{} } -Job $script:BothJob -BatchId 'B1' -Mode Copy)
+        $b[($b.IndexOf('-TargetLayout') + 1)] | Should -Be 'Archive'
+        $b | Should -Not -Contain '-TargetArchiveRoot'
+    }
+    It 'a line that copies both places holds both places of its source and the places of its target, so that no other line runs on them at the same time' {
+        $module = Get-Module MailboxTransfer
+        $lock = { param($row) & $module { param($r) Get-MbtBatchRowLock $r } $row }
+        $mirror = [ordered]@{ upn = 'adele@contoso.com'; location = 'Primary + Archive'; sourceUpn = 'alex@contoso.com'; sourceLocation = 'All'; layout = 'Mirror' }
+        (& $lock $mirror | Sort-Object) -join ',' | Should -Be 'source:alex@contoso.com|archive,source:alex@contoso.com|primary,target:adele@contoso.com|archive,target:adele@contoso.com|primary'
+        $one = [ordered]@{ upn = 'adele@contoso.com'; location = 'Primary'; sourceUpn = 'alex@contoso.com'; sourceLocation = 'Archive' }
+        (& $lock $one | Sort-Object) -join ',' | Should -Be 'source:alex@contoso.com|archive,target:adele@contoso.com|primary'
+        (@(& $lock $mirror) | Where-Object { $_ -in @(& $lock $one) }).Count | Should -BeGreaterThan 0 -Because 'a line of the Primary only into the Primary of the same target shares a place with the mirror line'
+        $primary = [ordered]@{ upn = 'adele@contoso.com'; location = 'Primary'; sourceUpn = 'alex@contoso.com'; sourceLocation = 'All'; layout = 'Primary' }
+        (& $lock $primary | Where-Object { $_ -like 'target:*' }) | Should -Be 'target:adele@contoso.com|primary'
+    }
+    It 'a batch made from the lines holds the layout and the folder of the Archive part, and a CSV that changed is told' {
+        $w = New-Work 'bothbatch'
+        $csv = New-Csv 'both7.csv' "SourceAddress,SourceLocation,TargetAddress,TargetLayout,TargetRoot,TargetArchiveRoot`r`nalex@contoso.com,All,adele@contoso.com,Mirror,A,B"
+        $read = Read-MbtCopyBatchCsv -Path $csv -StoreBase (Join-Path $w 'stores')
+        $batch = New-MbtBatch -Id 'both7' -Csv $csv -Row $read.Rows -Option $script:AppOption -Parallel 1 -Mode Copy
+        $batch.rows[0].layout | Should -Be 'Mirror'
+        $batch.rows[0].archiveRoot | Should -Be 'B'
+        $batch.rows[0].sourceLocation | Should -Be 'All'
+        Compare-MbtCopyBatchRow -Batch $batch -Row $read.Rows | Should -BeNullOrEmpty
+        $other = New-Csv 'both8.csv' "SourceAddress,SourceLocation,TargetAddress,TargetLayout,TargetRoot,TargetArchiveRoot`r`nalex@contoso.com,All,adele@contoso.com,Mirror,A,C"
+        $read2 = Read-MbtCopyBatchCsv -Path $other -StoreBase (Join-Path $w 'stores')
+        @(Compare-MbtCopyBatchRow -Batch $batch -Row $read2.Rows).Count | Should -BeGreaterThan 0
+        $read.Rows[0].Store | Should -Match 'copy-alex@contoso.com-all-[0-9a-f]{8}$' -Because 'the store of both places is named after both'
     }
 }

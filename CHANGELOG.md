@@ -4,6 +4,16 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 
 ## [1.4.0] — Unreleased
 
+### Added
+- **Copy the Primary and the Archive together**: one copy reads both places into one store and adds them in two parts, each into the place and the folder you choose (`-Mailbox All`, `-TargetLayout Mirror|Primary|Archive`, `-TargetArchiveRoot`; the same columns in the CSV of a batch). A target without an archive takes both into the Primary.
+- **Everything, or only what you tick**: an explicit choice above the tree for an export, a copy and an import.
+- **Setup, Expert**: optional Primary and Archive mailbox ids of your own mailbox, like the configuration file's.
+- **One Archive**: the archive and its auxiliary archives are shown and handled as one Archive (one place in Where to look, one root in the tree, nothing refused in a copy); `-Mailbox AuxArchive` still works but is no longer advertised.
+- **The archive of another mailbox**: with the application sign-in, a shared or another user's mailbox lists its archive too (and asks for its id when Microsoft cannot say); as Me the console says that only the application can read it, and the command line refuses it before any request.
+
+### Changed
+- **The console follows your rights**: as Me it names your mailbox and does not offer *Copy to another mailbox*, which needs the application sign-in.
+
 ### Fixed
 - **The archive no longer disappears silently**: when Microsoft Graph cannot look it up (no `User.Read.All`), the console says so and lets you type the archive mailbox id (**Where to look**); a mailbox without an archive says that too.
 - The command line gives the same reason when you ask for an archive it cannot find.

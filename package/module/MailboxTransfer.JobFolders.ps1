@@ -105,7 +105,7 @@ function Get-MbtJobDescription {
         $isCopy = ([string](Get-MbtJobField $Job 'Mode' '') -eq 'Copy') -or ([string](Get-MbtJobField $Job 'Task' '') -eq 'mailcopy')
         if ($isCopy -and $id) {
             if ($id -in 'tree', 'list', 'download', 'verify') { $progress += ' (reading the source mailbox)' }
-            elseif ($id -in 'check', 'folders', 'send', 'reconcile', 'final') { $progress += ' (adding to the target mailbox)' }
+            elseif (($id -replace '-\d$', '') -in 'check', 'folders', 'send', 'reconcile', 'final') { $progress += $(if ($id -match '-(\d)$') { " (adding to the target mailbox, part $($Matches[1]))" } else { ' (adding to the target mailbox)' }) }
         }
         $done = Get-MbtJobField $step 'done'; $total = Get-MbtJobField $step 'total'
         if ($null -ne $done -and $null -ne $total -and [long]$total -gt 0) { $progress += ", $(Format-MbtJobCount $done) of $(Format-MbtJobCount $total) done" }
@@ -391,23 +391,27 @@ function Get-MbtJobResumeText {
         }
         'Copy' {
             $heading = 'Copy to another mailbox'
-            $notes.Add('A copy has two parts: reading the source mailbox into the store on this PC, then adding the items to the target mailbox. The source mailbox is only read.')
+            $bothParts = if ([string](Get-MbtJobField $Request 'McFromKind' '') -eq 'All') { ' A copy of the Primary and the Archive adds the items once for each of them, the Primary part first.' } else { '' }
+            $notes.Add('A copy has two parts: reading the source mailbox into the store on this PC, then adding the items to the target mailbox.' + $bothParts + ' The source mailbox is only read.')
             $reading = $stepId -in 'tree', 'list', 'download', 'verify'
-            $adding = $stepId -in 'check', 'folders', 'send', 'reconcile', 'final'
+            $adding = ($stepId -replace '-\d$', '') -in 'check', 'folders', 'send', 'reconcile', 'final'
+            $parts = if ($stepOf -gt 9) { 2 } else { 1 }
+            $firstAdding = 5
             if ($adding) {
                 $already.Add('The first part is complete: the source mailbox is not read again, and the store is used as it is.')
                 $already.Add('The items already added to the target mailbox are not added again.')
                 $again.Add('The store is checked again, and so are the target folders: a missing folder is created, an existing one is used as it is.')
                 $again.Add($uncertain)
                 $again.Add($sendAgain)
-                $from = "It resumes the second part, adding the items to the target mailbox: from step 5 of 9, Verify the export store.$reached"
+                $from = "It resumes the second part, adding the items to the target mailbox: from step $firstAdding of $(if ($stepOf -gt 0) { $stepOf } else { 9 }), Verify the export store.$reached"
+                if ($parts -gt 1) { $already.Add('A part of the copy that is complete (the Primary part, or the Archive part) is not done again: the next run continues with the part that is not.') }
             }
             elseif ($reading) {
                 $already.Add('The items already read into the store are not read again.')
                 $again.Add('The folder tree and the list of the items are read again from the source mailbox, so that what arrived or changed since is taken. An item that changed since is read again.')
                 $again.Add("Items that failed are tried again, up to $tries tries in all.")
                 $again.Add('When the reading is complete, the second part follows: adding the items to the target mailbox.')
-                $from = "It resumes the first part, reading the source mailbox: from step 1 of 9, Read the folder tree.$reached"
+                $from = "It resumes the first part, reading the source mailbox: from step 1 of $(if ($stepOf -gt 0) { $stepOf } else { 9 }), Read the folder tree.$reached"
             }
             else {
                 $already.Add('A part that is complete is not done again: when the reading of the source mailbox is complete, the tool goes straight to adding the items to the target mailbox.')
@@ -523,6 +527,10 @@ function Get-MbtCliConsoleState {
             $state.TgtLoc = [string](& $get 'TargetMailbox' 'Primary')
             $state.TgtName = [string](& $get 'TargetRoot' ''); $state.TgtMode = $(if ($state.TgtName) { 'new' } else { 'same' })
             $state.McTarget = [string](& $get 'TargetMailboxId' '')
+            if ($state.McFromKind -eq 'All') {
+                $state.McLayout = [string](& $get 'TargetLayout' 'Mirror')
+                $state.TgtName2 = [string](& $get 'TargetArchiveRoot' $state.TgtName); $state.TgtMode2 = $(if ($state.TgtName2) { 'new' } else { 'same' })
+            }
         }
     }
     return $state

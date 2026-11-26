@@ -237,15 +237,18 @@ function New-MbtGuiRealEngine {
 
     # -Shared: the address of a shared mailbox or of another user's mailbox (resolved to its physical id, one location: the primary mailbox of it);
     # -AuxIds: auxiliary archives already known (ids or guids), as the -AuxArchiveMailboxId of the entry script
-    # -ArchiveId: the archive mailbox id typed for this mailbox (it replaces the one of the configuration)
-    # OnDone gets the locations and, second, what is known about the archive (State Known, None or Unknown; $null for a shared mailbox, which is read by its primary mailbox only)
-    $e.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId)
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, $LocationsFile, $Shared, $AuxIds, $ArchiveId) -OnError $OnError -Script {
-            param($upn, $file, $shared, $auxIds, $archiveId)
-            if ($shared) {
+    # -ArchiveId / -PrimaryId: the mailbox ids typed for this mailbox (Where to look, Setup): they replace the ones of the configuration
+    # OnDone gets the locations and, second, what is known about the archive (State Known, None or Unknown; $null for another mailbox read with a delegated sign-in, which is read by its primary mailbox only)
+    $e.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId, $PrimaryId)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, $LocationsFile, $Shared, $AuxIds, $ArchiveId, $PrimaryId) -OnError $OnError -Script {
+            param($upn, $file, $shared, $auxIds, $archiveId, $primaryId)
+            # a delegated sign-in reads the Primary of another mailbox only: the service lets it read its own archive and no other
+            if ($shared -and -not (Test-MbtAppOnly)) {
                 $id = Resolve-MbtMailboxAddress -Address $shared -TenantId (Get-MbtSession).TenantId
                 return [pscustomobject]@{ Locations = @(New-MbtBrowseLocation -Kind Primary -MailboxId $id -Source "address $shared"); Archive = $null }
             }
+            # the application looks up every place of the address, as for a mailbox of its own
+            if ($shared) { $upn = $shared }
             $p = @{ UserPrincipalName = $upn }
             if ($file) { $p.LocationsFile = $file }
             if ($auxIds) { $p.AuxArchiveMailboxId = @($auxIds) }
@@ -253,6 +256,7 @@ function New-MbtGuiRealEngine {
             $configured = Get-MbtConfiguredMailboxId -Configuration (Import-MbtConfiguration) -UserPrincipalName $upn
             if ($configured.Primary) { $p.PrimaryMailboxId = $configured.Primary }
             if ($configured.Archive) { $p.ArchiveMailboxId = $configured.Archive }
+            if ($primaryId) { $p.PrimaryMailboxId = $primaryId }
             if ($archiveId) { $p.ArchiveMailboxId = $archiveId }
             $archive = $null
             $found = @(Get-MbtBrowseLocation @p -ArchiveStatus ([ref]$archive))
@@ -267,7 +271,7 @@ function New-MbtGuiRealEngine {
             $locs = $answer.Locations
             $aux = 0
             $out = foreach ($l in @($locs)) {
-                $label = switch ($l.Kind) { 'Primary' { $(if ($Shared) { "Shared mailbox $Shared" } else { 'Primary mailbox' }) } 'Archive' { 'Archive' } default { $aux++; "Auxiliary archive $aux" } }
+                $label = switch ($l.Kind) { 'Primary' { $(if ($Shared) { "Shared mailbox $Shared" } else { 'Primary mailbox' }) } 'Archive' { $(if ($Shared) { "Archive of $Shared" } else { 'Archive' }) } default { $aux++; "Archive (more of it)" } }
                 [pscustomobject]@{ Kind = [string]$l.Kind; Label = $label; Hint = $(if ($l.Kind -eq 'AuxArchive') { 'Counts appear as you open folders. Size not given by Microsoft.' } else { 'Counts appear as you open folders.' }); Root = [string]$l.MailboxId; MailboxId = [string]$l.MailboxId; Loc = $l; Filling = ($l.Kind -eq 'AuxArchive') }
             }
             & $OnDone @($out) $answer.Archive

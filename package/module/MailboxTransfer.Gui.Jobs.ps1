@@ -162,6 +162,36 @@ function Get-MbtGuiPeriodStoreSuffix {
     return "-arrived-until-$($p.To)"
 }
 
+function Test-MbtGuiEverything {
+    <# The task takes everything in the places ticked in Where to look (no selection file); a state that does not say is the old way, the ticks. #>
+    param([hashtable]$S)
+    return ((Get-MbtGuiProp $S 'Task' '') -in 'export', 'mailcopy') -and ((Get-MbtGuiProp $S 'SelMode' 'ticks') -ne 'ticks')
+}
+
+function Get-MbtGuiEverythingArguments {
+    <# "Everything" as the command line says it: the mailbox places (-Mailbox Primary, Archive or All), the shared mailbox by its address, and the deleted items when the box is ticked. #>
+    param([hashtable]$S)
+    $kinds = @(@(Get-MbtGuiProp $S 'EvPlaces' @()) | ForEach-Object { [string](Get-MbtGuiProp $_ 'Kind' '') } | Where-Object { $_ -in 'Primary', 'Archive' } | Sort-Object -Unique)
+    $shared = [string](Get-MbtGuiProp $S 'Shared' '')
+    # the application reads every place of another mailbox (the command names it as the mailbox it works on); a delegated sign-in reads its Primary only
+    if ($shared -and (Get-MbtGuiProp $S 'AuthMode' 'user') -ne 'app') { '-Mailbox'; 'Primary'; '-MailboxId'; $shared }
+    else { '-Mailbox'; $(if ('Primary' -in $kinds -and 'Archive' -in $kinds) { 'All' } elseif ('Archive' -in $kinds) { 'Archive' } else { 'Primary' }) }
+    if ([bool](Get-MbtGuiProp $S 'RecoverableItems' $false)) { '-IncludeRecoverableItems' }
+}
+
+function Get-MbtGuiOwnMailboxIdArguments {
+    <# The ids of the signed-in account's own mailbox that were typed (Setup, Expert; the archive id of Where to look wins): -PrimaryMailboxId and -ArchiveMailboxId, as the Tenant section of the configuration gives them. Nothing for the application or for another mailbox. #>
+    param([hashtable]$S, [switch]$Other)
+    if ($Other -or (Get-MbtGuiProp $S 'AuthMode' 'user') -eq 'app') { return }
+    $primary = [string](Get-MbtGuiProp $S 'PrimaryIdValue' '')
+    $archive = [string](Get-MbtGuiProp $S 'ArchiveIdValue' '')
+    $typed = Get-MbtGuiProp $S 'ArchiveIds' $null
+    $key = ([string](Get-MbtGuiProp $S 'Mailbox' '')).Trim().ToLowerInvariant()
+    if ($typed -is [Collections.IDictionary] -and $key -and $typed.Contains($key) -and $typed[$key]) { $archive = [string]$typed[$key] }
+    if ($primary) { '-PrimaryMailboxId'; $primary }
+    if ($archive) { '-ArchiveMailboxId'; $archive }
+}
+
 function Get-MbtGuiCommonArguments {
     param([hashtable]$S, [hashtable]$Job, [switch]$WhatIf)
     $a = [Collections.Generic.List[string]]::new()
@@ -193,8 +223,10 @@ function Get-MbtGuiCommand {
             $eml = $S.Dest -eq 'eml'
             $a = [Collections.Generic.List[string]]::new()
             # the temporary files of the export are in the job folder, not below the folder of the script
-            $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox))
-            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $(if ((Get-MbtGuiProp $S 'Shared' '') -and $S.AuthMode -eq 'app') { $S.Shared } else { $S.Mailbox })))
+            if (Test-MbtGuiEverything $S) { $a.AddRange([string[]]@(Get-MbtGuiEverythingArguments -S $S)) }
+            else { foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) } }
+            $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool](Get-MbtGuiProp $S 'Shared' ''))))
             # the period: the days as ISO text (the same whatever the language of Windows); a day left empty is no limit on that side
             $period = Get-MbtGuiPeriod $S
             if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
@@ -229,6 +261,7 @@ function Get-MbtGuiCommand {
             $a.AddRange([string[]]@('-Mailbox', $S.TgtLoc))
             # a shared mailbox (or another user's) is given by its address
             if ($S.ImShared) { $a.AddRange([string[]]@('-MailboxId', $S.ImShared)) }
+            $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool]$S.ImShared)))
             if ($S.TgtMode -eq 'new' -and $S.TgtName) {
                 $problem = Test-MbtGuiFolderName $S.TgtName
                 if ($problem) { throw "The target folder name is refused: $problem" }
@@ -236,7 +269,7 @@ function Get-MbtGuiCommand {
             }
             elseif ($S.ImSrc -eq 'pst') { $a.Add('-MergeWellKnown') }
             if ($S.Mapping -and $S.ImSrc -ne 'eml') { $a.AddRange([string[]]@('-MappingFile', $S.Mapping)) }
-            if ($Job.SelectionFiles -and $S.ImSrc -eq 'store') { $a.AddRange([string[]]@('-SelectionFile', @($Job.SelectionFiles)[0])) }
+            if ($Job.SelectionFiles -and $S.ImSrc -eq 'store' -and (Get-MbtGuiProp $S 'ImSelMode' 'ticks') -eq 'ticks') { $a.AddRange([string[]]@('-SelectionFile', @($Job.SelectionFiles)[0])) }
             # the folders ticked in a PST or in a folder of .eml files
             if ((Get-MbtGuiProp $Job 'FolderFile') -and $S.ImSrc -in 'pst', 'eml') { $a.AddRange([string[]]@('-FolderFile', (Get-MbtGuiProp $Job 'FolderFile'))) }
             $a.AddRange([string[]]@('-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
@@ -247,18 +280,35 @@ function Get-MbtGuiCommand {
         'mailcopy' {
             # a mailbox into another in one job: the engine reads it into the store, then imports the store; one command, so that Pause and Continue work across the two parts
             $a = [Collections.Generic.List[string]]::new()
-            $a.AddRange([string[]]@('-Mode', 'Copy', '-UserPrincipalName', $S.Mailbox))
-            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $a.AddRange([string[]]@('-Mode', 'Copy', '-UserPrincipalName', $(if ((Get-MbtGuiProp $S 'Shared' '') -and $S.AuthMode -eq 'app') { $S.Shared } else { $S.Mailbox })))
+            $every = Test-MbtGuiEverything $S
+            if ($every) { $a.AddRange([string[]]@(Get-MbtGuiEverythingArguments -S $S)) }
+            else { foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) } }
+            $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool](Get-MbtGuiProp $S 'Shared' ''))))
             $period = Get-MbtGuiPeriod $S
             if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
             if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
-            $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc))
+            # both places of the source: the layout says where each part goes; one place: the place of the target
+            $both = ((Get-MbtGuiProp $S 'McFromKind' '') -eq 'All')
+            if ($both) { $a.AddRange([string[]]@('-TargetLayout', [string](Get-MbtGuiProp $S 'McLayout' 'Mirror'))) } else { $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc)) }
             # the application has no mailbox of its own: it names the one that receives; a delegated sign-in writes into its own
             if ($S.AuthMode -eq 'app' -and $S.McTarget) { $a.AddRange([string[]]@('-TargetMailboxId', $S.McTarget.Trim())) }
+            # the id of the archive of the target, when it was typed (the lookup could not give it)
+            $targetArchive = Get-MbtGuiProp $S 'McArchive' $null
+            $targetKey = ([string](Get-MbtGuiProp $S 'McTarget' '')).Trim().ToLowerInvariant()
+            if ($S.AuthMode -eq 'app' -and $targetArchive -is [Collections.IDictionary] -and $targetKey -and $targetArchive.Contains($targetKey) -and $targetArchive[$targetKey] -and ($both -or $S.TgtLoc -eq 'Archive')) { $a.AddRange([string[]]@('-TargetArchiveMailboxId', [string]$targetArchive[$targetKey])) }
             if ($S.TgtMode -eq 'new' -and $S.TgtName) {
                 $problem = Test-MbtGuiFolderName $S.TgtName
                 if ($problem) { throw "The target folder name is refused: $problem" }
                 $a.AddRange([string[]]@('-TargetRoot', $S.TgtName))
+            }
+            if ($both) {
+                # the Archive part has its own folder; "the same folder names" is an empty one
+                if ((Get-MbtGuiProp $S 'TgtMode2' 'new') -eq 'new' -and (Get-MbtGuiProp $S 'TgtName2' '')) {
+                    $problem = Test-MbtGuiFolderName $S.TgtName2
+                    if ($problem) { throw "The target folder name is refused: $problem" }
+                    $a.AddRange([string[]]@('-TargetArchiveRoot', $S.TgtName2))
+                } elseif ($S.TgtMode -eq 'new' -and $S.TgtName) { $a.AddRange([string[]]@('-TargetArchiveRoot', '')) }
             }
             if ($S.Mapping) { $a.AddRange([string[]]@('-MappingFile', $S.Mapping)) }
             $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt', '-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
@@ -346,6 +396,7 @@ function ConvertTo-MbtGuiShownArgument {
 
 function Format-MbtGuiCommandToken {
     param([string]$Text)
+    if ($Text -eq '') { return "''" }
     if ($Text -match '[\s;&()$''`"]') { return ("'" + $Text.Replace("'", "''") + "'") }
     return $Text
 }

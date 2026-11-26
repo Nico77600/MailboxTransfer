@@ -165,6 +165,7 @@ function Write-MbtJobStep {
         [long]$Done = -1, [long]$Total = -1, [long]$Bytes = -1, [long]$BytesTotal = -1, [string]$Msg
     )
     if (-not $script:EventLog) { return }
+    $Id = Get-MbtJobStepKey $Id
     # the step that reads what an earlier run did ends when the next step begins
     if ($Id -ne 'resume' -and $State -eq 'running' -and $script:JobInfo.Steps.ContainsKey('resume') -and $script:JobInfo.Steps['resume'] -eq 'running') {
         $script:JobInfo.Steps['resume'] = 'done'
@@ -603,9 +604,10 @@ function Get-MbtCapability {
 function Set-MbtJobPhase {
     <# A job that does two jobs in one process (a copy: the export, then the import) says which one it is in: the progress of the engine then follows that half, its steps and its counters. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][ValidateSet('export', 'import')][string]$Phase)
+    param([Parameter(Mandatory)][ValidateSet('export', 'import')][string]$Phase, [ValidateRange(1, 9)][int]$Part = 1)
     if (-not $script:JobInfo) { return }
     $script:JobInfo.Phase = $Phase
+    $script:JobInfo.Part = $Part
     $p = $script:JobProgress
     $p.Step = ''; $p.Detail = ''; $p.ThrottleSeen = 0; $p.WindowsSeen = 0
 }
@@ -616,10 +618,24 @@ function Get-MbtJobPhase {
     return [string]$script:JobInfo.Task
 }
 
+function Get-MbtJobStepKey {
+    <# The id of a step as the events of this job write it: the steps of the import of the second part of a copy of two places (the Archive after the Primary) are check-2, folders-2, send-2, reconcile-2 and final-2. #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Id)
+    $part = if ($script:JobInfo -and $script:JobInfo.ContainsKey('Part')) { [int]$script:JobInfo.Part } else { 1 }
+    if ($part -gt 1 -and $script:JobInfo.Phase -eq 'import' -and $Id -in 'check', 'folders', 'send', 'reconcile', 'final') { return "$Id-$part" }
+    return $Id
+}
+
+function Get-MbtJobStepBase {
+    <# The step without its part: send-2 is send. #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Id)
+    return ($Id -replace '-\d$', '')
+}
+
 function Get-MbtJobStepOrder {
     switch (Get-MbtJobPhase) {
         'export' { @('tree', 'list', 'download', 'verify', 'pst', 'pstcheck') }
-        'import' { @('check', 'folders', 'send', 'reconcile', 'final') }
+        'import' { @('check', 'folders', 'send', 'reconcile', 'final' | ForEach-Object { Get-MbtJobStepKey $_ }) }
         default { @() }
     }
 }
@@ -642,10 +658,11 @@ function Update-MbtJobProgress {
         '^check$' { 'check' } '^folders$|^plan$' { 'folders' } '^import$' { 'send' } '^reconcile$' { 'reconcile' }
         default { '' }
     }
+    if ($current) { $current = Get-MbtJobStepKey $current }
     if ($current -and $order -contains $current -and $current -ne $p.Step) {
         $i = [array]::IndexOf($order, $current)
         # the steps before the current one are done (a reconcile pass is a side step of the send step)
-        if ($current -ne 'reconcile' -and $i -gt 0) {
+        if ((Get-MbtJobStepBase $current) -ne 'reconcile' -and $i -gt 0) {
             foreach ($s in @($order[0..($i - 1)])) {
                 if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') {
                     # the listing is over: with a period it says how many items were left out (all the locations of the run together)
@@ -663,10 +680,10 @@ function Update-MbtJobProgress {
         $p.Detail = $detail
         Write-MbtJobStep -Id $p.Step -State running -Msg $detail
     }
-    $counting = if ($export) { 'download' } else { 'send' }
+    $counting = if ($export) { 'download' } else { Get-MbtJobStepKey 'send' }
     # the folders that changed since the last poll (the Run page lists them)
     try { if ($Job.Metrics -and $Job.Metrics.Folders) { [void][MailboxTransfer.FolderEventPump]::Write($script:EventLog, $Job.Metrics.Folders, $counting) } } catch { }
-    if ($p.Step -eq $counting -or ($p.Step -eq 'reconcile' -and -not $export)) {
+    if ($p.Step -eq $counting -or ((Get-MbtJobStepBase $p.Step) -eq 'reconcile' -and -not $export)) {
         Write-MbtJobStep -Id $counting -State running -Done $snap.Items -Total $snap.TotalItems -Bytes $snap.Bytes -BytesTotal $snap.TotalBytes
     }
     # throttling answers (429 / 503) since the last poll
@@ -695,7 +712,7 @@ function Update-MbtJobProgress {
         $done = if ($Job.Cancelled -or $Job.Error) { $null } else { 'done' }
         # the job ended well: every step of the job is done, also the ones that went by between two polls
         foreach ($s in $order) {
-            if ($done -and $s -in 'tree', 'list', 'download', 'check', 'folders', 'send', 'reconcile' -and $script:JobInfo.Steps[$s] -ne 'done') {
+            if ($done -and (Get-MbtJobStepBase $s) -in 'tree', 'list', 'download', 'check', 'folders', 'send', 'reconcile' -and $script:JobInfo.Steps[$s] -ne 'done') {
                 if ($s -eq $counting) { Write-MbtJobStep -Id $s -State done -Done $snap.Items -Total $snap.TotalItems -Bytes $snap.Bytes -BytesTotal $snap.TotalBytes } else { Write-MbtJobStep -Id $s -State done }
             }
         }

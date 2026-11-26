@@ -1089,3 +1089,144 @@ Describe 'Continue a job: the list, the Resume view, the first step of a resumed
         $r.Planned | Should -BeTrue
     }
 }
+
+Describe 'Everything, the places of a copy and the ids of Setup: what the commands say' {
+    BeforeAll {
+        $script:Entry2 = Join-Path $script:Package 'Invoke-MailboxTransfer.ps1'
+        $script:Es = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Shared = ''; AuthMode = 'user'; SelMode = 'all'; ImSelMode = 'all'; EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:p' }, @{ Kind = 'Archive'; Id = 'MBX:a' }); RecoverableItems = $false
+            Dest = 'store'; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = 'D:\Out'; OutName = 'x.pst'; McTarget = ''; McFromKind = ''; McLayout = 'Mirror'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'Copy A'; TgtMode2 = 'new'; TgtName2 = 'Copy B'; McArchive = @{}
+            ArchiveIds = @{}; PrimaryIdValue = ''; ArchiveIdValue = ''; Mapping = ''; ImSrc = 'store'; ImPath = 'D:\Store'; ImShared = ''; Conc = 4; Tries = 3; Reconcile = 5; Awake = $false
+            Changed = @{}; Period = 'all'; ArrFrom = ''; ArrTo = ''; TenantId = ''; ClientId = ''; AppTenant = ''; AppClient = ''; AppThumb = '' }
+        $script:Ej = @{ Id = 'export-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; StorePath = 'D:\Store'; SelectionFiles = @(); JobName = 'import-1' }
+    }
+    It 'Everything is the whole of the places ticked, no selection file: -Mailbox All for the Primary and the Archive, one place alone for one' {
+        $a = (Get-MbtGuiCommand -Task export -S $script:Es -Job $script:Ej)[0].Arguments
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a | Should -Not -Contain '-SelectionFile'
+        $a | Should -Not -Contain '-IncludeRecoverableItems'
+        $s = $script:Es.Clone(); $s.EvPlaces = @(@{ Kind = 'Archive'; Id = 'MBX:a' })
+        $b = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-Mailbox') + 1)] | Should -Be 'Archive'
+        $s.EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:p' }, @{ Kind = 'AuxArchive'; Id = 'MBX:x' })
+        $c = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $c[($c.IndexOf('-Mailbox') + 1)] | Should -Be 'Primary' -Because 'an auxiliary archive follows the Archive: it is no place of its own'
+    }
+    It 'Everything with the box of the deleted items takes them, and a shared mailbox is given by its address' {
+        $s = $script:Es.Clone(); $s.RecoverableItems = $true; $s.Shared = 'projects@contoso.com'; $s.EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:s' })
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $a | Should -Contain '-IncludeRecoverableItems'
+        $a[($a.IndexOf('-MailboxId') + 1)] | Should -Be 'projects@contoso.com'
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'Primary'
+    }
+    It 'another mailbox: the application names it as the mailbox it works on and reads every place; a delegated sign-in reads its Primary by the address' {
+        $s = $script:Es.Clone(); $s.Shared = 'projects@contoso.com'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $a[($a.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'projects@contoso.com'
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a | Should -Not -Contain '-MailboxId'
+        $d = $script:Es.Clone(); $d.Shared = 'projects@contoso.com'; $d.EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:s' })
+        $b = (Get-MbtGuiCommand -Task export -S $d -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'adele@contoso.com'
+        $b[($b.IndexOf('-MailboxId') + 1)] | Should -Be 'projects@contoso.com'
+        $b[($b.IndexOf('-Mailbox') + 1)] | Should -Be 'Primary'
+    }
+    It 'Only what I tick sends the selection file, as before; a state that does not say is the old way' {
+        $s = $script:Es.Clone(); $s.SelMode = 'ticks'
+        $job = $script:Ej.Clone(); $job.SelectionFiles = @('D:\J\selection-1.json')
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $job)[0].Arguments
+        $a[($a.IndexOf('-SelectionFile') + 1)] | Should -Be 'D:\J\selection-1.json'
+        $a | Should -Not -Contain '-Mailbox'
+        $old = $s.Clone(); $old.Remove('SelMode')
+        (Get-MbtGuiCommand -Task export -S $old -Job $job)[0].Arguments | Should -Contain '-SelectionFile'
+    }
+    It 'an import takes everything unless Only what I tick is chosen: the selection file goes only then' {
+        $s = $script:Es.Clone(); $s.Task = 'import'
+        $job = $script:Ej.Clone(); $job.SelectionFiles = @('D:\J\selection-1.json')
+        (Get-MbtGuiCommand -Task import -S $s -Job $job)[0].Arguments | Should -Not -Contain '-SelectionFile'
+        $s.ImSelMode = 'ticks'
+        (Get-MbtGuiCommand -Task import -S $s -Job $job)[0].Arguments | Should -Contain '-SelectionFile'
+    }
+    It 'the ids of Setup are the ids of the configuration: -PrimaryMailboxId and -ArchiveMailboxId for the account that signs in, the archive id of Where to look first, nothing for the application or for another mailbox' {
+        $s = $script:Es.Clone(); $s.PrimaryIdValue = 'MBX:11111111-2222-3333-4444-555555555555@contoso.onmicrosoft.com'; $s.ArchiveIdValue = 'MBX:11111111-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com'
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $a[($a.IndexOf('-PrimaryMailboxId') + 1)] | Should -Be $s.PrimaryIdValue
+        $a[($a.IndexOf('-ArchiveMailboxId') + 1)] | Should -Be $s.ArchiveIdValue
+        $s.ArchiveIds = @{ 'adele@contoso.com' = 'MBX:99999999-2222-3333-4444-555555555555@contoso.onmicrosoft.com' }
+        $b = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-ArchiveMailboxId') + 1)] | Should -Be 'MBX:99999999-2222-3333-4444-555555555555@contoso.onmicrosoft.com'
+        $app = $s.Clone(); $app.AuthMode = 'app'; $app.AppThumb = ('AB' * 20); $app.AppTenant = 't'; $app.AppClient = 'c'
+        (Get-MbtGuiCommand -Task export -S $app -Job $script:Ej)[0].Arguments | Should -Not -Contain '-PrimaryMailboxId'
+        $shared = $s.Clone(); $shared.Shared = 'projects@contoso.com'
+        (Get-MbtGuiCommand -Task export -S $shared -Job $script:Ej)[0].Arguments | Should -Not -Contain '-PrimaryMailboxId'
+        $imp = $s.Clone(); $imp.Task = 'import'
+        (Get-MbtGuiCommand -Task import -S $imp -Job $script:Ej)[0].Arguments | Should -Contain '-ArchiveMailboxId'
+        $none = $script:Es.Clone()
+        (Get-MbtGuiCommand -Task export -S $none -Job $script:Ej)[0].Arguments | Should -Not -Contain '-PrimaryMailboxId'
+    }
+    It 'a copy of both places is ONE command with the layout and a folder for each part; "the same folder names" of the Archive part is an empty folder' {
+        $s = $script:Es.Clone(); $s.Task = 'mailcopy'; $s.McFromKind = 'All'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = 'adele.vance@contoso.com'; $s.Mailbox = 'alex@contoso.com'
+        $c = @(Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)
+        $c.Count | Should -Be 1
+        $a = $c[0].Arguments
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a[($a.IndexOf('-TargetLayout') + 1)] | Should -Be 'Mirror'
+        $a[($a.IndexOf('-TargetRoot') + 1)] | Should -Be 'Copy A'
+        $a[($a.IndexOf('-TargetArchiveRoot') + 1)] | Should -Be 'Copy B'
+        $a[($a.IndexOf('-TargetMailboxId') + 1)] | Should -Be 'adele.vance@contoso.com'
+        $a | Should -Not -Contain '-TargetMailbox'
+        $a | Should -Not -Contain '-SelectionFile'
+        $s.TgtMode2 = 'same'
+        $b = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-TargetArchiveRoot') + 1)] | Should -Be ''
+        $s.TgtMode = 'same'
+        (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments | Should -Not -Contain '-TargetArchiveRoot'
+        $s.McLayout = 'Archive'; $s.TgtMode = 'new'; $s.TgtMode2 = 'new'
+        $d = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments
+        $d[($d.IndexOf('-TargetLayout') + 1)] | Should -Be 'Archive'
+    }
+    It 'the id of the archive of the target is given when it was typed; the selection file of ticks in both places goes as it is' {
+        $s = $script:Es.Clone(); $s.Task = 'mailcopy'; $s.SelMode = 'ticks'; $s.McFromKind = 'All'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = ' Adele.Vance@contoso.com '
+        $s.McArchive = @{ 'adele.vance@contoso.com' = 'MBX:99999999-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com' }
+        $job = $script:Ej.Clone(); $job.SelectionFiles = @('D:\J\selection-1.json')
+        $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $job)[0].Arguments
+        $a[($a.IndexOf('-TargetArchiveMailboxId') + 1)] | Should -Be 'MBX:99999999-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com'
+        $a[($a.IndexOf('-SelectionFile') + 1)] | Should -Be 'D:\J\selection-1.json'
+        $one = $s.Clone(); $one.McFromKind = 'Primary'; $one.TgtLoc = 'Primary'
+        (Get-MbtGuiCommand -Task mailcopy -S $one -Job $job)[0].Arguments | Should -Not -Contain '-TargetArchiveMailboxId' -Because 'the Primary of the target needs no archive id'
+        $one.TgtLoc = 'Archive'
+        (Get-MbtGuiCommand -Task mailcopy -S $one -Job $job)[0].Arguments | Should -Contain '-TargetArchiveMailboxId'
+    }
+    It 'every parameter of these commands is a parameter of the entry script' {
+        $declared = (Get-Command $script:Entry2).Parameters.Keys
+        $s = $script:Es.Clone(); $s.Task = 'mailcopy'; $s.McFromKind = 'All'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = 'adele@contoso.com'; $s.Mailbox = 'alex@contoso.com'; $s.TgtMode2 = 'new'; $s.RecoverableItems = $true
+        $s.McArchive = @{ 'adele@contoso.com' = 'MBX:99999999-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com' }
+        foreach ($t in (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because $t } }
+        $u = $script:Es.Clone(); $u.PrimaryIdValue = 'MBX:11111111-2222-3333-4444-555555555555@contoso.onmicrosoft.com'; $u.ArchiveIdValue = 'MBX:11111111-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com'
+        foreach ($t in (Get-MbtGuiCommand -Task export -S $u -Job $script:Ej)[0].Arguments) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because $t } }
+    }
+}
+
+Describe 'The tick boxes while Everything is chosen' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Browse.ps1')
+        function New-TickBrowser([string]$ModeKey) { @{ ModeKey = $ModeKey; C = [pscustomobject]@{ FolderTree = [pscustomobject]@{ Tag = $null }; MessageList = [pscustomobject]@{ Tag = $null }; PickAll = [pscustomobject]@{ IsEnabled = $true; Opacity = 1.0 } } } }
+    }
+    BeforeEach { $script:GuiBeforeTicks = if (Test-Path variable:script:Gui) { $script:Gui } else { $null } }
+    AfterEach { if ($null -ne $script:GuiBeforeTicks) { $script:Gui = $script:GuiBeforeTicks } else { Remove-Variable -Name Gui -Scope Script -ErrorAction SilentlyContinue } }
+    It 'greys the boxes of the tree and of the message list in Everything, and gives them back in Only what I tick' {
+        $script:Gui = @{ S = @{ SelMode = 'all' } }
+        $b = New-TickBrowser 'SelMode'
+        Set-MbtGuiTicksEnabled $b
+        $b.C.FolderTree.Tag | Should -Be 'noticks'; $b.C.MessageList.Tag | Should -Be 'noticks'; $b.C.PickAll.IsEnabled | Should -BeFalse
+        $script:Gui.S.SelMode = 'ticks'
+        Set-MbtGuiTicksEnabled $b
+        $b.C.FolderTree.Tag | Should -BeNullOrEmpty; $b.C.MessageList.Tag | Should -BeNullOrEmpty; $b.C.PickAll.IsEnabled | Should -BeTrue
+    }
+    It 'takes the choice of the import browser from its own key, and leaves a browser without the choice alone' {
+        $script:Gui = @{ S = @{ SelMode = 'ticks'; ImSelMode = 'all' } }
+        $i = New-TickBrowser 'ImSelMode'; Set-MbtGuiTicksEnabled $i
+        $i.C.FolderTree.Tag | Should -Be 'noticks'
+        $o = New-TickBrowser ''; Set-MbtGuiTicksEnabled $o
+        $o.C.FolderTree.Tag | Should -BeNullOrEmpty; $o.C.PickAll.IsEnabled | Should -BeTrue
+    }
+}

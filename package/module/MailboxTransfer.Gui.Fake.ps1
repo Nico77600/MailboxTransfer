@@ -42,7 +42,7 @@ function New-MbtGuiFakeNode {
 }
 
 function Get-MbtGuiFakeTree {
-    <# A mailbox with its three locations: Primary, Archive, Auxiliary archive 1 (being filled by Microsoft). -Recoverable: with Recoverable Items (the box "Include deleted items"). #>
+    <# A mailbox with its two places: Primary and Archive (the part of the archive that Microsoft is still filling is merged into the Archive tree). -Recoverable: with Recoverable Items (the box "Include deleted items"). #>
     param([switch]$Recoverable)
     $f = { param($id, $name, $glyph, $count, $gib, $kids = @()) New-MbtGuiFakeNode -Id $id -Name $name -Glyph $glyph -Count $count -SizeGiB $gib -Kids $kids }
     $deleted = @()
@@ -51,13 +51,12 @@ function Get-MbtGuiFakeTree {
         (& $f 'inbox' 'Inbox' mail 1284 2.1 @((& $f 'projects' 'Projects' folder 598 1.4 @((& $f 'p-c' 'Contoso Rollout' folder 410 1.0), (& $f 'p-f' 'Fabrikam Pilot' folder 188 0.4)))))
         (& $f 'sent' 'Sent Items' send 842 1.2), (& $f 'drafts' 'Drafts' pencil 3 0.02), (& $f 'cal' 'Calendar' cal 214 0.05), (& $f 'contacts' 'Contacts' people 96 0.01), (& $f 'del' 'Deleted Items' trash 57 0.2)
         $deleted)
-    $archive = New-MbtGuiFakeNode -Id 'r-a' -Name 'Archive' -Glyph archive -Count 0 -SizeGiB 0 -Root -Kind archive -Sub 'Auto-expanding archive' -Kids @(
-        (& $f 'old' 'Old Mail' folder 9210 31.4 @((& $f 'y19' '2019' folder 3120 10.1), (& $f 'y20' '2020' folder 3380 11.7), (& $f 'y21' '2021' folder 2710 9.6)))
+    $archive = New-MbtGuiFakeNode -Id 'r-a' -Name 'Archive' -Glyph archive -Count 0 -SizeGiB 0 -Root -Kind archive -Sub 'In-Place Archive' -Kids @(
+        (& $f 'old' 'Old Mail' folder 9210 31.4 @((& $f 'y19' '2019' folder 3120 10.1), (& $f 'y20' '2020' folder 3380 11.7), (& $f 'y21' '2021' folder 2710 9.6), (& $f 'x-18' '2018' folder 204 -1), (& $f 'x-17' '2017' folder 74 -1)))
         (& $f 'fin' 'Finance' folder 860 3.9 @((& $f 'fin-b' 'Budgets' folder 212 0.9))))
-    $aux = New-MbtGuiFakeNode -Id 'r-x' -Name 'Auxiliary archive 1 (3f9c2a10)' -Glyph archive -Count 0 -SizeGiB 0 -Root -Kind aux -HeadersOnly -Sub 'Being filled by Microsoft - headers only until exported' -Kids @(
-        (& $f 'x-old' 'Old Mail' folder 278 -1 @((& $f 'x-18' '2018' folder 204 -1), (& $f 'x-17' '2017' folder 74 -1))))
-    foreach ($n in $aux.Descendants()) { $n.Tag.HeadersOnly = $true }
-    return @($primary, $archive, $aux)
+    # what Microsoft keeps in another part of a very big archive (2018, 2017) appears in the Archive tree at its path: its details come after the export
+    foreach ($n in $archive.Descendants()) { if ($n.Id -in 'x-18', 'x-17') { $n.Tag.HeadersOnly = $true } }
+    return @($primary, $archive)
 }
 
 function Get-MbtGuiFakePstTree {
@@ -135,6 +134,11 @@ function Get-MbtGuiFakePreview {
     }
 }
 
+function Get-MbtGuiSignInMode {
+    <# The sign-in chosen in Setup (user or app), for the engine that has no window of its own. #>
+    return [string]$script:Gui.S.AuthMode
+}
+
 function New-MbtGuiFakeEngine {
     <#
         The engine adapter with synthetic data. Same members as New-MbtGuiRealEngine; Worker is Inline. Capability: PstImport, Eml and SharedMailbox are
@@ -164,13 +168,20 @@ function New-MbtGuiFakeEngine {
         & $OnDone ([pscustomobject]@{ Account = $Mailbox; TenantId = 'contoso.onmicrosoft.com'; Scopes = @('MailboxFolder.Read', 'MailboxItem.Read', 'MailboxItem.ImportExport', 'Mail.Read', 'MailboxFolder.ReadWrite'); Missing = @(); CanReadMail = $true; Access = $(if ($App) { 'Application (certificate, no user)' } else { 'Delegated (you, with your rights)' }) }) }.GetNewClosure()
     $engine.SignOut = { $engine.State.Signed = $false }.GetNewClosure()
     # State.Archive: Known (default), None (the lookup answered: no archive) or Unknown (the lookup could not be made, unless an archive id is typed)
-    $engine.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId)
-        $mode = if ($engine.State.ContainsKey('Archive')) { [string]$engine.State.Archive } else { 'Known' }
+    $engine.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId, $PrimaryId)
+        # ArchiveOf: the answer for one address (the mailbox that receives a copy); Archive: the answer for the others
+        $owner = if ($Shared) { $Shared } else { $Mailbox }
+        # another mailbox read with a delegated sign-in: its Primary only, and nothing said about its archive
+        if ($Shared -and (Get-MbtGuiSignInMode) -ne 'app') {
+            & $OnDone @([pscustomobject]@{ Kind = 'Primary'; Label = "Shared mailbox $Shared"; Hint = 'Counts appear as you open folders.'; Root = 'r-p'; MailboxId = 'MBX:shared' }) $null
+            return
+        }
+        $mode = if ($engine.State.ContainsKey('ArchiveOf') -and $engine.State.ArchiveOf.ContainsKey(([string]$owner).ToLowerInvariant())) { [string]$engine.State.ArchiveOf[([string]$owner).ToLowerInvariant()] } elseif ($engine.State.ContainsKey('Archive')) { [string]$engine.State.Archive } else { 'Known' }
         $typed = ($mode -eq 'Unknown') -and $ArchiveId
         $all = @(
-            [pscustomobject]@{ Kind = 'Primary'; Label = 'Primary mailbox'; Hint = '3,496 items - 5.1 GiB'; Root = 'r-p'; MailboxId = 'MBX:primary' }
-            [pscustomobject]@{ Kind = 'Archive'; Label = 'Archive'; Hint = '10,070 items - 35.3 GiB'; Root = 'r-a'; MailboxId = 'MBX:archive' }
-            [pscustomobject]@{ Kind = 'AuxArchive'; Label = 'Auxiliary archive 1'; Hint = '278 items - size not given by Microsoft'; Root = 'r-x'; MailboxId = 'MBX:aux1'; Filling = $true })
+            [pscustomobject]@{ Kind = 'Primary'; Label = $(if ($Shared) { "Shared mailbox $Shared" } else { 'Primary mailbox' }); Hint = '3,496 items - 5.1 GiB'; Root = 'r-p'; MailboxId = 'MBX:primary' }
+            [pscustomobject]@{ Kind = 'Archive'; Label = $(if ($Shared) { "Archive of $Shared" } else { 'Archive' }); Hint = '10,348 items - 35.3 GiB'; Root = 'r-a'; MailboxId = 'MBX:archive' }
+            [pscustomobject]@{ Kind = 'AuxArchive'; Label = 'Archive (more of it)'; Hint = '278 items - size not given by Microsoft'; Root = 'r-x'; MailboxId = 'MBX:aux1'; Filling = $true })
         $keep = if ($mode -eq 'Known' -or $typed) { $all } else { @($all | Where-Object Kind -EQ 'Primary') }
         & $OnDone $keep ([pscustomobject]@{ State = $(if ($typed) { 'Known' } else { $mode }); Detail = $(if ($mode -eq 'Unknown' -and -not $typed) { 'https://graph.microsoft.com/beta/users/adele.vance@contoso.com/settings/exchange HTTP 403 Authorization_RequestDenied' } else { '' }) }) }.GetNewClosure()
     $engine.ParseMailboxId = { param($Text, $TenantId)
@@ -182,6 +193,14 @@ function New-MbtGuiFakeEngine {
     $engine.Roots = { param($Locations, $OnDone, $OnError, $IncludeRecoverable)
         $all = Get-MbtGuiFakeTree -Recoverable:([bool]$IncludeRecoverable)
         $keep = @($all | Where-Object { $r = $_; @($Locations | Where-Object { $_.Root -eq $r.Id }).Count -gt 0 })
+        # the roots carry the name of the mailbox that is open (another mailbox, or the one the task reads), as the real adapter names them
+        $owner = if ($script:Gui.S.Shared) { [string]$script:Gui.S.Shared } else { [string]$script:Gui.S.Mailbox }
+        foreach ($root in $keep) {
+            if ($root.Kind -ne 'primary' -and -not $script:Gui.S.Shared) { continue }
+            $loc = @($Locations | Where-Object { $_.Root -eq $root.Id })[0]
+            if ($script:Gui.S.Shared -or $owner -ine 'adele.vance@contoso.com') { $root.Name = [string]$loc.Label }
+            if ($root.Kind -eq 'primary') { $root.Sub = $owner }
+        }
         & $OnDone $keep }
     $engine.Children = { param($Node, $OnDone, $OnError) & $OnDone @() }
     $engine.Items = { param($Node, $Token, $OnDone, $OnError) & $OnDone ([pscustomobject]@{ Rows = (Get-MbtGuiFakeItems $Node); Next = $null; Total = $Node.Count; Note = $null }) }
@@ -287,6 +306,13 @@ function New-MbtGuiFakeEngine {
     # what the check of the plan would count: the ticks, as the service counts them (an auxiliary archive and a PST give no size)
     $engine.Plan = { param($Request, $OnDone, $OnError)
         $sel = Get-MbtGuiTaskSelection
+        if ($sel -and $sel.PSObject.Properties['Everything'] -and $sel.Everything) {
+            # Everything: the whole tree of each place, as the service would count it
+            $items = 0L; $bytes = 0L; $unknown = 0; $folders = 0
+            foreach ($place in @($sel.Places)) { switch ([string]$place.Kind) { 'Primary' { $items += 3496; $bytes += [long](5.1GB); $folders += 9 } 'Archive' { $items += 10348; $bytes += [long](35.3GB); $folders += 15; $unknown++ } default { if ($sel.PSObject.Properties['Everything'] -and (Get-MbtGuiProp $script:Gui.S 'Task' '') -ne 'mailcopy') { $items += 278; $unknown++; $folders++ } } } }
+            & $OnDone ([pscustomobject]@{ Ok = $true; Message = ''; Totals = [pscustomobject]@{ Items = $items; Bytes = $bytes; Folders = $folders; UnknownSize = $unknown; FoldersToCreate = 0 } })
+            return
+        }
         $totals = if ($sel -and $sel.Items -gt 0) { [pscustomobject]@{ Items = [long]$sel.Items; Bytes = [long]$sel.Bytes; Folders = [int]$sel.Folders; UnknownSize = [int]$sel.UnknownSize; FoldersToCreate = 0 } } else { $null }
         & $OnDone ([pscustomobject]@{ Ok = $true; Message = ''; Totals = $totals }) }
     return [pscustomobject]$engine

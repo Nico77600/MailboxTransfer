@@ -107,15 +107,24 @@ Describe 'Copy: what is refused before anything is read' {
             return $session
         }
     }
-    It 'takes one location as the source: -Mailbox All and AuxArchive are refused, and so are the parameters that name a store, a PST or a folder of .eml files' {
+    It 'takes the Primary, the Archive or both (-Mailbox All) as the source: AuxArchive is refused, and so are the parameters that name a store, a PST or a folder of .eml files' {
         $svc = New-CopyService
-        { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ Mailbox = 'All' }) } | Should -Throw '*is not for a copy*'
         { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ Mailbox = 'AuxArchive' }) } | Should -Throw '*is not for a copy*'
+        { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ Mailbox = 'All' }) } | Should -Throw '*-MailboxId is one location*'
+        { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ Mailbox = 'All'; MailboxId = ''; TargetMailbox = 'Archive' }) } | Should -Throw '*-TargetLayout Mirror, Primary or Archive*'
+        { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ TargetLayout = 'Mirror' }) } | Should -Throw '*-TargetLayout belongs to a copy of the Primary and the Archive*'
+        { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ TargetArchiveRoot = 'Old' }) } | Should -Throw '*-TargetArchiveRoot belongs to a copy of the Primary and the Archive*'
+        { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ TargetArchiveMailboxId = $script:DstArchive }) } | Should -Throw '*needs -TargetMailbox Archive*'
         { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ SourceMailbox = 'Primary' }) } | Should -Throw '*it belongs to -Mode Import*'
         { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ PstPath = 'x.pst' }) } | Should -Throw '*-PstPath is not for -Mode Copy*'
         { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ IncludeFolder = 'Inbox' }) } | Should -Throw '*-IncludeFolder is not for -Mode Copy*'
         { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ OutputPst = 'x.pst' }) } | Should -Throw '*-OutputPst belongs to*'
         { Invoke-Entry $svc (Get-CopyParameters 'r1' @{ Folder = 'Inbox'; SelectionFile = (Join-Path $script:Tmp 'x.json') }) } | Should -Throw '*exclusive*'
+        $svc.Log.Count | Should -Be 0
+    }
+    It 'refuses the archive of another mailbox with a delegated sign-in, before any request: the address names the Primary, and the service lets an account read only its own archive' {
+        $svc = New-CopyService
+        { Invoke-Entry $svc (Get-CopyParameters 'oa' @{ Mailbox = 'Archive'; MailboxId = 'alex@contoso.com' }) } | Should -Throw '*archive of another mailbox*cannot be read with a delegated sign-in*'
         $svc.Log.Count | Should -Be 0
     }
     It 'says that the source and the target are the same location, by address and by id, before any request' {
@@ -159,7 +168,7 @@ Describe 'Copy: what is refused before anything is read' {
         $other = Join-Path $script:Tmp 'sel-other.json'
         $null = Invoke-Entry $svc @{ Mode = 'Browse'; PrimaryMailboxId = $script:Dst; Folder = 'Inbox'; IncludeSubfolders = $true; SaveSelection = $other; StorePath = (Join-Path $script:Tmp 'none') }
         $two = Save-MbtBrowseSelectionSet -Selection @((Read-MbtBrowseSelection -Path $primary), (Read-MbtBrowseSelection -Path $other)) -Path (Join-Path $script:Tmp 'sel-two.json')
-        { Invoke-Entry $svc (Get-CopyParameters 'sel' @{ MailboxId = ''; SelectionFile = $two; PrimaryMailboxId = $script:Dst }) } | Should -Throw '*names 2 mailbox locations: a copy takes one*'
+        { Invoke-Entry $svc (Get-CopyParameters 'sel' @{ MailboxId = ''; SelectionFile = $two; PrimaryMailboxId = $script:Dst }) } | Should -Throw '*names 2 mailbox locations*a copy takes the Primary mailbox, the Archive, or both*'
         { Invoke-Entry $svc (Get-CopyParameters 'sel' @{ SelectionFile = $primary; Mailbox = 'Archive' }) } | Should -Throw '*does not match the selection*'
     }
     It 'keeps the store of one copy for that copy: another choice, or an export store, is refused' {
@@ -434,6 +443,152 @@ Describe 'Copy: the chained run against the fake service' {
         $text = Invoke-Entry $svc $p
         $global:MbtEntryExit | Should -Be 0
         $svc.ItemsOf($script:Dst).Count | Should -Be 4
+    }
+}
+
+Describe 'Copy: the Primary and the Archive of a mailbox together' {
+    BeforeEach {
+        Mock Connect-MbtGraph {
+            $session = Set-MbtSession -Graph (& $global:MbtEntryFactory)
+            $session.Token = [pscustomobject]@{
+                Account = $null; Name = ''; TenantId = '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; AppId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; Audience = 'https://graph.microsoft.com'
+                Scopes = @(); Roles = @('MailboxFolder.ReadWrite.All', 'MailboxItem.Read.All', 'MailboxItem.ImportExport.All'); AppOnly = $true; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+            }
+            return $session
+        }
+    }
+    BeforeAll {
+        $script:SrcArchive = "MBX:11111111-2222-3333-4444-5555555555aa@$($script:Tenant)"
+        # the source Primary (10 items) and Archive (3 items), the target Primary and Archive (an Inbox each)
+        function New-BothService {
+            $svc = New-CopyService
+            $null = $svc.AddMailbox($script:SrcArchive)
+            $null = $svc.AddFolder($script:SrcArchive, 'F-AINBOX', 'Inbox')
+            $null = $svc.AddFolder($script:SrcArchive, 'F-OLD', 'Old', 'F-AINBOX')
+            foreach ($i in 1..2) { $null = $svc.AddItem($script:SrcArchive, 'F-AINBOX', "A$i", (New-Message "Archive $i"), "ck-A$i") }
+            $null = $svc.AddItem($script:SrcArchive, 'F-OLD', 'A3', (New-Message 'Archive 3'), 'ck-A3')
+            return $svc
+        }
+        function Get-BothParameters {
+            param([string]$Name, [hashtable]$More = @{})
+            $p = @{
+                Mode = 'Copy'; CertificateThumbprint = ('AB' * 20); ClientId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; TenantId = $script:Tenant; UserPrincipalName = 'alex@contoso.com'
+                Mailbox = 'All'; PrimaryMailboxId = $script:Src; ArchiveMailboxId = $script:SrcArchive; TargetMailboxId = $script:Dst; TargetArchiveMailboxId = $script:DstArchive
+                StorePath = (Join-Path $script:Tmp "store-$Name"); TempPath = (Join-Path $script:Tmp "tmp-$Name"); TargetRoot = 'FromPrimary'; TargetArchiveRoot = 'FromArchive'; ReconcileDelaySeconds = 0; IntervalSeconds = 1
+            }
+            foreach ($k in $More.Keys) { $p[$k] = $More[$k] }
+            return $p
+        }
+    }
+    It 'reads both places into one store, then imports it once for each part: the Primary into the target Primary and the Archive into the target Archive (Mirror), with the steps of both parts in the events' {
+        $svc = New-BothService
+        $events = New-EventsFile 'both'
+        $p = Get-BothParameters 'both' @{ EventsFile = $events }
+        $text = Invoke-Entry $svc $p
+        $global:MbtEntryExit | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 10
+        $svc.ItemsOf($script:DstArchive).Count | Should -Be 3
+        $svc.ItemsOf($script:Src).Count | Should -Be 10 -Because 'the source is only read'
+        (Get-FolderPaths $svc $script:Dst) | Should -Contain 'FromPrimary/Inbox/Projects'
+        (Get-FolderPaths $svc $script:DstArchive) | Should -Contain 'FromArchive/Inbox/Old'
+        (Get-FolderPaths $svc $script:Dst) | Should -Not -Contain 'FromArchive'
+        $text | Should -Match 'Copy finished'
+        $lines = @(Get-Content -LiteralPath $events | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
+        $plan = @($lines | Where-Object { $_.e -eq 'plan' })
+        $plan.Count | Should -Be 1
+        (@($plan[0].steps | ForEach-Object { $_.id }) -join ',') | Should -Be 'tree,list,download,verify,check,folders,send,reconcile,final,check-2,folders-2,send-2,reconcile-2,final-2'
+        @($plan[0].steps | Where-Object { $_.id -eq 'send-2' })[0].title | Should -Be 'Send the items (Archive part)'
+        foreach ($id in 'tree', 'list', 'download', 'verify', 'check', 'folders', 'send', 'reconcile', 'final', 'check-2', 'folders-2', 'send-2', 'reconcile-2', 'final-2') {
+            @($lines | Where-Object { $_.e -eq 'step' -and $_.id -eq $id -and $_.state -eq 'done' }).Count | Should -BeGreaterThan 0 -Because "step $id"
+        }
+        $result = @($lines | Where-Object { $_.e -eq 'result' })
+        $result.Count | Should -Be 1
+        $result[0].exit | Should -Be 0
+        $result[0].counts.exported | Should -Be 13
+        $result[0].counts.done | Should -Be 13
+        $result[0].counts.total | Should -Be 13
+        $status = Get-Content -LiteralPath (Join-Path (Split-Path $events -Parent) 'status.json') -Raw | ConvertFrom-Json
+        $status.task | Should -Be 'mailcopy'
+        $status.destination | Should -Match 'Primary \+ Archive'
+        $status.source | Should -Match 'Primary \+ Archive'
+    }
+    It 'reads the archive of another mailbox with the application: the address is the mailbox whose archive is looked up (here by -ArchiveMailboxId), not the Primary it names' {
+        $svc = New-BothService
+        $p = Get-BothParameters 'other-archive' @{ Mailbox = 'Archive'; MailboxId = 'bea@contoso.com'; UserPrincipalName = 'carl@contoso.com' }
+        $p.Remove('TargetArchiveRoot'); $p.Remove('TargetArchiveMailboxId')
+        $text = Invoke-Entry $svc $p
+        $global:MbtEntryExit | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 3 -Because 'the 3 items of the archive, not the 10 of the Primary'
+        (Get-FolderPaths $svc $script:Dst) | Should -Contain 'FromPrimary/Inbox/Old'
+    }
+    It 'continues where it stopped: a part that is complete is not done again, an item that was read late is imported alone, and nothing is created twice' {
+        $svc = New-BothService
+        $null = $svc.BadItemIds.Add('A2')
+        $p = Get-BothParameters 'both-resume'
+        $text = Invoke-Entry $svc $p
+        $global:MbtEntryExit | Should -Be 2
+        $svc.ItemsOf($script:Dst).Count | Should -Be 10
+        $svc.ItemsOf($script:DstArchive).Count | Should -Be 2
+        $null = $svc.BadItemIds.Remove('A2')
+        $again = Invoke-Entry $svc $p
+        $global:MbtEntryExit | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 10
+        $svc.ItemsOf($script:DstArchive).Count | Should -Be 3
+        $third = Invoke-Entry $svc $p
+        $global:MbtEntryExit | Should -Be 0
+        $third | Should -Match 'the export half is already complete'
+        $svc.ItemsOf($script:Dst).Count | Should -Be 10
+        $svc.ItemsOf($script:DstArchive).Count | Should -Be 3
+    }
+    It 'puts both parts into the target Primary (-TargetLayout Primary) or into the target Archive (-TargetLayout Archive), each below its own folder' {
+        $svc = New-BothService
+        $null = Invoke-Entry $svc (Get-BothParameters 'both-primary' @{ TargetLayout = 'Primary' })
+        $global:MbtEntryExit | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 13
+        $svc.ItemsOf($script:DstArchive).Count | Should -Be 0
+        (Get-FolderPaths $svc $script:Dst) | Should -Contain 'FromArchive/Inbox/Old'
+        $svc2 = New-BothService
+        $pa = Get-BothParameters 'both-archive' @{ TargetLayout = 'archive' }
+        $pa.Remove('TargetArchiveRoot')
+        $null = Invoke-Entry $svc2 $pa
+        $global:MbtEntryExit | Should -Be 0
+        $svc2.ItemsOf($script:Dst).Count | Should -Be 0
+        $svc2.ItemsOf($script:DstArchive).Count | Should -Be 13
+        (Get-FolderPaths $svc2 $script:DstArchive) | Should -Contain 'FromPrimary/Inbox/Old' -Because 'without -TargetArchiveRoot the Archive part goes below -TargetRoot too'
+    }
+    It 'refuses before any request a copy whose part would write into the place it reads, and a target without the id of its archive' {
+        $svc = New-BothService
+        { Invoke-Entry $svc (Get-BothParameters 'both-same' @{ TargetMailboxId = $script:Src }) } | Should -Throw '*same mailbox location*'
+        { Invoke-Entry $svc (Get-BothParameters 'both-same2' @{ TargetArchiveMailboxId = $script:SrcArchive }) } | Should -Throw '*same mailbox location*'
+        $svc.RequestsOf('exportItems') | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 0
+    }
+    It 'plans both parts in one plan (-WhatIf) and creates nothing' {
+        $svc = New-BothService
+        $p = Get-BothParameters 'both-plan' @{ WhatIf = $true }
+        $text = Invoke-Entry $svc $p
+        $global:MbtEntryExit | Should -Be 0
+        $text | Should -Match 'The copy in one plan'
+        $text | Should -Match 'read:  the Primary \+ Archive mailbox'
+        $text | Should -Match 'write: part 1, the Primary of the source into the Primary mailbox .*below the folder ''FromPrimary'''
+        $text | Should -Match 'write: part 2, the Archive of the source into the Archive mailbox .*below the folder ''FromArchive'''
+        $text | Should -Match 'Copy planned \(WhatIf, nothing was written\)'
+        Test-Path -LiteralPath (Join-Path $p.StorePath 'catalog.db') | Should -BeFalse
+        $svc.RequestsOf('importItem') | Should -Be 0
+        $svc.ItemsOf($script:Dst).Count | Should -Be 0
+    }
+    It 'names the steps of the second part in the events of the job only while the second import runs' {
+        $m = Get-Module MailboxTransfer
+        & $m { $script:JobInfo = @{ Phase = 'import'; Part = 2 } }
+        try {
+            (& $m { Get-MbtJobStepKey 'send' }) | Should -Be 'send-2'
+            (& $m { Get-MbtJobStepKey 'tree' }) | Should -Be 'tree'
+            (& $m { Get-MbtJobStepKey 'send-2' }) | Should -Be 'send-2'
+            (& $m { Get-MbtJobStepBase 'send-2' }) | Should -Be 'send'
+            (& $m { Get-MbtJobStepBase 'final' }) | Should -Be 'final'
+            & $m { $script:JobInfo.Part = 1 }
+            (& $m { Get-MbtJobStepKey 'send' }) | Should -Be 'send'
+        } finally { & $m { $script:JobInfo = $null } }
     }
 }
 
