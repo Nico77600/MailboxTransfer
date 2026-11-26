@@ -18,6 +18,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 ### Fixed
 - **The archive no longer disappears silently**: when Microsoft Graph cannot look it up (no `User.Read.All`), the console says so and lets you type the archive mailbox id (**Where to look**); a mailbox without an archive says that too.
 - The command line gives the same reason when you ask for an archive it cannot find.
+- The command line finds your own Primary mailbox by its address, as the console does, when Microsoft Graph cannot give its id (no `User.Read.All`).
 
 ## 1.3.0 — 2026-11-25
 

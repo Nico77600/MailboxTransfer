@@ -2279,8 +2279,8 @@ function Import-MbtItem {
 function Resolve-MbtMailboxId {
     <#
     .SYNOPSIS
-        The physical id of the primary or archive mailbox: the id given, else (primary only) read from Graph, else an error that says
-        how to get it (no API lists the archive of a user: Exchange Online PowerShell, Get-MailboxLocation).
+        The physical id of the primary or archive mailbox: the id given, else (primary only) read from Graph, else found by its address through the
+        import-export API (Resolve-MbtMailboxAddress), else an error that says how to get it (no API lists the archive of a user: Exchange Online PowerShell, Get-MailboxLocation).
     #>
     [CmdletBinding()]
     param(
@@ -2307,7 +2307,10 @@ function Resolve-MbtMailboxId {
     if ($known.Count -gt 1) {
         throw ("$($known.Count) $Mailbox mailboxes are known for ${UserPrincipalName}: " + (($known | ForEach-Object { $_.MailboxId }) -join ', ') + '. Choose one with -MailboxId.')
     }
-    if ($Mailbox -eq 'Primary') { return Get-MbtPrimaryMailboxId -UserPrincipalName $UserPrincipalName -TenantId $TenantId }
+    if ($Mailbox -eq 'Primary') {
+        try { return Resolve-MbtMailboxAddress -Address $UserPrincipalName -TenantId $TenantId }
+        catch { throw ($_.Exception.Message + " For the mailbox of $UserPrincipalName itself, -PrimaryMailboxId MBX:<mailbox guid>@$TenantId does the same.") }
+    }
     if ($Mailbox -eq 'AuxArchive') {
         throw ("No auxiliary archive of $UserPrincipalName is known yet. Pass -MailboxId MBX:<mailbox guid>@$TenantId (Exchange Online PowerShell: Get-MailboxLocation -User $UserPrincipalName, " +
             "MailboxLocationType AuxArchive), or -LocationsFile with that output; they are also learned from the redirects of an Archive export or import.")
