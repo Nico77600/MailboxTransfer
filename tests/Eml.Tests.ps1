@@ -579,6 +579,20 @@ Describe 'Export from a live mailbox (Mail API $value)' {
         $r.Exported | Should -Be 1
         (Get-ChildItem $dir -Recurse -Filter *.eml).Directory.Name | Should -Be 'Projects'
     }
+    It 'with a period follows the received date of the message, not the date it was moved into the mailbox' {
+        $w = New-World
+        $mime = B "From: a@example.com`nTo: b@example.com`nSubject: Moved later`nDate: Fri, 02 Oct 2026 12:00:00 +0000`nMessage-ID: <M9@example.com>`n`nBody of M9`n"
+        $moved = $w.Mail.AddMessage($script:Src, 'F-INBOX', 'M9', 'Moved later', [datetime]::new(2026, 10, 2, 12, 0, 0, [DateTimeKind]::Utc), $mime.Length)
+        $moved.CreatedUtc = [datetime]::new(2026, 11, 20, 9, 0, 0, [DateTimeKind]::Utc)
+        $w.Fake.Mime["$($script:Src)|M9"] = $mime
+        $dir = Join-Path $script:Tmp 'live-period-received'
+        $src = New-Source $w
+        $src.Period = [MailboxTransfer.ArrivalPeriod]::Parse('2026-10-02T08:00:00Z', '2026-10-03T08:00:00Z')
+        $r = Invoke-Export $src $dir
+        $r.Exported | Should -Be 3
+        (Get-Content -LiteralPath (Join-Path $dir 'manifest.jsonl') -Raw) | Should -Match 'Moved later'
+        $r.OutsidePeriod | Should -Be 3
+    }
     It 'with a period writes only the messages that arrived inside it, both bounds included, and counts the others without calling them skipped' {
         $w = New-World
         $dir = Join-Path $script:Tmp 'live-period'

@@ -149,6 +149,21 @@ $script:Throughput = @{
     ForceStopMinutes = 10             # "Force stop" is offered after this
 }
 
+function Format-MbtGuiLocalTime {
+    <# A date of a message as the console shows it: the local time zone of this PC, yyyy-MM-dd HH:mm, the same whatever the language of Windows. A date with no zone (a store) is UTC. Empty for no date. #>
+    param($Value)
+    if ($null -eq $Value -or "$Value" -eq '') { return '' }
+    $local = $null
+    if ($Value -is [datetimeoffset]) { $local = $Value.LocalDateTime }
+    elseif ($Value -is [datetime]) { $local = $(if ($Value.Kind -eq [DateTimeKind]::Unspecified) { [datetime]::SpecifyKind($Value, [DateTimeKind]::Utc).ToLocalTime() } else { $Value.ToLocalTime() }) }
+    else {
+        $parsed = [datetimeoffset]::MinValue
+        if (-not [datetimeoffset]::TryParse([string]$Value, [cultureinfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsed)) { return '' }
+        $local = $parsed.LocalDateTime
+    }
+    return $local.ToString('yyyy-MM-dd HH:mm', [cultureinfo]::InvariantCulture)
+}
+
 function Format-MbtGuiBytes {
     param([double]$Bytes)
     if ($Bytes -lt 0) { return 'unknown' }

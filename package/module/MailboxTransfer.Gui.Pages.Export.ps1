@@ -435,7 +435,7 @@ function Update-MbtGuiPeriodState {
     $g = $script:Gui; $s = $g.S
     $p = Get-MbtGuiPeriod $s
     if ($g.ContainsKey('PeriodHolder') -and $g.PeriodHolder) { $g.PeriodHolder.Content = $(if ($p.Problem) { New-GuiMessage -Kind bad -Icon x -Text $p.Problem } else { $null }) }
-    if ($g.Browsers.ContainsKey('export')) { Update-MbtGuiPeriodRow $g.Browsers['export'] }
+    if ($g.Browsers.ContainsKey('export')) { Update-MbtGuiPeriodRow $g.Browsers['export']; Update-MbtGuiRowsOutsidePeriod $g.Browsers['export'] }
     if ((Get-MbtGuiScreen) -eq 'exFrom') { Update-MbtGuiExportFromFooter }
 }
 
@@ -450,7 +450,7 @@ function Update-MbtGuiPeriodRow {
     if ($s.Task -notin 'export', 'mailcopy') { $row.Visibility = 'Collapsed'; return }
     $row.Visibility = 'Visible'
     $p = Get-MbtGuiPeriod $s
-    $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items that $($p.Text)" } else { '**Period:** all dates (recommended)' }
+    $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items $($p.Text)" } else { '**Period:** all dates (recommended)' }
     $t = New-GuiText $text 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
     $row.Children.Add($t) | Out-Null
     $change = New-GuiButton -Text $(if ($s.PeriodOpen) { 'Done' } else { 'Change' }) -Small -Name 'PeriodChange' -OnClick { Switch-MbtGuiPeriodDetail }
@@ -486,7 +486,7 @@ function Update-MbtGuiPeriodDetail {
     $g.PeriodHolder = $holder
     $problem = (Get-MbtGuiPeriod $s).Problem
     if ($problem) { $holder.Content = New-GuiMessage -Kind bad -Icon x -Text $problem }
-    $hint = New-GuiText '**Arrived** is the date the item was created in the mailbox. For mail that was migrated or imported into the mailbox, that is the date of the import, not the original date of the message. Both days are included; leave one empty for no limit on that side. Messages you tick one by one are always exported, whatever their date.' 'Hint'
+    $hint = New-GuiText '**Received** is the date shown in the list of messages. Items that have no received date (calendar items, contacts, tasks, notes) use the date they arrived in this mailbox; so does a folder that Microsoft does not let us read the received date of (and so does every folder when the sign-in has no Mail.Read permission). The end of the export says which. Both days are included, in your time zone; leave one empty for no limit on that side. Messages outside the period are greyed in the list. Messages you tick one by one are always exported, whatever their date.' 'Hint'
     $detailHost.Content = (New-GuiStack @($days, $holder, $hint))
 }
 
@@ -537,7 +537,7 @@ function Update-MbtGuiExportFromFooter {
     $period = Get-MbtGuiPeriod $g.S
     $problem = $period.Problem
     $empty = Test-MbtGuiSelectionEmpty $sel
-    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and -not $empty -and -not $problem) -Footer $(if ($problem -and -not $empty) { $problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed })
+    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and -not $empty -and -not $problem) -Footer $(if ($problem -and -not $empty) { $problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed -Period $period })
     $g.ExportSelection = $sel
 }
 
@@ -568,7 +568,7 @@ function Build-MbtGuiExportFromPage {
     $copy = ($s.Task -eq 'mailcopy')
     $problem = $periodProblem
     $empty = Test-MbtGuiSelectionEmpty $sel
-    Set-MbtGuiActions -Footer $(if ($problem -and -not $empty) { $problem } else { Format-MbtGuiSelectionFooter $sel $s.Signed }) -Label $(if ($copy) { 'Continue to the mailbox that receives' } else { 'Continue to destination' }) -Enabled ($s.Signed -and -not $empty -and -not $problem) -OnClick { Move-MbtGuiStep 1 }
+    Set-MbtGuiActions -Footer $(if ($problem -and -not $empty) { $problem } else { Format-MbtGuiSelectionFooter $sel $s.Signed -Period (Get-MbtGuiPeriod $s) }) -Label $(if ($copy) { 'Continue to the mailbox that receives' } else { 'Continue to destination' }) -Enabled ($s.Signed -and -not $empty -and -not $problem) -OnClick { Move-MbtGuiStep 1 }
     return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
@@ -742,7 +742,7 @@ function New-MbtGuiEverythingTable {
     if (@($rows).Count) { $parts += New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', '120', '110') -Right @(1, 2) } else { $parts += New-GuiText 'No place is ticked in Where to look.' 'Muted' }
     $parts += New-GuiText $(if ($s.RecoverableItems) { 'Everything: the whole tree of each place, with the deleted items (Recoverable Items), as you ticked in Where to look.' } else { 'Everything: the whole tree of each place, without the deleted items (Recoverable Items), as chosen in Where to look.' }) 'Hint'
     $period = Get-MbtGuiPeriod $s
-    if ($period.Active) { $parts += New-GuiText "**Period: items that $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied while the items are listed." 'Hint' }
+    if ($period.Active) { $parts += New-GuiText "**Period: items $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied to the received date while the items are listed." 'Hint' }
     return (New-GuiStack $parts)
 }
 
@@ -779,7 +779,7 @@ function New-MbtGuiPlanTable {
     $tbl = New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', $(if ($period.Active) { '120' } else { '90' }), '110') -Right @(1, 2)
     if (-not @($rows).Count) { $tbl = New-GuiText 'Nothing ticked.' 'Muted' }
     $parts = @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint'))
-    if ($period.Active) { $parts += New-GuiText "**Period: items that $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied while the items are listed: the end of the export gives the exact numbers (kept, outside the period). Messages ticked one by one are always exported." 'Hint' }
+    if ($period.Active) { $parts += New-GuiText "**Period: items $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied to the received date while the items are listed: the end of the export gives the exact numbers (kept, outside the period) and says if a folder or an item used the arrival date instead. Messages ticked one by one are always exported." 'Hint' }
     if ($anyUnknown) { $parts += New-GuiText 'Microsoft does not give the size of calendar, contact and task folders in advance. The check reads the items of a small one to find it; the size of a larger one is known once the export runs.' 'Hint' }
     return (New-GuiStack $parts)
 }
@@ -905,7 +905,7 @@ function New-MbtGuiExportPlanWhat {
     $period = Get-MbtGuiPeriod $s
     $everything = [bool]($sel.PSObject.Properties['Everything'] -and $sel.Everything)
     $chosen = if ($everything) { 'everything in the places you ticked' } else { 'the items you chose' }
-    $steps = @($(if ($period.Active) { "Read the folder tree and list $chosen, keeping the ones that $($period.Text)." } else { "Read the folder tree and list $chosen." }), 'Download them into the export store, checking each one.')
+    $steps = @($(if ($period.Active) { "Read the folder tree and list $chosen, keeping the items $($period.Text)." } else { "Read the folder tree and list $chosen." }), 'Download them into the export store, checking each one.')
     if ($pst) { $steps += "Write the PST files ($($s.SplitGB) GB at most each) with the real folder tree."; $steps += 'Check every PST file.' }
     elseif ($s.Dest -eq 'eml') { $steps += 'Write one .eml file per message, in the real folder tree.' }
     else { $steps += 'Check the store.' }
@@ -914,7 +914,7 @@ function New-MbtGuiExportPlanWhat {
     $eta = Get-MbtGuiPlanEta -Task export -Bytes $sel.Bytes
     $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated yet: Microsoft does not give the size of calendar, contact and task folders in advance. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
     $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
-    $periodFact = @(); if ($period.Active) { $periodFact = @(, @('Period', "items that $($period.Text) $([char]0x00B7) the exact numbers come when the items are listed")) }
+    $periodFact = @(); if ($period.Active) { $periodFact = @(, @('Period', "items $($period.Text) $([char]0x00B7) the exact numbers come when the items are listed")) }
     $facts = New-GuiFacts ($shared + $periodFact + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
         @('Size', "$(if ($sel.PSObject.Properties['Everything'] -and $sel.Everything) { 'Everything: ' })$(Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)) $([char]0x00B7) $(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $(if ($period.Active) { $etaText.TrimEnd('.', ' ') + '. It can be shorter: only the items of the period are downloaded.' } else { $etaText }) 'Body'))))
     return (New-GuiCard -Title 'What will be done' -Content @($ol, $facts))

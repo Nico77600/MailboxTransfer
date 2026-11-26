@@ -2436,7 +2436,7 @@ function Write-MbtThrottleReport {
 function ConvertTo-MbtArrivalPeriod {
     <#
     .SYNOPSIS
-        The period of an export from the two bounds the operator gave (-ArrivedFrom, -ArrivedTo): a [MailboxTransfer.ArrivalPeriod], or $null when no bound is given.
+        The period of an export from the two bounds the operator gave (-ReceivedFrom, -ReceivedTo): a [MailboxTransfer.ArrivalPeriod], or $null when no bound is given.
     .DESCRIPTION
         A bound is text in ISO form, read the same way whatever the language of Windows: yyyy-MM-dd (a whole day of the local time zone: the start of the day for the first bound, the end of it
         for the last one) or yyyy-MM-ddTHH:mm[:ss] with an optional Z or +hh:mm (used as it is). A date and time value is used as it is. A bound that is not a date, or a start after the end, is an error
@@ -2457,8 +2457,50 @@ function ConvertTo-MbtArrivalPeriod {
     try { return [MailboxTransfer.ArrivalPeriod]::Parse($a, $b) }
     catch {
         $inner = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
-        throw "-ArrivedFrom / -ArrivedTo: $($inner.Message)"
+        throw "-ReceivedFrom / -ReceivedTo: $($inner.Message)"
     }
+}
+
+function Get-MbtReceivedDateAvailability {
+    <#
+    .SYNOPSIS
+        Can the received date of the messages be asked to the Mail API with this session? Available, and Reason when it cannot.
+    .DESCRIPTION
+        The period of an export is the received date of the messages (receivedDateTime of the Mail API), which needs Mail.Read or Mail.ReadBasic. A delegated token that holds neither cannot
+        give it: the period then filters on the arrival date in the mailbox. An application token with no role at all is not refused here (the permissions may come from Exchange RBAC for
+        Applications): the Mail API decides, folder by folder, and a folder it refuses is filtered on the arrival date and reported. No session: available.
+    #>
+    [CmdletBinding()]
+    param($Session = $script:Session)
+    $mail = 'Mail.Read', 'Mail.ReadBasic', 'Mail.ReadWrite'
+    $have = $null
+    if ($Session -and $Session.PSObject.Properties['Token'] -and $Session.Token) {
+        $token = $Session.Token
+        if (Test-MbtAppOnly $Session) { $roles = @($(if ($token.PSObject.Properties['Roles']) { $token.Roles })); if ($roles.Count) { $have = $roles } }
+        elseif ($token.PSObject.Properties['Scopes']) { $have = @($token.Scopes) }
+    }
+    if ($null -eq $have -or @($have | Where-Object { $_ -in $mail }).Count) { return [pscustomobject]@{ Available = $true; Reason = '' } }
+    return [pscustomobject]@{ Available = $false; Reason = 'the token has neither Mail.Read nor Mail.ReadBasic, so the Mail API cannot give the received date: grant Mail.Read (or Mail.ReadBasic) to the application and sign in again' }
+}
+
+function Get-MbtPeriodDateNote {
+    <#
+    .SYNOPSIS
+        Which date the period of an export used, from the results of its export jobs: Date (received, arrival or mixed) and Text (a sentence for the operator).
+    .DESCRIPTION
+        One result per mailbox location of the run; the folders and counts are added together. Without a result that has a period: Date and Text are empty.
+    #>
+    [CmdletBinding()]
+    param([object[]]$Result)
+    Initialize-MbtEngine
+    $with = @($Result | Where-Object { $_ -and $_.PSObject.Properties['PeriodDate'] -and $_.PeriodDate })
+    if (-not $with.Count) { return [pscustomobject]@{ Date = ''; Text = '' } }
+    $dates = @($with | ForEach-Object { [string]$_.PeriodDate } | Select-Object -Unique)
+    $date = if ($dates.Count -eq 1) { $dates[0] } else { 'mixed' }
+    $unavailable = [string]@($with | Where-Object { $_.ReceivedDateUnavailable } | Select-Object -First 1 | ForEach-Object { $_.ReceivedDateUnavailable })
+    $folders = [string[]]@($with | ForEach-Object { @($_.FoldersOnArrivalDate) } | Where-Object { $_ })
+    $onArrival = [long]($with | Measure-Object -Property ItemsOnArrivalDate -Sum).Sum
+    return [pscustomobject]@{ Date = $date; Text = [MailboxTransfer.PeriodNote]::Describe($date, $unavailable, $folders, $onArrival) }
 }
 
 function Export-MbtMailbox {
@@ -2489,7 +2531,7 @@ function Export-MbtMailbox {
         # Also export Recoverable Items (deleted items, purges, versions, holds), under the folder "Recoverable Items": -RecoverableItemsFolders names the folders (default Deletions, Purges, Versions, DiscoveryHolds)
         [switch]$IncludeRecoverableItems,
         [string[]]$RecoverableItemsFolders,
-        # Only the items that arrived in the mailbox inside this period are exported (a [MailboxTransfer.ArrivalPeriod]); items named one by one in -Plan are always taken
+        # Only the messages received inside this period are exported (a [MailboxTransfer.ArrivalPeriod]; the arrival date for what has no received date); items named one by one in -Plan are always taken
         $Period,
         [Parameter(Mandatory)][string]$TempPath,
         [int]$IntervalSeconds = 5
@@ -2503,7 +2545,11 @@ function Export-MbtMailbox {
     if ($Plan) { $o.Plan = $Plan }
     $o.IncludeRecoverableItems = [bool]$IncludeRecoverableItems
     if ($RecoverableItemsFolders) { $o.RecoverableItemsFolders = [string[]]$RecoverableItemsFolders }
-    if ($Period) { $o.Period = $Period }
+    if ($Period) {
+        $o.Period = $Period
+        $availability = Get-MbtReceivedDateAvailability -Session $s
+        if (-not $availability.Available) { $o.ReceivedDateUnavailable = $availability.Reason }
+    }
     $job = [MailboxTransfer.ExportJob]::Start($s.Api, $Store, $o)
     $null = Wait-MbtTransferJob -Job $job -IntervalSeconds $IntervalSeconds
     $r = $job.Result
@@ -2514,6 +2560,7 @@ function Export-MbtMailbox {
     if ($r.Period) {
         Write-MbtItem INFO ("period ({0}): {1} item(s) kept, {2} outside the period left out (not an error)" -f $r.Period.Describe(), (Format-MbtNumber $r.Inventoried), (Format-MbtNumber $r.ItemsOutsidePeriod))
         if ($r.ItemsWithoutDate -gt 0) { Write-MbtItem INFO ("{0} item(s) without a date were kept" -f (Format-MbtNumber $r.ItemsWithoutDate)) }
+        if ($r.PeriodDate) { Write-MbtItem $(if ($r.PeriodDate -eq 'received') { 'INFO' } else { 'WARN' }) ("period date: {0}" -f $r.PeriodDateText) }
     }
     if ($r.RecoverableFolders -gt 0) { Write-MbtItem INFO ("Recoverable Items: {0} folder(s) recorded under '{1}'. An import puts them in a normal folder named '{2}', never back into Recoverable Items." -f $r.RecoverableFolders, [MailboxTransfer.RecoverableItems]::TopName, [MailboxTransfer.RecoverableItems]::RestoredName) }
     if ($r.FoldersMoved -gt 0 -or $r.AuxMailboxes.Count -gt 0) {
@@ -3570,7 +3617,7 @@ Export-ModuleMember -Function @(
     'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath',
     'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem',
     'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
-    'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
+    'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Get-MbtReceivedDateAvailability', 'Get-MbtPeriodDateNote', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
     'Get-MbtCopyChoiceKey', 'Get-MbtCopyStorePath', 'Get-MbtCopyJobName', 'Set-MbtCopyStoreKey', 'Get-MbtCopyEstimate', 'Format-MbtCopyDuration', 'Show-MbtCopyPlan'
     'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
     'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'

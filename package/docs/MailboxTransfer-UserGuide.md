@@ -133,7 +133,7 @@ A mailbox is protected. The tool signs in as **you**, and can only do what **you
 
 | I want to… | Ask your administrator for… |
 |---|---|
-| **Browse and export** a mailbox | The sign-in set up (steps A and B below) with the **read** rights (`MailboxFolder.Read`, `MailboxItem.Read`, `MailboxItem.Export`). Add `Mail.Read` if you want to see subjects and senders while you browse. |
+| **Browse and export** a mailbox | The sign-in set up (steps A and B below) with the **read** rights (`MailboxFolder.Read`, `MailboxItem.Read`, `MailboxItem.Export`). Add `Mail.Read` if you want to see subjects and senders while you browse, and to filter an export on the **received date** of the messages (the period of section 4.4); without it the period follows the date the item arrived in the mailbox, and the job says so. |
 | **Import** into a mailbox | The same set-up with the **write** rights (`MailboxFolder.ReadWrite`, `MailboxItem.Read`, `MailboxItem.ImportExport`). For `.eml` files with the Exchange conversion option, also `Mail.ReadWrite`. |
 | Work in a **shared mailbox**, or in another person's mailbox | The **FullAccess** right on that mailbox: it is enough to browse and export. To **import** there, the tool must sign in without a person (step C below): ask for it. |
 | Skip typing the mailbox ids (optional) | `User.Read.All`. Without it the tool cannot see the archive of a mailbox: the console says so and you type the archive id once (section 4.3, **If not**). |
@@ -319,12 +319,14 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 > [!NOTE]
 > **This is read only.** Browsing never changes the mailbox. Deleted items you ticked are exported like any folder, but saved **apart**, under a folder named *Recoverable Items*, never mixed with your normal folders.
 
-**Only some dates (optional).** Under the browser, the line under your selection says **Period: all dates (recommended)**. Click **Change** to open two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The line then says *Period: items that arrived between 2026-01-01 and 2026-03-31*; **Done** closes the day boxes and **All dates** puts everything back. The same period applies to everything you ticked, in every place you looked in. If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
+**Only some dates (optional).** Under the browser, the line under your selection says **Period: all dates (recommended)**. Click **Change** to open two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The line then says *Period: items received between 2026-10-28 and 2026-11-01*; **Done** closes the day boxes and **All dates** puts everything back. The same period applies to everything you ticked, in every place you looked in. While a period is chosen, the messages of the list whose date is outside it are **greyed** and say *outside the period*, so that what you see is what goes (a message you tick one by one goes anyway). If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
 
-![The Period line opened. 1: the line, with Done and All dates. 2: the day boxes From and To. 3: what arrived means](images/console-from-period-light.png)
+![The Period line opened. 1: the line, with Done and All dates. 2: the day boxes From and To. 3: what received means](images/console-from-period-light.png)
 
 > [!NOTE]
-> **What "arrived" means.** It is the date the item was created in the mailbox, the one Microsoft gives when it lists the items. For mail that was **migrated or imported** into the mailbox, it is the date of that import, not the original date of the message. A day is a whole day of the time zone of this PC. An item that has no date at all is **kept**, and counted.
+> **What "received" means.** It is the **received date** of the message, the one the list shows and a mail client shows. In an archive it is not the date the message was moved there, and for mail that was migrated or imported it is not the date of the import: the period follows the date you see. Asking for it needs the permission **Mail.Read** (or **Mail.ReadBasic**), the one that gives the subjects in the list. A day is a whole day of the time zone of this PC, and the dates of the list and of the reading pane are shown in that same time zone (as Outlook does), so a message at 23:30 on a day is on that day. An item that has no date at all is **kept**, and counted.
+>
+> **Items that are not messages** (calendar items, contacts, tasks, notes) have no received date: they keep the date they **arrived** in the mailbox, which is the date Microsoft gives when it lists them. The same goes for a **folder that Microsoft does not let us read the received date of** and for **every folder when the sign-in has no Mail.Read permission**: nothing is lost and nothing stops, but the period then follows the arrival date there (in an archive: the date the item was moved to it), and the end of the job says it in the sentence **Date used**, with the folders and the reason.
 >
 > **Messages you tick one by one are always exported**, whatever their date: the period applies to the items listed from the folders you ticked. The items left out are **skipped, not an error**: they do not make the job "Not finished", and the end of the job says how many there were.
 
@@ -366,7 +368,7 @@ Click **Continue to Verify**.
 > **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 9.
 
 > [!NOTE]
-> **With a period, the numbers are "at most".** Microsoft cannot say how many items of a folder arrived in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31`). The period is applied while the items are listed; the exact numbers come at the end of the job.
+> **With a period, the numbers are "at most".** Microsoft cannot say how many messages of a folder were received in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31`). The period is applied to the received date while the items are listed; the exact numbers come at the end of the job.
 
 ![The Verify page of an export with a period. 1: the checks. 2: the Period line of what will be done. 3: the note under what is in it. 4: the command line with the two days. 5: the Start button](images/console-verify-export-period-light.png)
 
@@ -426,7 +428,7 @@ In **Continue a job**, **Continue** on an export first shows the **Resume** page
 | **Needs a decision** | amber | An item needs your choice (chapter 5, step 7). |
 | **Error** | red | The job stopped. Read the message. Your files are kept. |
 
-With a period, the page also says it: *Period: items that arrived between 2026-01-01 and 2026-03-31. 1,208 items kept, 4,612 outside the period (skipped, not an error)*, and, if there were some, how many items had no date and were kept. The same numbers are in the report of the job (the tiles **Items kept**, **Outside the period**, **Kept without a date**) and in the page of all the jobs.
+With a period, the page also says it: *Period: items received between 2026-01-01 and 2026-03-31. 1,208 items kept, 4,612 outside the period (skipped, not an error). Date used: received date of the messages*, and, if there were some, how many items had no date and were kept. When the arrival date was used for some folders, or everywhere because the sign-in has no Mail.Read, the sentence says so, with the folders and the reason, and the message is orange. The same numbers are in the report of the job (the tiles **Items kept**, **Outside the period**, **Kept without a date**) and in the page of all the jobs.
 
 Under the result, **What to do next** offers buttons for the logical next step: after a finished export, **Import into a mailbox** and **How to open the PST in Outlook**; after a stopped one, **Continue**. **The same from the command line** shows the commands that were run, with **Copy**. **Reports and log** opens the report, the log or the folder. The report is a page for your browser, **report.html**, written at the end of every job: the result, the numbers, every step with its start, end and duration, what happened in time order (waits for Microsoft, sleeps of the PC, warnings, errors), one row for each folder, and what to do next. It needs no network and can be sent as it is. **report.csv** stays next to it for a spreadsheet; a job made by an older version has only the CSV. **Start another task** (bottom right) goes back to the Task page.
 
@@ -750,7 +752,7 @@ The same task is one command, `-Mode Copy`. You can look at the plan first, then
 
 ```powershell
 .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -TargetRoot 'Copy of projects' -WhatIf
-.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -Folder Inbox/Projects -TargetRoot 'Copy of projects' -ArrivedFrom 2026-01-01
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -Folder Inbox/Projects -TargetRoot 'Copy of projects' -ReceivedFrom 2026-01-01
 # the Primary and the Archive together, with the application: each part into its own place and folder
 .\Invoke-MailboxTransfer.ps1 -Mode Copy -AppOnly -UserPrincipalName alex@contoso.com -Mailbox All -TargetMailboxId adele.vance@contoso.com -TargetLayout Mirror -TargetRoot 'Mail of Alex' -TargetArchiveRoot 'Archive of Alex'
 ```
@@ -788,7 +790,7 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 ### Exporting many mailboxes
 
 > [!NOTE]
-> On the command line, `-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31` keeps only the items that arrived between two days (the same as the **Period** box of the console, section 4.4). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps **one period for a mailbox**: running the same export again with another period is refused (use another `-StorePath`); the console gives an export with a period a folder of its own, so it never meets another one.
+> On the command line, `-ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31` keeps only the messages received between two days (the same as the **Period** box of the console, section 4.4; `-ArrivedFrom` and `-ArrivedTo` are accepted as other names). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps **one period for a mailbox**: running the same export again with another period is refused (use another `-StorePath`); the console gives an export with a period a folder of its own, so it never meets another one.
 
 If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a **CSV file** (one mailbox on each line) and start **one command**. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one **batch** that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the **command line**: the console shows a batch, read only, but does not start one. The same way works for **imports**: see *Importing many mailboxes* below.
 
@@ -931,7 +933,7 @@ The whole file is checked **before anything starts**, and every problem is print
 .\Invoke-MailboxTransfer.ps1 -Mode Copy -ResumeBatch Move1
 ```
 
-`-Mailbox`, `-TargetMailbox` and `-TargetRoot` are the defaults of the lines that leave the column empty. The options that choose what to read (`-Folder`, `-ArrivedFrom`, `-ArrivedTo`, `-IncludeRecoverableItems`) and the usual ones (`-MappingFile`, `-Force`, `-Concurrency`, `-MaxAttempts`...) apply to every line. What belongs to one copy (`-SelectionFile`, `-MailboxId`, `-TargetMailboxId`, `-StorePath` of one store, `-JobName`) is refused: it is in the list. `-StorePath` is here the **folder that holds the stores** of the batch.
+`-Mailbox`, `-TargetMailbox` and `-TargetRoot` are the defaults of the lines that leave the column empty. The options that choose what to read (`-Folder`, `-ReceivedFrom`, `-ReceivedTo`, `-IncludeRecoverableItems`) and the usual ones (`-MappingFile`, `-Force`, `-Concurrency`, `-MaxAttempts`...) apply to every line. What belongs to one copy (`-SelectionFile`, `-MailboxId`, `-TargetMailboxId`, `-StorePath` of one store, `-JobName`) is refused: it is in the list. `-StorePath` is here the **folder that holds the stores** of the batch.
 
 **Lines that share a mailbox wait for each other.** Two lines that write into **the same target mailbox location** never run together, whatever `-ParallelMailboxes` says. Two lines that **read the same source location** do not either: a source copied into two targets is read **once** (one store, kept for the second line), and Microsoft slows down a mailbox that is read by two jobs at a time. Different mailboxes run side by side. The plan says how many lines wait.
 
@@ -1068,7 +1070,7 @@ Every word below is a word you see on the screen or in this guide, explained wit
 | **Export store** | A folder with what this tool downloaded, checked. | The **To** page, *Export store only*. |
 | **PST file** | A file Outlook opens that holds a mailbox. | The **To** page, *PST files*. |
 | **Selection** | What you ticked. | **Your selection**, on the **From** page. |
-| **Period** | The days between which an item must have arrived in the mailbox to be exported. *All dates* is the default. | The line **Period**, under the browser of the **From** page. |
+| **Period** | The days between which a message must have been received to be exported (the date the list shows). *All dates* is the default. | The line **Period**, under the browser of the **From** page. |
 | **Plan** | The list of what will be done, with the time. Nothing starts before you press Start. | The **Verify** page. |
 | **Job** | One run: an export, an import, a check. | **Continue a job** on the **Task** page. |
 | **Continue** | Run the same job again. Only what is left is done. | The **Task** page, and the **Next steps** page. |

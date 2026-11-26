@@ -90,9 +90,14 @@ function Place-MbtGuiBrowser {
 }
 
 function Format-MbtGuiSelectionFooter {
-    param($Selection, [bool]$Signed)
+    <# The line under the browser. -Period: the period of an export; the ticked messages that are outside it are not exported unless they are ticked one by one, and the footer says it. #>
+    param($Selection, [bool]$Signed, $Period)
     if ($Selection.PSObject.Properties['Everything'] -and $Selection.Everything) { if ($Signed) { return (Format-MbtGuiEverythingText $Selection) } else { return 'Sign in first.' } }
-    if ($Selection.Items -gt 0) { return ('**{0} ticked:** {1}, {2}' -f (Format-MbtGuiQuantity $Selection.Folders 'folder'), (Format-MbtGuiSelectionItems $Selection -WithNoun), (Format-MbtGuiSelectionSize $Selection)) }
+    if ($Selection.Items -gt 0) {
+        $line = '**{0} ticked:** {1}, {2}' -f (Format-MbtGuiQuantity $Selection.Folders 'folder'), (Format-MbtGuiSelectionItems $Selection -WithNoun), (Format-MbtGuiSelectionSize $Selection)
+        if ($Period -and $Period.Active) { $line += ' - in a ticked folder only the messages received in the period go' }
+        return $line
+    }
     if ($Signed) { return 'Choose Everything, or tick what to keep, then continue.' }
     return 'Sign in first.'
 }

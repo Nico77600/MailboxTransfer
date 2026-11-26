@@ -731,7 +731,7 @@ function Get-MbtJobPeriodResult {
 }
 
 function Get-MbtPeriodListNote {
-    <# "25 items outside the period left out" (the items of the earlier locations of the run included), or $null when the job has no period or has not counted yet. #>
+    <# "25 items outside the period left out; on the received date" (the items of the earlier locations of the run included), or $null when the job has no period or has not counted yet. #>
     param($Job)
     $result = Get-MbtJobPeriodResult -Job $Job
     if (-not $result) { return $null }
@@ -739,6 +739,14 @@ function Get-MbtPeriodListNote {
     $outside = $before + [long]$result.ItemsOutsidePeriod
     $text = '{0} {1} outside the period left out' -f $outside.ToString('N0', [Globalization.CultureInfo]::InvariantCulture), $(if ($outside -eq 1) { 'item' } else { 'items' })
     if ([long]$result.ItemsWithoutDate -gt 0) { $text += '; {0} without a date kept' -f ([long]$result.ItemsWithoutDate).ToString('N0', [Globalization.CultureInfo]::InvariantCulture) }
+    if ($result.PSObject.Properties['PeriodDate'] -and $result.PeriodDate) {
+        $folders = @($result.FoldersOnArrivalDate).Count
+        $text += switch ([string]$result.PeriodDate) {
+            'received' { '; on the received date' }
+            'arrival' { '; on the arrival date, not the received date' }
+            default { "; on the received date, $folders $(if ($folders -eq 1) { 'folder' } else { 'folders' }) on the arrival date" }
+        }
+    }
     return $text
 }
 

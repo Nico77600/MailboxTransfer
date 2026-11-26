@@ -26,17 +26,17 @@ if ($PSBoundParameters.ContainsKey('Rest') -and $Rest) {
     }
 }
 
-# the period of an export (-ArrivedFrom / -ArrivedTo), as the console gives it: yyyy-MM-dd
+# the period of an export (-ReceivedFrom / -ReceivedTo), as the console gives it: yyyy-MM-dd
 $periodFrom = ''; $periodTo = ''
 if ($PSBoundParameters.ContainsKey('Rest') -and $Rest) {
     for ($i = 0; $i -lt $Rest.Count - 1; $i++) {
-        if ([string]$Rest[$i] -ieq '-ArrivedFrom') { $periodFrom = [string]$Rest[$i + 1] }
-        if ([string]$Rest[$i] -ieq '-ArrivedTo') { $periodTo = [string]$Rest[$i + 1] }
+        if ([string]$Rest[$i] -in '-ReceivedFrom', '-ArrivedFrom') { $periodFrom = [string]$Rest[$i + 1] }
+        if ([string]$Rest[$i] -in '-ReceivedTo', '-ArrivedTo') { $periodTo = [string]$Rest[$i + 1] }
     }
 }
 $period = $null
 if ($Scenario -eq 'export' -and ($periodFrom -or $periodTo)) {
-    $period = [ordered]@{ text = $(if ($periodFrom -and $periodTo) { "arrived between $periodFrom and $periodTo" } elseif ($periodFrom) { "arrived from $periodFrom" } else { "arrived until $periodTo" }) }
+    $period = [ordered]@{ text = $(if ($periodFrom -and $periodTo) { "received between $periodFrom and $periodTo" } elseif ($periodFrom) { "received from $periodFrom" } else { "received until $periodTo" }) }
     if ($periodFrom) { $period.from = $periodFrom }
     if ($periodTo) { $period.to = $periodTo }
 }
@@ -82,7 +82,7 @@ switch ($Ending) {
     'error' { Write-Evt @{ e = 'error'; code = 'disk-full'; msg = 'The disk is full.'; tech = 'IOException: There is not enough space on the disk.' }; Write-Evt @{ e = 'result'; exit = 1; complete = $false; next = 'retry' }; exit 1 }
     default {
         $counts = @{ done = $total; failed = 0; bytes = [long]$bytesTotal; recovered = $total; partial = 0; lost = 0; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 } }
-        if ($period) { $counts.kept = $total + 1; $counts.outsidePeriod = 14; $counts.withoutDate = 1 }
+        if ($period) { $counts.kept = $total + 1; $counts.outsidePeriod = 14; $counts.withoutDate = 1; $counts.periodDate = 'received'; $counts.periodNote = 'received date of the messages' }
         Write-Evt @{ e = 'result'; exit = 0; complete = $true; next = 'done'; counts = $counts }
         exit 0
     }

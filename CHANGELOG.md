@@ -13,6 +13,7 @@ All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow
 
 ### Changed
 - **The console follows your rights**: as Me it names your mailbox and does not offer *Copy to another mailbox*, which needs the application sign-in.
+- **The export period now filters on the received date** (the date the list shows) instead of the date the item arrived in the mailbox: `-ReceivedFrom` / `-ReceivedTo` (`-ArrivedFrom` / `-ArrivedTo` still work), and the messages outside the period are greyed in the list; items without a received date, a folder Microsoft refuses and a sign-in without Mail.Read keep the arrival date, and the report says so.
 
 ### Fixed
 - **The archive no longer disappears silently**: when Microsoft Graph cannot look it up (no `User.Read.All`), the console says so and lets you type the archive mailbox id (**Where to look**); a mailbox without an archive says that too.

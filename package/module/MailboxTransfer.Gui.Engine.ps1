@@ -38,7 +38,8 @@ function ConvertTo-MbtGuiMessageRow {
     $r.Id = [string]$Item.Id; $r.Tag = $Item
     $r.SizeBytes = [long]$Item.Size; $r.SizeText = Format-MbtGuiBytes $Item.Size
     $d = if ($Item.Received) { $Item.Received } elseif ($Item.Created) { $Item.Created } else { $null }
-    $r.DateText = if ($d) { ([datetimeoffset]$d).UtcDateTime.ToString('yyyy-MM-dd HH:mm') } else { '' }
+    $r.DateText = if ($d) { Format-MbtGuiLocalTime $d } else { '' }
+    if ($d) { $r.When = [datetimeoffset]$d }
     if ($HeadersOnly -or -not $Item.HasDetails) {
         $r.From = '(sender not available)'; $r.Subject = '(subject not available before export)'; $r.SubjectNa = $true
     } else {
@@ -343,7 +344,7 @@ function New-MbtGuiRealEngine {
             $att = @($p.Attachments | ForEach-Object { "$($_.Name)   $(Format-MbtGuiBytes $_.Size)" }) -join "`n"
             & $OnDone ([pscustomobject]@{
                     Subject = [string]$h.Subject; From = [string]$h.FromName; Address = [string]$h.FromAddress; To = (@($p.To | ForEach-Object { $_.ToString() }) -join '; ')
-                    Received = $(if ($h.Received) { ([datetimeoffset]$h.Received).UtcDateTime.ToString('yyyy-MM-dd HH:mm') + ' UTC' } else { '' }); Location = $label
+                    Received = (Format-MbtGuiLocalTime $h.Received); Location = $label
                     Details = ('{0} - {1}' -f $h.ItemClass, (Format-MbtGuiBytes $h.Size)); Attachment = $att; Body = $(if ($p.BodyText) { [string]$p.BodyText } else { [string]$p.BodyPreview }); Available = $true })
         }.GetNewClosure()
     }.GetNewClosure()
@@ -552,7 +553,7 @@ function Read-MbtGuiSourceItems {
             $r = @($res)[0]
             $rows = foreach ($i in $r.Items) {
                 $row = [MailboxTransferGui.MessageRow]::new(); $row.Id = [string]$i.Key; $row.Subject = if ($i.Subject) { [string]$i.Subject } else { '(no subject)' }; $row.From = ''
-                $row.SizeBytes = [long]$i.Size; $row.SizeText = Format-MbtGuiBytes $i.Size; $row.DateText = if ($i.Received) { ([datetime]$i.Received).ToString('yyyy-MM-dd HH:mm') } else { '' }
+                $row.SizeBytes = [long]$i.Size; $row.SizeText = Format-MbtGuiBytes $i.Size; $row.DateText = Format-MbtGuiLocalTime $i.Received
                 $row.Tag = @{ Key = [long]$i.Key; StorePath = $Node.Tag.StorePath }
                 $row
             }
@@ -598,7 +599,7 @@ function Read-MbtGuiSourcePreview {
         } -OnDone {
             param($res)
             $p = @($res)[0]
-            & $OnDone ([pscustomobject]@{ Subject = [string]$p.Subject; From = [string]$p.From; Address = ''; To = [string]$p.To; Received = $(if ($p.Received) { ([datetime]$p.Received).ToString('yyyy-MM-dd HH:mm') + ' UTC' } else { '' }); Location = $label; Details = [string]$p.Class; Attachment = [string]$p.Names; Body = [string]$p.Body; Available = $true })
+            & $OnDone ([pscustomobject]@{ Subject = [string]$p.Subject; From = [string]$p.From; Address = ''; To = [string]$p.To; Received = (Format-MbtGuiLocalTime $p.Received); Location = $label; Details = [string]$p.Class; Attachment = [string]$p.Names; Body = [string]$p.Body; Available = $true })
         }.GetNewClosure()
         return
     }
@@ -624,7 +625,7 @@ function ConvertTo-MbtGuiPstPreview {
     foreach ($n in @($p.Notes)) { $body += "`n`n($n)" }
     if (-not $body.Trim()) { $body = '(this message has no text)' }
     $to = @(@($p.To) + @($p.Cc | ForEach-Object { "Cc: $_" })) -join '; '
-    $when = if ($p.ReceivedUtc) { ([datetime]$p.ReceivedUtc).ToString('yyyy-MM-dd HH:mm') + ' UTC' } else { '' }
+    $when = Format-MbtGuiLocalTime $p.ReceivedUtc
     [pscustomobject]@{ Subject = $(if ($p.Subject) { [string]$p.Subject } else { '(no subject)' }); From = [string]$p.FromName; Address = [string]$p.FromAddress; To = $to; Received = $when; Location = $Location
         Details = ('{0}{1}' -f $p.MessageClass, $(if ($p.SizeBytes -ge 0) { ' - ' + (Format-MbtGuiBytes $p.SizeBytes) } else { '' })); Attachment = $att; Body = $body; Available = $true }
 }

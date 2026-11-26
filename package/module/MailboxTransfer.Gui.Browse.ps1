@@ -157,6 +157,25 @@ function Open-MbtGuiFolder {
     Read-MbtGuiItems $b $Node
 }
 
+function Update-MbtGuiRowsOutsidePeriod {
+    <# An export with a period: the messages listed whose date (the received date the list shows) is outside it are greyed and say so, so that what is seen is what goes. The days are whole days of the local time zone, both included. #>
+    param($Browser)
+    $g = $script:Gui
+    $from = ''; $to = ''
+    if ($Browser.Name -eq 'export' -and $g -and $g.ContainsKey('S') -and $g.S) {
+        $p = Get-MbtGuiPeriod $g.S
+        if ($p.Active) { $from = [string]$p.From; $to = [string]$p.To }
+    }
+    foreach ($r in $Browser.Rows) {
+        $outside = $false
+        if (($from -or $to) -and $null -ne $r.When) {
+            $day = $r.When.ToLocalTime().ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+            $outside = ($from -and [string]::CompareOrdinal($day, $from) -lt 0) -or ($to -and [string]::CompareOrdinal($day, $to) -gt 0)
+        }
+        $r.OutsidePeriod = [bool]$outside
+    }
+}
+
 function Read-MbtGuiItems {
     param($Browser, [MailboxTransferGui.FolderNode]$Node)
     $engine = $script:Gui.Engine
@@ -173,6 +192,7 @@ function Read-MbtGuiItems {
         }
         $Browser.Next = $page.Next
         $Browser.Loading = $false
+        Update-MbtGuiRowsOutsidePeriod $Browser
         $Browser.C.PickAll.IsChecked = $Node.OwnAll
         if ($page.Next) {
             $more = { Read-MbtGuiItems $bw $nd }.GetNewClosure()

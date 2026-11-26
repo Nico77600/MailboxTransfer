@@ -264,9 +264,9 @@ Describe 'The period of an export' {
         $all = Get-MbtGuiPeriod (New-PeriodState)
         $all.Active | Should -BeFalse; $all.Chosen | Should -BeFalse; $all.Problem | Should -BeNullOrEmpty; $all.Text | Should -Be 'all dates'
         $both = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })
-        $both.Active | Should -BeTrue; $both.Text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'; $both.From | Should -Be '2026-03-01'; $both.To | Should -Be '2026-03-31'
-        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })).Text | Should -Be 'arrived from 2026-03-01'
-        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' })).Text | Should -Be 'arrived until 2026-03-31'
+        $both.Active | Should -BeTrue; $both.Text | Should -Be 'received between 2026-03-01 and 2026-03-31'; $both.From | Should -Be '2026-03-01'; $both.To | Should -Be '2026-03-31'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })).Text | Should -Be 'received from 2026-03-01'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' })).Text | Should -Be 'received until 2026-03-31'
         (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'BETWEEN'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'the case of a value does not matter'
         (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-31'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'one day is a period'
     }
@@ -280,31 +280,46 @@ Describe 'The period of an export' {
         (Get-MbtGuiPeriod (New-PeriodState @{ Task = 'import'; Period = 'between'; ArrFrom = '2026-03-01' })).Active | Should -BeFalse
         (Get-MbtGuiPeriod @{ Task = 'export' }).Active | Should -BeFalse
     }
-    It 'puts -ArrivedFrom and -ArrivedTo in the command, as ISO days, and nothing for every date, an open side or a wrong period' {
+    It 'puts -ReceivedFrom and -ReceivedTo in the command, as ISO days, and nothing for every date, an open side or a wrong period' {
         $line = { param($s) $c = @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)); ConvertTo-MbtGuiCommandLine -Command $c -S $s }
-        (& $line (New-PeriodState)) | Should -Not -Match 'Arrived'
-        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })) | Should -Match '-SelectionFile \S+ -ArrivedFrom 2026-03-01 -ArrivedTo 2026-03-31 -StorePath '
+        (& $line (New-PeriodState)) | Should -Not -Match 'Received'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })) | Should -Match '-SelectionFile \S+ -ReceivedFrom 2026-03-01 -ReceivedTo 2026-03-31 -StorePath '
         $open = & $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })
-        $open | Should -Match '-ArrivedFrom 2026-03-01 -StorePath'; $open | Should -Not -Match 'ArrivedTo'
-        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })) | Should -Not -Match 'Arrived' -Because 'the page does not let a wrong period go on'
+        $open | Should -Match '-ReceivedFrom 2026-03-01 -StorePath'; $open | Should -Not -Match 'ReceivedTo'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })) | Should -Not -Match 'Received' -Because 'the page does not let a wrong period go on'
     }
     It 'the same period is the same command under a French culture' {
         $was = [Globalization.CultureInfo]::CurrentCulture
         try {
             [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
             $s = New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-09'; ArrTo = '2026-03-31' }
-            (ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)) -S $s) | Should -Match '-ArrivedFrom 2026-03-09 -ArrivedTo 2026-03-31'
+            (ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)) -S $s) | Should -Match '-ReceivedFrom 2026-03-09 -ReceivedTo 2026-03-31'
         } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
     }
     It 'every parameter of the period exists in the entry script' {
         $declared = (Get-Command (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1')).Parameters.Keys
-        $declared | Should -Contain 'ArrivedFrom'; $declared | Should -Contain 'ArrivedTo'
+        $declared | Should -Contain 'ReceivedFrom'; $declared | Should -Contain 'ReceivedTo'
+    }
+    It 'shows a date of a message in the local time zone, as yyyy-MM-dd HH:mm whatever the culture, and nothing for no date' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            $utc = [datetimeoffset]::new(2026, 10, 31, 23, 30, 0, [TimeSpan]::Zero)
+            $expected = $utc.LocalDateTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+            Format-MbtGuiLocalTime $utc | Should -Be $expected
+            Format-MbtGuiLocalTime '2026-10-31T23:30:00Z' | Should -Be $expected
+            Format-MbtGuiLocalTime ([datetime]::new(2026, 10, 31, 23, 30, 0, [DateTimeKind]::Utc)) | Should -Be $expected
+            Format-MbtGuiLocalTime ([datetime]::new(2026, 10, 31, 23, 30, 0, [DateTimeKind]::Unspecified)) | Should -Be $expected -Because 'a date with no zone is UTC'
+            Format-MbtGuiLocalTime $null | Should -Be ''
+            Format-MbtGuiLocalTime '' | Should -Be ''
+            Format-MbtGuiLocalTime 'not a date' | Should -Be ''
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
     }
     It 'gives an export with a period a store of its own, named after it' {
         Get-MbtGuiPeriodStoreSuffix (New-PeriodState) | Should -Be ''
-        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-2026-03-01_2026-03-31'
-        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' }) | Should -Be '-arrived-from-2026-03-01'
-        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-until-2026-03-31'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' }) | Should -Be '-received-2026-03-01_2026-03-31'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' }) | Should -Be '-received-from-2026-03-01'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' }) | Should -Be '-received-until-2026-03-31'
     }
     It 'writes the numbers of a plan as "at most" for a period, and as they are otherwise' {
         $t = [pscustomobject]@{ Items = 1208; Folders = 12; Bytes = [long](2GB); UnknownSize = 0 }
@@ -323,8 +338,8 @@ Describe 'The period of an export' {
             $null = & (Get-Process -Id $PID).Path -NoProfile -File $demo -EventsFile $events -Speed 1000 -Mode Export @Extra
             return @(Get-Content -LiteralPath $events | ForEach-Object { $_ | ConvertFrom-Json })
         }
-        $with = & $run @('-ArrivedFrom', '2026-01-01', '-ArrivedTo', '2026-03-31')
-        ($with | Where-Object e -EQ 'plan').period.text | Should -Be 'arrived between 2026-01-01 and 2026-03-31'
+        $with = & $run @('-ReceivedFrom', '2026-01-01', '-ReceivedTo', '2026-03-31')
+        ($with | Where-Object e -EQ 'plan').period.text | Should -Be 'received between 2026-01-01 and 2026-03-31'
         ($with | Where-Object { $_.e -eq 'step' -and $_.id -eq 'list' -and $_.state -eq 'done' }).msg | Should -Match 'outside the period left out'
         $result = $with | Where-Object e -EQ 'result'
         $result.counts.outsidePeriod | Should -Be 14; $result.counts.withoutDate | Should -Be 1; $result.counts.kept | Should -BeGreaterThan 0
@@ -1010,10 +1025,10 @@ Describe 'Copy to another mailbox: one command for both parts, the period, the s
     It 'a period is given to the copy as to an export, and the store has its own name for it' {
         $s = $script:Cs.Clone(); $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'
         $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments
-        $a[($a.IndexOf('-ArrivedFrom') + 1)] | Should -Be '2026-01-01'
-        $a[($a.IndexOf('-ArrivedTo') + 1)] | Should -Be '2026-03-31'
+        $a[($a.IndexOf('-ReceivedFrom') + 1)] | Should -Be '2026-01-01'
+        $a[($a.IndexOf('-ReceivedTo') + 1)] | Should -Be '2026-03-31'
         (Get-MbtGuiPeriod $s).Active | Should -BeTrue
-        (Get-MbtGuiPeriodStoreSuffix $s) | Should -Be '-arrived-2026-01-01_2026-03-31'
+        (Get-MbtGuiPeriodStoreSuffix $s) | Should -Be '-received-2026-01-01_2026-03-31'
         $other = $script:Cs.Clone(); $other.Task = 'import'; $other.Period = 'between'; $other.ArrFrom = '2026-01-01'
         (Get-MbtGuiPeriod $other).Active | Should -BeFalse -Because 'only an export and a copy read a live mailbox'
     }

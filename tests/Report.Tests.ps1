@@ -109,22 +109,23 @@ Describe 'The HTML report of a job' {
 
     It 'says the period of an export, and gives the items kept, the items outside the period and the items without a date as numbers, in the page, the data and the CSV' {
         $dir = New-JobFolder 'period'
-        Write-Status $dir @{ jobId = 'exp-3a2b'; task = 'export'; title = 'Export - adele@contoso.com'; mode = 'Export'; store = 'D:\Stores\adele'; state = 'complete'; exitCode = 0; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'arrived between 2026-03-01 and 2026-03-31' } }
+        Write-Status $dir @{ jobId = 'exp-3a2b'; task = 'export'; title = 'Export - adele@contoso.com'; mode = 'Export'; store = 'D:\Stores\adele'; state = 'complete'; exitCode = 0; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'received between 2026-03-01 and 2026-03-31' } }
         Write-Events $dir @(
-            @{ at = 0; e = 'plan'; job = 'exp-3a2b'; task = 'export'; mode = 'Export'; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'arrived between 2026-03-01 and 2026-03-31' }; steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }) }
+            @{ at = 0; e = 'plan'; job = 'exp-3a2b'; task = 'export'; mode = 'Export'; period = @{ from = '2026-02-28T23:00:00.000Z'; to = '2026-03-31T21:59:59.999Z'; text = 'received between 2026-03-01 and 2026-03-31' }; steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }) }
             @{ at = 2; e = 'step'; id = 'tree'; state = 'done' }
             @{ at = 5; e = 'step'; id = 'list'; state = 'done'; msg = '4,612 items outside the period left out; 3 without a date kept' }
             @{ at = 9; e = 'step'; id = 'download'; state = 'done'; done = 1208; total = 1208 }
-            @{ at = 10; e = 'result'; exit = 0; complete = $true; counts = @{ done = 1208; failed = 0; bytes = 6200000000; kept = 1208; outsidePeriod = 4612; withoutDate = 3 }; next = 'done' }
+            @{ at = 10; e = 'result'; exit = 0; complete = $true; counts = @{ done = 1208; failed = 0; bytes = 6200000000; kept = 1208; outsidePeriod = 4612; withoutDate = 3; periodDate = 'mixed'; periodNote = 'received date of the messages; 1 folder(s) filtered on the arrival date: ''Inbox/Projects'' (the Mail API answered HTTP 403 ErrorAccessDenied)' }; next = 'done' }
         )
         $html = Get-Content -LiteralPath (Write-MbtJobHtmlReport -Folder $dir) -Raw
-        $html | Should -Match '<span>Period</span>Items that arrived between 2026-03-01 and 2026-03-31 in the mailbox'
+        $html | Should -Match '<span>Period</span>Items received between 2026-03-01 and 2026-03-31'
+        $html | Should -Match '<span>Date used</span>received date of the messages; 1 folder\(s\) filtered on the arrival date: &#39;Inbox/Projects&#39; \(the Mail API answered HTTP 403 ErrorAccessDenied\)|<span>Date used</span>received date of the messages; 1 folder\(s\) filtered on the arrival date: .Inbox/Projects. \(the Mail API answered HTTP 403 ErrorAccessDenied\)'
         $html | Should -Match 'Items kept</div><div class="tile-value">1,208</div>'
         $html | Should -Match 'Outside the period</div><div class="tile-value">4,612</div>'
         $html | Should -Match 'Kept without a date</div><div class="tile-value">3</div>'
         $html | Should -Match '4,612 items outside the period left out; 3 without a date kept' -Because 'the step that listed the items says it, in the chronology'
         $data = Get-ReportData $html
-        $data.period | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+        $data.period | Should -Be 'received between 2026-03-01 and 2026-03-31'
         $data.counts.outsidePeriod | Should -Be 4612
         $plain = New-StoppedImport 'noperiod'
         (Get-Content -LiteralPath (Write-MbtJobHtmlReport -Folder $plain) -Raw) | Should -Not -Match '<span>Period</span>|Outside the period'

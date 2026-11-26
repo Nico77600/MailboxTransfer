@@ -761,7 +761,7 @@ function Build-MbtGuiMailCopyPlanPage {
     $targetArchive = if ($s.TgtMode2 -eq 'new') { $s.TgtName2 } else { 'the same folder names' }
     $readText = if ($everything) { "Read the folder tree of $($ends.FromKind) and list everything in it." } else { 'Read the folder tree and list the items you ticked.' }
     $steps = [Collections.Generic.List[string]]::new()
-    $steps.Add($(if ($period.Active) { "Read the folder tree and list $(if ($everything) { 'everything' } else { 'the items you ticked' }), keeping the ones that $($period.Text)." } else { $readText }))
+    $steps.Add($(if ($period.Active) { "Read the folder tree and list $(if ($everything) { 'everything' } else { 'the items you ticked' }), keeping the items $($period.Text)." } else { $readText }))
     $steps.Add('Download them into the store on this PC, checking each one.')
     $steps.Add('Open the store again and check it. Here the second part begins.')
     if ($ends.Both) {

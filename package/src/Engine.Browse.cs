@@ -1242,6 +1242,46 @@ namespace MailboxTransfer
         }
 
         // ---------------------------------------------------------------------------------------------
+        //  Received date
+        // ---------------------------------------------------------------------------------------------
+
+        static string FilterInstant(DateTimeOffset when)
+        {
+            return when.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>The $filter of the Mail API for the messages received inside a period (both bounds included, a bound left out is open).</summary>
+        public static string ReceivedFilter(ArrivalPeriod period)
+        {
+            var parts = new List<string>();
+            if (period.From.HasValue) parts.Add("receivedDateTime%20ge%20" + FilterInstant(period.From.Value));
+            if (period.To.HasValue) parts.Add("receivedDateTime%20le%20" + FilterInstant(period.To.Value));
+            return string.Join("%20and%20", parts);
+        }
+
+        /// <summary>
+        /// The ids of the messages of a folder whose received date is inside the period: the Mail API filters on its side ($filter on receivedDateTime, $select=id,receivedDateTime), page after page,
+        /// with the retry and the throttling of every Graph request. The ids are the ones of the import-export listing of the same folder (the same string in the primary mailbox and in the
+        /// main archive). Items that are not messages (calendar items, contacts, tasks, notes) are not in the answer. The ids are compared as they are (they are base64url: the case matters).
+        /// A refusal (HTTP 400, 403, 404, a folder the Mail API cannot read) is a GraphException.
+        /// </summary>
+        public HashSet<string> GetReceivedIds(string mailboxId, string folderId, ArrivalPeriod period, CancellationToken ct = default(CancellationToken))
+        {
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            if (period == null || period.IsEmpty) return ids;
+            string url = Graph.Url("/users/" + mailboxId + "/mailFolders/" + Esc(folderId) + "/messages?$filter=" + ReceivedFilter(period) + "&$select=id,receivedDateTime&$top=1000");
+            foreach (JsonElement e in Graph.EnumerateValues(url, ct))
+            {
+                string id = Json.Str(e, "id");
+                if (id == null) continue;
+                DateTimeOffset? received = Json.Date(e, "receivedDateTime");
+                if (received.HasValue && !period.Contains(received.Value)) continue;
+                ids.Add(id);
+            }
+            return ids;
+        }
+
+        // ---------------------------------------------------------------------------------------------
         //  Preview
         // ---------------------------------------------------------------------------------------------
 

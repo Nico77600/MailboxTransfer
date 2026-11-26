@@ -158,11 +158,11 @@ Describe 'The arguments of a copy' {
         $script:Job = [pscustomobject]@{ Id = 'mailcopy-ab12'; Folder = 'D:\w\jobs\x-mailcopy-ab12'; EventsPath = 'D:\w\jobs\x-mailcopy-ab12\events.jsonl'; StopPath = 'D:\w\jobs\x-mailcopy-ab12\stop.request' }
     }
     It 'the application names both mailboxes: the source as the mailbox it works on, the target by -TargetMailboxId; the store, the folder and the options of the batch follow' {
-        $a = @(Get-MbtBatchChildArgument -Row (New-CopyRow -SourceLocation Archive -TargetLocation Archive) -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ Concurrency = 2; Force = $true; ArrivedFrom = '2026-01-01'; NoAutoReconcile = $false } } -Job $script:Job -BatchId 'B1' -Mode Copy)
+        $a = @(Get-MbtBatchChildArgument -Row (New-CopyRow -SourceLocation Archive -TargetLocation Archive) -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ Concurrency = 2; Force = $true; ReceivedFrom = '2026-01-01'; NoAutoReconcile = $false } } -Job $script:Job -BatchId 'B1' -Mode Copy)
         ($a -join ' ') | Should -Match '^-Mode Copy -UserPrincipalName alex@contoso.com -TargetMailboxId adele@contoso.com -Mailbox Archive -TargetMailbox Archive -TargetRoot Copied -StorePath D:\\w\\stores\\s1 -TempPath '
         $a | Should -Contain '-Force'
         $a | Should -Not -Contain '-NoAutoReconcile'
-        $a[($a.IndexOf('-ArrivedFrom') + 1)] | Should -Be '2026-01-01'
+        $a[($a.IndexOf('-ReceivedFrom') + 1)] | Should -Be '2026-01-01'
         $a[($a.IndexOf('-BatchId') + 1)] | Should -Be 'B1'
         $a[($a.IndexOf('-JobId') + 1)] | Should -Be 'mailcopy-ab12'
         $a | Should -Contain '-NoPrompt'
@@ -185,7 +185,7 @@ Describe 'The arguments of a copy' {
     It 'every parameter it uses exists in the entry script' {
         $declared = (Get-Command $script:Entry).Parameters.Keys
         $pass = @{ Concurrency = 2; MaxAttempts = 3; RetryWaitSeconds = 2; IntervalSeconds = 5; ConfigPath = 'x.psd1'; ReconcileDelaySeconds = 60; ReconcileRounds = 2; Folder = 'Inbox'; MappingFile = 'D:\m.csv'; NotReadyTrip = 3; BatchItems = 10; BatchMiB = 100
-            NoAutoReconcile = $true; SkipInventory = $true; IncludeRecoverableItems = $true; Force = $true; TenantId = 't'; ClientId = 'c'; CertificateThumbprint = 'ab'; ArrivedFrom = '2026-01-01'; ArrivedTo = '2026-02-01' }
+            NoAutoReconcile = $true; SkipInventory = $true; IncludeRecoverableItems = $true; Force = $true; TenantId = 't'; ClientId = 'c'; CertificateThumbprint = 'ab'; ReceivedFrom = '2026-01-01'; ReceivedTo = '2026-02-01' }
         foreach ($option in @{ AppOnly = $false; SignInUser = 'adele@contoso.com'; Pass = $pass }, @{ AppOnly = $true; SignInUser = ''; Pass = $pass }) {
             $a = Get-MbtBatchChildArgument -Row (New-CopyRow) -Option $option -Job $script:Job -BatchId 'B' -Mode Copy
             foreach ($t in $a) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because "$t" } }

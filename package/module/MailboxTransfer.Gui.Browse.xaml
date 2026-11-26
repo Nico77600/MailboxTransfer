@@ -79,7 +79,7 @@
           </ListView.ItemContainerStyle>
           <ListView.ItemTemplate>
             <DataTemplate>
-              <Grid>
+              <Grid x:Name="RowGrid">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="118"/>
                 </Grid.ColumnDefinitions>
@@ -101,6 +101,7 @@
                     <TextBlock Text="{Binding AttachmentGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" Margin="6,3,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                   </StackPanel>
                   <TextBlock x:Name="Subj" Text="{Binding Subject}" ToolTip="{Binding Subject}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource MbtBrandText}"/>
+                  <TextBlock x:Name="OutsideNote" Text="outside the period" ToolTip="The date shown is outside the period of the export: the message is left out, unless you tick it one by one." FontSize="11" FontStyle="Italic" Visibility="Collapsed" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                 </StackPanel>
                 <TextBlock Grid.Column="2" Text="{Binding SizeText}" FontSize="12" TextAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                 <TextBlock Grid.Column="3" Text="{Binding DateText}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
@@ -108,6 +109,10 @@
               <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding SubjectNa}" Value="True">
                   <Setter TargetName="Subj" Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding OutsidePeriod}" Value="True">
+                  <Setter TargetName="RowGrid" Property="Opacity" Value="0.5"/>
+                  <Setter TargetName="OutsideNote" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
               </DataTemplate.Triggers>
             </DataTemplate>

@@ -87,7 +87,7 @@ function New-MbtGuiPlanStateMessage {
         }
         'ok' {
             $atMost = (Get-MbtGuiPeriod $s).Active
-            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals -AtMost:$atMost)" + $(if ($atMost) { ' (the period is applied while the items are listed)' }) + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
+            $counted = if ($s.PlanTotals) { "counted by the service: $(Format-MbtGuiPlanTotals $s.PlanTotals -AtMost:$atMost)" + $(if ($atMost) { ' (the period is applied to the received date while the items are listed)' }) + $(if ($s.PlanTotals.FoldersToCreate -gt 0) { "; $(Format-MbtGuiQuantity $s.PlanTotals.FoldersToCreate 'folder') will be created" } else { '' }) } else { '' }
             return (New-MbtGuiCheckRow -State ok -Text $name -Detail $counted)
         }
         'error' {
@@ -549,7 +549,7 @@ function Get-MbtGuiStepHelp {
     switch -Regex ("$Id $Title") {
         '^resume|Resume: reading' { return 'Reads what the earlier run of this job already did (the store, the journal or the manifest it keeps), so that only what is left is done. Nothing is changed.' }
         '^tree|Read the folder tree' { return 'Reads the folders of the mailbox, 4 requests at a time. A mailbox with thousands of folders takes a minute or two. Nothing is changed.' }
-        '^list|List the items' { return 'Lists the items of the folders you chose, so that the number and the size are known before they are downloaded. With a period, only the items that arrived in it are kept.' }
+        '^list|List the items' { return 'Lists the items of the folders you chose, so that the number and the size are known before they are downloaded. With a period, only the messages received in it are kept (the arrival date for what has no received date).' }
         '^verify|Check the downloads' { return 'Each item was checked against its fingerprint when it arrived in the store. Nothing else to do.' }
         '^check|Verify the export store' { return 'The second part begins: the store that was just filled is opened and verified before anything is written into the other mailbox.' }
         '^folders|Create the folders' { return 'Creates the folders that are missing in the mailbox that receives the copy. A folder that exists is used as it is; none is renamed or deleted.' }
@@ -1063,10 +1063,14 @@ function New-MbtGuiPeriodNote {
     if ($outside -lt 0 -and -not $period.Active) { return $null }
     $kept = [long](Get-MbtGuiCount $Run 'kept' (Get-MbtGuiCount $Run 'done' 0))
     $undated = [long](Get-MbtGuiCount $Run 'withoutDate' 0)
-    $text = "**Period: items that $($period.Text).** $(Format-MbtGuiQuantity $kept 'item') kept"
+    $text = "**Period: items $($period.Text).** $(Format-MbtGuiQuantity $kept 'item') kept"
     if ($outside -ge 0) { $text += ", $(Format-MbtGuiCount $outside) outside the period (skipped, not an error)" }
     if ($undated -gt 0) { $text += ". $(Format-MbtGuiQuantity $undated 'item') had no date and $(Get-MbtGuiPlural $undated 'was' 'were') kept" }
-    return (New-GuiMessage -Kind info -Icon info -Text ($text + '.'))
+    $date = [string](Get-MbtGuiCount $Run 'periodDate' '')
+    $dateNote = [string](Get-MbtGuiCount $Run 'periodNote' '')
+    if ($dateNote) { $text += ". Date used: $dateNote" }
+    $kind = $(if ($date -and $date -ne 'received') { 'warn' } else { 'info' })
+    return (New-GuiMessage -Kind $kind -Icon $(if ($kind -eq 'warn') { 'warn' } else { 'info' }) -Text ($text + '.'))
 }
 
 function New-MbtGuiExportDone {

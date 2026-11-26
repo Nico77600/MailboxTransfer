@@ -138,7 +138,7 @@ function Write-MbtGuiFolderFiles {
 function Get-MbtGuiPeriod {
     <#
         The period the operator asked for an export, from the state: Chosen (the second choice is on), Active (and it is valid: it holds a date and the first date is not after the last),
-        From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("arrived between 2026-03-01 and 2026-03-31", "all dates").
+        From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("received between 2026-03-01 and 2026-03-31", "all dates").
     #>
     param([hashtable]$S)
     $chosen = ((Get-MbtGuiProp $S 'Task' '') -in 'export', 'mailcopy') -and ((Get-MbtGuiProp $S 'Period' 'all') -ieq 'between')
@@ -148,7 +148,7 @@ function Get-MbtGuiPeriod {
         if (-not $from -and -not $to) { $problem = 'Pick at least one date, or choose All dates.' }
         elseif ($from -and $to -and [string]::CompareOrdinal($from, $to) -gt 0) { $problem = 'The first date is after the last date. Swap them, or pick other dates.' }
     }
-    $text = if (-not $chosen -or $problem) { 'all dates' } elseif ($from -and $to) { "arrived between $from and $to" } elseif ($from) { "arrived from $from" } else { "arrived until $to" }
+    $text = if (-not $chosen -or $problem) { 'all dates' } elseif ($from -and $to) { "received between $from and $to" } elseif ($from) { "received from $from" } else { "received until $to" }
     [pscustomobject]@{ Chosen = $chosen; Active = ($chosen -and -not $problem); From = $(if ($chosen) { $from } else { '' }); To = $(if ($chosen) { $to } else { '' }); Problem = $problem; Text = $text }
 }
 
@@ -157,9 +157,9 @@ function Get-MbtGuiPeriodStoreSuffix {
     param([hashtable]$S)
     $p = Get-MbtGuiPeriod $S
     if (-not $p.Active) { return '' }
-    if ($p.From -and $p.To) { return "-arrived-$($p.From)_$($p.To)" }
-    if ($p.From) { return "-arrived-from-$($p.From)" }
-    return "-arrived-until-$($p.To)"
+    if ($p.From -and $p.To) { return "-received-$($p.From)_$($p.To)" }
+    if ($p.From) { return "-received-from-$($p.From)" }
+    return "-received-until-$($p.To)"
 }
 
 function Test-MbtGuiEverything {
@@ -229,8 +229,8 @@ function Get-MbtGuiCommand {
             $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool](Get-MbtGuiProp $S 'Shared' ''))))
             # the period: the days as ISO text (the same whatever the language of Windows); a day left empty is no limit on that side
             $period = Get-MbtGuiPeriod $S
-            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
-            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ReceivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ReceivedTo', $period.To)) }
             $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
             $a.AddRange([string[]]$tuning)
             if ($pst) {
@@ -286,8 +286,8 @@ function Get-MbtGuiCommand {
             else { foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) } }
             $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool](Get-MbtGuiProp $S 'Shared' ''))))
             $period = Get-MbtGuiPeriod $S
-            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
-            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ReceivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ReceivedTo', $period.To)) }
             # both places of the source: the layout says where each part goes; one place: the place of the target
             $both = ((Get-MbtGuiProp $S 'McFromKind' '') -eq 'All')
             if ($both) { $a.AddRange([string[]]@('-TargetLayout', [string](Get-MbtGuiProp $S 'McLayout' 'Mirror'))) } else { $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc)) }
@@ -619,6 +619,8 @@ function Write-MbtGuiRunReport {
         $text = '{0} items kept; {1} items outside the period were skipped (not an error)' -f (Get-MbtGuiProp $periodCounts 'kept' 0), $outside
         $undated = [long](Get-MbtGuiProp $periodCounts 'withoutDate' 0)
         if ($undated -gt 0) { $text += "; $undated items without a date were kept" }
+        $dateNote = [string](Get-MbtGuiProp $periodCounts 'periodNote' '')
+        if ($dateNote) { $text += "; date used: $dateNote" }
         $rows.Add([pscustomobject]@{ Kind = 'period'; Step = 'list'; Key = 'items outside the period'; State = 'skipped'; Done = $outside; Total = ''; Message = $text })
     }
     foreach ($w in $Run.Warnings) { $rows.Add([pscustomobject]@{ Kind = 'warning'; Step = $w.Step; Key = $w.Key; State = $w.Code; Done = ''; Total = ''; Message = $w.Msg }) }

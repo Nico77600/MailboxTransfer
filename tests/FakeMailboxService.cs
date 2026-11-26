@@ -28,6 +28,8 @@ namespace MailboxTransfer.Tests
     public sealed class FakeItem
     {
         public string Id, ChangeKey, FolderId;
+        /// <summary>The "type" of the listing row (the message class).</summary>
+        public string ItemClass = "IPM.Note";
         public byte[] Data;
         /// <summary>createdDateTime / lastModifiedDateTime of the listing: items added by a test are old, items created by importItem carry the time of the import (as on the real service).</summary>
         public DateTime CreatedUtc = new DateTime(2026, 10, 28, 9, 0, 0, DateTimeKind.Utc);
@@ -367,7 +369,7 @@ namespace MailboxTransfer.Tests
             var sb = new StringBuilder("{\"value\":[");
             sb.Append(string.Join(",", page.Select(i =>
             {
-                var row = new Dictionary<string, object> { { "id", i.Id }, { "type", "IPM.Note" }, { "changeKey", i.ChangeKey }, { "size", i.Data.Length }, { "lastModifiedDateTime", i.CreatedUtc.ToString("o") } };
+                var row = new Dictionary<string, object> { { "id", i.Id }, { "type", i.ItemClass }, { "changeKey", i.ChangeKey }, { "size", i.Data.Length }, { "lastModifiedDateTime", i.CreatedUtc.ToString("o") } };
                 if (!i.OmitCreated) row["createdDateTime"] = i.CreatedUtc.ToString("o");
                 return JsonSerializer.Serialize(row);
             })));

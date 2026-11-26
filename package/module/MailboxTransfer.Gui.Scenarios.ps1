@@ -21,7 +21,7 @@ function Get-MbtGuiScenarioName {
         'ImportFromChoice', 'ImportPlanChoice', 'DoneImportRefused', 'OpenPreview', 'CopyTo', 'CopyPlan', 'DoneCopy', 'ExportPlanShared', 'Setup', 'SetupApplication', 'TaskWhat', 'ExportToMore', 'ExportPlanExpert', 'ImportPlanTicked', 'ImportPlanChanged', 'ExportPlanChecking', 'RunExportPreparing', 'ExportFromPeriod', 'ExportFromPeriodOpen', 'ExportPlanPeriod', 'RunExportPeriod', 'DoneExportPeriod',
         'CopyMailboxFrom', 'CopyMailboxTo', 'CopyMailboxPlan', 'CopyMailboxPlanTicked', 'RunCopyMailboxReading', 'RunCopyMailbox', 'DoneCopyMailbox', 'DoneCopyMailboxPartial',
         'StartApplication', 'SetupExpert', 'ExportFromEverything', 'ExportPlanEverything', 'ImportToMe', 'StartJobsMe', 'CopyMailboxFromBoth', 'CopyMailboxToBoth', 'CopyMailboxToBothNoArchive', 'CopyMailboxToBothArchiveUnknown', 'CopyMailboxPlanBoth', 'RunCopyMailboxBoth', 'DoneCopyMailboxBoth',
-        'StartJobs', 'ResumeExport', 'ResumeImport', 'ResumeCopy', 'RunExportResumed', 'JobDelete', 'JobDeleteUnfinished')
+        'ExportPeriodReceived', 'DoneExportPeriodArrival', 'DoneExportPeriodMixed', 'StartJobs', 'ResumeExport', 'ResumeImport', 'ResumeCopy', 'RunExportResumed', 'JobDelete', 'JobDeleteUnfinished')
 }
 
 function Get-MbtGuiEdgeScenarioName {
@@ -114,7 +114,7 @@ function New-MbtGuiScenarioRun {
         'export' {
             & $ev 'plan' 0 @{ steps = @(@{ id = 'tree'; title = 'Read the folder tree' }, @{ id = 'list'; title = 'List the items you chose' }, @{ id = 'download'; title = 'Download the items' }, @{ id = 'verify'; title = 'Check the downloads' }, @{ id = 'pst'; title = 'Write the PST files' }, @{ id = 'pstcheck'; title = 'Check every PST file' }) }
             & $ev 'step' 0.2 @{ id = 'tree'; state = 'done'; msg = '4,439 folders' }
-            & $ev 'step' 1.9 @{ id = 'list'; state = 'done'; msg = $(if ($Period) { '4,612 items outside the period left out; 3 without a date kept' } else { '1,208 items ' + [char]0x00B7 + ' 6.2 GiB' }); total = 1208 }
+            & $ev 'step' 1.9 @{ id = 'list'; state = 'done'; msg = $(if ($Period) { '4,612 items outside the period left out; 3 without a date kept; on the received date' } else { '1,208 items ' + [char]0x00B7 + ' 6.2 GiB' }); total = 1208 }
             & $ev 'step' 2 @{ id = 'download'; state = 'running'; done = 744; total = 1208; bytes = [long](3.8GB); bytesTotal = [long](6.2GB) }
             & $ev 'object' 3 @{ step = 'download'; key = 'Inbox'; state = 'done'; done = 410; total = 410 }
             & $ev 'object' 5 @{ step = 'download'; key = 'Inbox/Projects/Contoso Rollout'; state = 'running'; done = 260; total = 410 }
@@ -202,7 +202,7 @@ function New-MbtGuiScenarioOneRun {
 
 function New-MbtGuiScenarioDone {
     <# A run model at its end: Task, Outcome complete / partial / decision / error. -Period: an export of a period (the result counts the items kept, outside the period and without a date). #>
-    param([string]$Task, [string]$Outcome, [switch]$Period, [switch]$Both)
+    param([string]$Task, [string]$Outcome, [switch]$Period, [switch]$Both, [ValidateSet('received', 'arrival', 'mixed')][string]$PeriodDate = 'received')
     $run = New-MbtGuiScenarioRun -Task $Task -Period:($Period) -Both:($Both)
     $exit = switch ($Outcome) { 'complete' { 0 } 'partial' { 2 } 'decision' { 3 } default { 1 } }   # refused: finished, some items refused for good (exit 1, reason refused-items)
     $counts = switch ("$Task/$Outcome") {
@@ -222,7 +222,14 @@ function New-MbtGuiScenarioDone {
         'repair/complete' { @{ recovered = 1198; partial = 4; lost = 1; levelUsed = 'Rebuild'; destination = 'D:\PST\contoso-archive-2019.repaired.pst'; before = @{ errors = 6; warnings = 5 }; after = @{ errors = 0; warnings = 0 }; sizeBytes = [long](3.9GB) } }
         default { @{} }
     }
-    if ($Period -and $Task -eq 'export') { $counts = $counts + @{ kept = [long]1208; outsidePeriod = [long]4612; withoutDate = [long]3 } }
+    if ($Period -and $Task -eq 'export') {
+        $dateNote = switch ($PeriodDate) {
+            'arrival' { 'arrival date in the mailbox (the date the item arrived in this mailbox, not the received date): the token has neither Mail.Read nor Mail.ReadBasic, so the Mail API cannot give the received date: grant Mail.Read (or Mail.ReadBasic) to the application and sign in again' }
+            'mixed' { 'received date of the messages; 2 folder(s) filtered on the arrival date: ''Recoverable Items/Purges'' (the Mail API answered HTTP 404 ErrorItemNotFound); ''Archive/Old projects'' (the Mail API answered HTTP 403 ErrorAccessDenied)' }
+            default { 'received date of the messages; 212 item(s) that are not messages (calendar items, contacts, tasks, notes) have no received date: their arrival date decided' }
+        }
+        $counts = $counts + @{ kept = [long]1208; outsidePeriod = [long]4612; withoutDate = [long]3; periodDate = $PeriodDate; periodNote = $dateNote }
+    }
     $at = [datetime]::UtcNow
     if ($Outcome -eq 'error') {
         $err = switch ($Task) { 'mailcopy' { @{ code = 'throttled-out'; msg = 'Microsoft refused the requests of the second part again and again. What was read is kept in the store and what was added stays in the mailbox. Press Try again in a while.'; tech = 'HTTP 503 ErrorServerBusy on importItem (7 times in a row)' } } 'export' { @{ code = 'disk-full'; msg = 'The disk D: is full. Free some space (about 5 GiB) and press Try again. The 744 items already downloaded are kept.'; tech = 'IOException: There is not enough space on the disk. (store pack-000003.bin)' } } 'import' { @{ code = 'signin-required'; msg = 'Your sign-in has expired. Sign in again to continue. Nothing is lost.'; tech = 'AADSTS50173: The provided grant has expired due to it being revoked.' } } default { @{ code = 'destination-exists'; msg = 'The destination file already exists. Choose another name. The repair never overwrites a file.'; tech = '' } } }
@@ -386,11 +393,14 @@ function Set-MbtGuiScenario {
         'RunRepair' { Show-MbtGuiRunScenario 'repair' (New-MbtGuiScenarioRun -Task repair) }
         'DoneExportComplete' { Initialize-MbtGuiScenarioExport -Ticks; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exports\adele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete) }
         'ExportFromPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
-        'ExportFromPeriodOpen' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.PeriodOpen = $true; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromPeriodOpen' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-10-28'; $s.ArrTo = '2026-11-01'; $s.PeriodOpen = $true; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportFromPeriodOpenEnd' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2025-07-01'; $s.ArrTo = ''; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportFromPeriodInvalid' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-04-01'; $s.ArrTo = '2026-03-01'; $s.PeriodOpen = $true; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportPlanPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
         'RunExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioRun -Task export -Period) }
+        'ExportPeriodReceived' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-10-28'; $s.ArrTo = '2026-11-01'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'DoneExportPeriodArrival' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exportsdele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete -Period -PeriodDate arrival) }
+        'DoneExportPeriodMixed' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exportsdele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete -Period -PeriodDate mixed) }
         'DoneExportPeriod' { Initialize-MbtGuiScenarioExport -Ticks; $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'; $s.OutName = 'adele.pst'; $s.OutFolder = 'D:\Exports\adele'; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export complete -Period) }
         'DoneExportPartial' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export partial) }
         'DoneExportError' { Initialize-MbtGuiScenarioExport -Ticks; Show-MbtGuiRunScenario 'export' (New-MbtGuiScenarioDone export error) }

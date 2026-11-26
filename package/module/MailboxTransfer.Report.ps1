@@ -621,7 +621,8 @@ function ConvertTo-MbtJobReportHtml {
     $metaItems = [ordered]@{
         'Task' = $Model.TaskName; 'Source' = $Model.Source; 'Destination' = $Model.Destination
         'Store' = $(if ($Model.Store -and $Model.Store -ne $Model.Source -and $Model.Store -ne $Model.Destination) { $Model.Store } else { '' })
-        'Period' = $(if ($Model.Contains('Period') -and $Model.Period) { 'Items that ' + $Model.Period + ' in the mailbox' } else { '' })
+        'Period' = $(if ($Model.Contains('Period') -and $Model.Period) { 'Items ' + $Model.Period } else { '' })
+        'Date used' = $(if ($Model.Contains('Period') -and $Model.Period -and $Model.Counts.Contains('periodNote') -and $Model.Counts['periodNote']) { [string]$Model.Counts['periodNote'] } else { '' })
         'Started' = (Format-MbtReportTime $started); 'Finished' = $(if ($Model.Interrupted) { 'not written (last event ' + (Format-MbtReportTime $finished) + ')' } else { Format-MbtReportTime $finished })
         'Duration' = (Format-MbtReportDuration $Model.Seconds)
         'Result' = $(if ($Model.Result) { $verdict.Text + ' (exit code ' + $Model.Result.Exit + ')' } else { $verdict.Text })

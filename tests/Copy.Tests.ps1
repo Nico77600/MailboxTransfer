@@ -159,7 +159,7 @@ Describe 'Copy: what is refused before anything is read' {
     It 'takes the options of the target only in a copy, and the period in a copy' {
         $svc = New-CopyService
         { Invoke-Entry $svc @{ Mode = 'Import'; TargetMailbox = 'Archive'; StorePath = (Join-Path $script:Tmp 'x') } } | Should -Throw '*belong to -Mode Copy*'
-        { Invoke-Entry $svc @{ Mode = 'Import'; ArrivedFrom = '2026-01-01'; StorePath = (Join-Path $script:Tmp 'x') } } | Should -Throw '*belong to the export modes*'
+        { Invoke-Entry $svc @{ Mode = 'Import'; ReceivedFrom = '2026-01-01'; StorePath = (Join-Path $script:Tmp 'x') } } | Should -Throw '*belong to the export modes*'
     }
     It 'takes the selection of one mailbox location only' {
         $svc = New-CopyService
@@ -222,9 +222,9 @@ Describe 'Copy: the plan (-WhatIf)' {
         $name = 'copy-MBX_11111111-2222-3333-4444-555555555555@1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d-primary-[0-9a-f]{8}'
         $a = Invoke-Entry $svc $p
         $a | Should -Match ([regex]::Escape((Join-Path $script:Tmp 'work-plan\stores')) + '\\' + $name)
-        $p.ArrivedFrom = '2026-01-01'
+        $p.ReceivedFrom = '2026-01-01'
         $b = Invoke-Entry $svc $p
-        $b | Should -Match 'arrived from 2026-01-01'
+        $b | Should -Match 'received from 2026-01-01'
         ([regex]::Match($a, $name).Value) | Should -Not -Be ([regex]::Match($b, $name).Value)
         $b | Should -Match 'at most'
     }
@@ -429,7 +429,7 @@ Describe 'Copy: the chained run against the fake service' {
         $null = $svc.AddItem($script:Src, 'F-INBOX', 'OLD1', (New-Message 'Old 1'), 'ck1', [datetime]::new(2025, 3, 1, 10, 0, 0, [DateTimeKind]::Utc))
         $null = $svc.AddItem($script:Src, 'F-INBOX', 'NEW1', (New-Message 'New 1'), 'ck2', [datetime]::new(2026, 3, 10, 10, 0, 0, [DateTimeKind]::Utc))
         $null = $svc.AddItem($script:Src, 'F-INBOX', 'NEW2', (New-Message 'New 2'), 'ck3', [datetime]::new(2026, 3, 20, 10, 0, 0, [DateTimeKind]::Utc))
-        $text = Invoke-Entry $svc (Get-CopyParameters 'period' @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' })
+        $text = Invoke-Entry $svc (Get-CopyParameters 'period' @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
         $global:MbtEntryExit | Should -Be 0
         $svc.ItemsOf($script:Dst).Count | Should -Be 2
         $text | Should -Match '1 outside the period'

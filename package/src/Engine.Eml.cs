@@ -222,7 +222,7 @@ namespace MailboxTransfer
         public long Exported, Resumed, Skipped, Failed, Bytes;
         public int Folders, FoldersSkipped;
         public bool Cancelled, WhatIf;
-        /// <summary>Live source with a period: the messages that arrived outside it (not listed in the manifest, not an error), and the ones with no date, which were kept.</summary>
+        /// <summary>Live source with a period: the messages received outside it (not listed in the manifest, not an error), and the ones with no date, which were kept.</summary>
         public long OutsidePeriod, WithoutDate;
         public string ManifestPath, OutputDirectory;
         public TimeSpan Elapsed;
@@ -472,7 +472,7 @@ namespace MailboxTransfer
         readonly MailboxBrowser _browser;
         readonly BrowseLocation _location;
         public bool IncludeNonMailFolders;
-        /// <summary>Only the messages that arrived in the mailbox inside this period (createdDateTime); null: every date. A message with no date is kept.</summary>
+        /// <summary>Only the messages received inside this period (receivedDateTime of the Mail API; the arrival date of a row the import-export API gave); null: every date. A message with no date is kept.</summary>
         public ArrivalPeriod Period;
         long _outsidePeriod, _withoutDate;
         public override long ItemsOutsidePeriod { get { return System.Threading.Interlocked.Read(ref _outsidePeriod); } }
@@ -521,8 +521,9 @@ namespace MailboxTransfer
                 listed++;
                 if (Period != null)
                 {
-                    if (!r.Created.HasValue) System.Threading.Interlocked.Increment(ref _withoutDate);
-                    else if (!Period.Contains(r.Created.Value)) { System.Threading.Interlocked.Increment(ref _outsidePeriod); continue; }
+                    DateTimeOffset? when = r.Source == MailboxBrowser.MailApi ? r.Received : r.Created;
+                    if (!when.HasValue) System.Threading.Interlocked.Increment(ref _withoutDate);
+                    else if (!Period.Contains(when.Value)) { System.Threading.Interlocked.Increment(ref _outsidePeriod); continue; }
                 }
                 var item = new EmlItemSource { Id = r.Id, Subject = r.Subject, ItemClass = r.ItemClass, Size = r.Size, Received = r.Received, IsRead = r.IsRead };
                 if (!string.IsNullOrEmpty(r.ItemClass) && !MapiToMime.IsMailClass(r.ItemClass)) item.SkipReason = "item class " + r.ItemClass + " is not a message";

@@ -115,7 +115,8 @@ function Get-MbtGuiFakeItems {
         $row.Subject = if ($headers) { '(subject not available before export)' } else { $s }
         $row.SubjectNa = [bool]$headers
         $row.SizeBytes = $size; $row.SizeText = Format-MbtGuiBytes $size
-        $row.DateText = $d.ToString('yyyy-MM-dd HH:mm')
+        $row.DateText = Format-MbtGuiLocalTime $d
+        $row.When = [datetimeoffset]$d
         $row.HasAttachment = $att -and -not $headers
         $row.Tag = @{ Body = $body + "`n$($p[0])"; Name = $p[0]; Address = $p[1]; Subject = $s; Date = $d; Attachment = $att }
         $row
@@ -128,7 +129,7 @@ function Get-MbtGuiFakePreview {
     $t = $Row.Tag
     $root = $Node; while ($root.Parent) { $root = $root.Parent }
     [pscustomobject]@{
-        Subject = $t.Subject; From = $t.Name; Address = $t.Address; To = 'Adele Vance'; Received = $t.Date.ToString('yyyy-MM-dd HH:mm') + ' UTC'
+        Subject = $t.Subject; From = $t.Name; Address = $t.Address; To = 'Adele Vance'; Received = (Format-MbtGuiLocalTime $t.Date)
         Location = "$(($root.Name -replace '^.* - ', '')) / $($Node.Name)"; Details = ('IPM.Note - {0}{1}' -f $Row.SizeText, $(if ($t.Attachment) { ' - 1 attachment' } else { '' }))
         Attachment = $(if ($t.Attachment) { 'Specification-v3.pdf   ' + (Format-MbtGuiBytes ($Row.SizeBytes * 0.7)) } else { '' }); Body = $t.Body; Available = -not $root.HeadersOnly
     }

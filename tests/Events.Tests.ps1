@@ -227,6 +227,15 @@ Describe 'Event log of the module, status.json and the job list' {
         { Write-MbtJobStep -Id a -State running } | Should -Not -Throw
         { Write-MbtJobResult -ExitCode 0 } | Should -Not -Throw
     }
+    It 'the end of the listing says how many items the period left out and which date it used' {
+        $job = { param($date, $folders) [pscustomobject]@{ Result = [pscustomobject]@{ Period = [pscustomobject]@{ x = 1 }; ItemsOutsidePeriod = 4612; ItemsWithoutDate = 3; PeriodDate = $date; FoldersOnArrivalDate = @($folders) } } }
+        InModuleScope MailboxTransfer { $script:JobInfo = @{ PeriodOutside = 0 } }
+        $note = { param($j) InModuleScope MailboxTransfer -Parameters @{ J = $j } { Get-MbtPeriodListNote -Job $J } }
+        & $note (& $job 'received' @()) | Should -Be '4,612 items outside the period left out; 3 without a date kept; on the received date'
+        & $note (& $job 'arrival' @()) | Should -Be '4,612 items outside the period left out; 3 without a date kept; on the arrival date, not the received date'
+        & $note (& $job 'mixed' @('a', 'b')) | Should -Be '4,612 items outside the period left out; 3 without a date kept; on the received date, 2 folders on the arrival date'
+        & $note (& $job 'mixed' @('a')) | Should -Match ', 1 folder on the arrival date$'
+    }
     It 'status.json of a running job follows the job: updated, last event and items done are refreshed (at most every 15 seconds), and nothing changes it after the result' {
         $dir = Join-Path $TestDrive 'jobs\20261109-1900-import-cd34'
         Open-MbtEventLog -Path (Join-Path $dir 'events.jsonl') -JobId 'imp-cd34' -Task import -Title 'Import - adele' -Mode ImportPst -Store 'D:\store'

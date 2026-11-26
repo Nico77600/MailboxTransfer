@@ -197,6 +197,15 @@ namespace MailboxTransferGui
         public bool HasAttachment { get; set; }
         public string AttachmentGlyph { get { return HasAttachment ? "" : ""; } }
         public bool SubjectNa { get; set; }
+        /// <summary>The date the list shows (received, else created): what the period of an export is compared with.</summary>
+        public DateTimeOffset? When;
+        bool outsidePeriod;
+        /// <summary>True when an export period is chosen and this message is outside it: the row is greyed and says so.</summary>
+        public bool OutsidePeriod
+        {
+            get { return outsidePeriod; }
+            set { if (outsidePeriod == value) return; outsidePeriod = value; Raise("OutsidePeriod"); }
+        }
         /// <summary>"Collapsed" for a list whose messages cannot be ticked one by one (a PST or .eml files to import: the folders are what is chosen).</summary>
         public string CheckVisibility { get; set; } = "Visible";
         bool isChecked;

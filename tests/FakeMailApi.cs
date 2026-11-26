@@ -68,6 +68,8 @@ namespace MailboxTransfer.Tests
         public readonly HashSet<string> Forbidden = new HashSet<string>();
         /// <summary>"mailbox|folder id": the Mail API cannot list the messages of that folder (live 2026-10-31: a folder of the main archive whose content moved to an auxiliary archive answers 500 "Cannot query rows in a table").</summary>
         public readonly HashSet<string> MessagesNotReady = new HashSet<string>();
+        /// <summary>"mailbox|folder id": the Mail API refuses the messages of that folder (403 ErrorAccessDenied).</summary>
+        public readonly HashSet<string> MessagesForbidden = new HashSet<string>();
         public int Throttled;
 
         public FakeMailApi(HttpMessageHandler importExport) { _inner = new HttpMessageInvoker(importExport); }
@@ -162,6 +164,8 @@ namespace MailboxTransfer.Tests
                 string fid = path.Substring("/mailFolders/".Length); fid = fid.Substring(0, fid.Length - "/messages".Length);
                 if (MessagesNotReady.Contains(mailbox + "|" + fid))
                     return Json(HttpStatusCode.InternalServerError, "{\"error\":{\"code\":\"ErrorInternalServerError\",\"message\":\"An internal server error occurred. The operation failed., Cannot query rows in a table.\"}}");
+                if (MessagesForbidden.Contains(mailbox + "|" + fid))
+                    return Json(HttpStatusCode.Forbidden, "{\"error\":{\"code\":\"ErrorAccessDenied\",\"message\":\"Access is denied. Check credentials and try again.\"}}");
                 return Messages(mailbox, url, path, query);
             }
             if (path.StartsWith("/messages/")) return MessageRoute(mailbox, path, query, prefer);
@@ -239,6 +243,14 @@ namespace MailboxTransfer.Tests
                 case "subject desc": all = all.OrderByDescending(m => m.Subject, StringComparer.OrdinalIgnoreCase); break;
                 default: all = all.OrderByDescending(m => m.ReceivedUtc); break;
             }
+            string filter = Param(query, "$filter");
+            if (filter != null)
+                foreach (System.Text.RegularExpressions.Match bound in System.Text.RegularExpressions.Regex.Matches(filter, @"receivedDateTime (ge|le) (\S+)"))
+                {
+                    DateTime at = DateTime.Parse(bound.Groups[2].Value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
+                    bool lower = bound.Groups[1].Value == "ge";
+                    all = lower ? all.Where(m => m.ReceivedUtc >= at) : all.Where(m => m.ReceivedUtc <= at);
+                }
             var list = all.ToList();
             var page = list.Skip(skip).Take(top).ToList();
             bool recipients = query.Contains("toRecipients");
