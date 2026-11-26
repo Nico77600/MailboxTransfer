@@ -1234,6 +1234,16 @@ Describe 'Browse: module functions and the entry script' {
         $locs[2].MailboxId | Should -Be $script:Aux1
     }
 
+    It 'Get-MbtBrowseLocation gives the archive status of Get-MbtMailboxLocation and keeps its output' {
+        $status = $null
+        $locs = @(Get-MbtBrowseLocation -UserPrincipalName 'adele.vance@contoso.com' -TenantId $script:Tenant -SkipGraph -PrimaryMailboxId $script:Src -ArchiveStatus ([ref]$status))
+        ($locs | ForEach-Object Kind) -join ',' | Should -Be 'Primary'
+        $status.State | Should -Be 'Unknown'
+        $locs = @(Get-MbtBrowseLocation -UserPrincipalName 'adele.vance@contoso.com' -TenantId $script:Tenant -SkipGraph -PrimaryMailboxId $script:Src -ArchiveMailboxId $script:Arch.Substring(4, 36).ToUpperInvariant() -ArchiveStatus ([ref]$status))
+        ($locs | ForEach-Object Kind) -join ',' | Should -Be 'Primary,Archive'
+        $status.State | Should -Be 'Known'
+    }
+
     It '-Mode Browse prints the tree of the primary mailbox: counts, sizes, unread, and the folders of the import-export API marked' {
         $w = New-World
         $text = Invoke-Entry $w @{ Mode = 'Browse'; PrimaryMailboxId = $script:Src; StorePath = (Join-Path $script:Tmp 'cli-none') }

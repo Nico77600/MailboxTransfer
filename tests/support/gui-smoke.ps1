@@ -703,6 +703,54 @@ foreach ($theme in 'Light', 'Dark') {
         return $found.ToArray()
     }
     function Invoke-ButtonClick($button) { $button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $button)); Wait-Dispatcher }
+    Check 'where to look: when the archive could not be looked up, the card says so in plain words, with the permission, a box for the archive id, Look again and where to get the id' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $box = @(Find-ByAutomationName $p 'Archive mailbox id' | Where-Object { $_ -is [Windows.Controls.TextBox] })
+        (Find-Text $p 'The archive could not be looked up') -and (Find-Text $p 'delegated permission') -and (Find-Text $p 'User.Read.All') -and (Find-Text $p 'type the archive mailbox id below') -and
+        $box.Count -eq 1 -and @(Find-ButtonsByText $p 'Look again').Count -eq 1 -and (Find-Text $p 'Get-MailboxLocation -User adele.vance@contoso.com | Select MailboxGuid, MailboxLocationType') -and (Find-Text $p '(Get-Mailbox adele.vance@contoso.com).ArchiveGuid') -and
+        -not (Find-Text $p 'This mailbox has no archive') -and @($g.S.Locations).Count -eq 1 }
+    Check 'where to look: as the application the card asks for the application permission' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; $g.S.AuthMode = 'app'; Show-MbtGuiPage; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'the application permission') -and -not (Find-Text $g.C.Page.Content 'delegated permission') }
+    Check 'where to look: when the mailbox has no archive, one muted line says so and there is no box' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromNoArchive'; Measure-Window $window
+        $p = $g.C.Page.Content
+        (Find-Text $p 'This mailbox has no archive.') -and -not (Find-Text $p 'could not be looked up') -and @(Find-ByAutomationName $p 'Archive mailbox id').Count -eq 0 -and @(Find-ButtonsByText $p 'Look again').Count -eq 0 }
+    Check 'where to look: when the archive is known the card says nothing about it' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $p = $g.C.Page.Content
+        -not (Find-Text $p 'This mailbox has no archive') -and -not (Find-Text $p 'could not be looked up') -and @(Find-ButtonsByText $p 'Look again').Count -eq 0 }
+    Check 'where to look: Copy to another mailbox shows the same card' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFromArchiveUnknown'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $g.S.Task -eq 'mailcopy' -and (Find-Text $p 'The archive could not be looked up') -and @(Find-ButtonsByText $p 'Look again').Count -eq 1 }
+    Check 'where to look: Look again with a typed id (a guid in any case, or MBX:<guid>@<tenant>, with spaces) keeps it for this mailbox and finds the archive' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $g.S.ArchiveText = '  3F2504E0-4F89-11D3-9A0C-0305E82C3301  '
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0]); Measure-Window $window
+        $a = $g.S.ArchiveIds['adele.vance@contoso.com'] -eq 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@contoso.onmicrosoft.com' -and $g.S.ArchiveState.State -eq 'Known' -and @($g.S.Locations | Where-Object Kind -EQ 'Archive').Count -eq 1
+        $b = -not (Find-Text $g.C.Page.Content 'The archive could not be looked up')
+        $g.S.ArchiveText = 'mbx:3F2504E0-4F89-11D3-9A0C-0305E82C3301@6BA7B810-9DAD-11D1-80B4-00C04FD430C8'
+        $g.S.ArchiveState = [pscustomobject]@{ State = 'Unknown'; Detail = '' }; $g.S.Locations = @($g.S.Locations | Where-Object Kind -NE 'Archive'); Show-MbtGuiPage; Measure-Window $window
+        $g.S.ArchiveIds.Clear()
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0])
+        $c = $g.S.ArchiveIds.ContainsKey('adele.vance@contoso.com') -and $g.S.ArchiveIds['adele.vance@contoso.com'] -eq 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+        $a -and $b -and $c }
+    Check 'where to look: a text that is not a mailbox id is refused in plain words, nothing is kept, and the lookup is not run again' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $g.S.ArchiveText = 'not-a-guid'
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0]); Measure-Window $window
+        $g.S.ArchiveIds.Count -eq 0 -and $g.S.ArchiveProblem -match 'not a mailbox id' -and (Find-Text $g.C.Page.Content 'This is not a mailbox id') -and $g.S.ArchiveState.State -eq 'Unknown' }
+    Check 'where to look: Look again with an empty box runs the lookup again and forgets the id of this mailbox; the ids are per mailbox and go at sign-out' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $g.S.ArchiveIds['adele.vance@contoso.com'] = 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@contoso.onmicrosoft.com'; $g.S.ArchiveIds['someone@contoso.com'] = 'MBX:x'
+        $g.S.ArchiveText = ''
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0])
+        $a = -not $g.S.ArchiveIds.ContainsKey('adele.vance@contoso.com') -and $g.S.ArchiveIds.ContainsKey('someone@contoso.com')
+        $g.S.Signed = $true; Show-MbtGuiPage; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Sign out')[0])
+        $a -and $g.S.ArchiveIds.Count -eq 0 -and $null -eq $g.S.ArchiveState }
     Check 'start: the jobs that are not finished come first, each says why it stopped and the step it reached; the finished ones are in a fold' {
         Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
         $p = $g.C.Page.Content

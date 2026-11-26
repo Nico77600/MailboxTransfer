@@ -1993,6 +1993,52 @@ Aggregated          33333333-aaaa-bbbb-cccc-333333333333
         $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph
         $svc.Log.Count | Should -Be $before
     }
+    It 'says whether the archive is known, absent (Graph answered and names none) or unknown (Graph could not be read)' {
+        $svc = New-SourceService
+        $null = Set-MbtSession -Graph (New-FakeClient -Service $svc)
+        $upn = 'adele@contoso.test'
+        $status = $null
+        # refused on both: the archive may exist
+        @(Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status)).Count | Should -Be 0
+        $status.State | Should -Be 'Unknown'
+        $status.Detail | Should -Match 'HTTP 403'
+        # beta answers with the primary only: the mailbox has no archive
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '"}'
+        $locs = @(Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status))
+        @($locs | ForEach-Object Kind) | Should -Be @('Primary')
+        $status.State | Should -Be 'None'
+        # beta answers with an archive
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '","inPlaceArchiveMailboxId":"' + (Get-LocId $script:LocM) + '"}'
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Known'
+        # beta refused, v1.0 answers: v1.0 cannot say anything about the archive
+        $svc.ExchangeSettingsBetaJson = $null
+        $svc.ExchangeSettingsV1Json = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '"}'
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Unknown'
+        # Graph not asked: unknown, and the archive id given by the operator makes it known
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Unknown'
+        $status.Detail | Should -Match 'not asked'
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph -ArchiveMailboxId $script:LocM.ToUpperInvariant() -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Known'
+        # without -ArchiveStatus the output is the same
+        @(Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph -ArchiveMailboxId $script:LocM).Count | Should -Be 1
+    }
+    It 'Resolve-MbtMailboxId says the same: no archive, or an archive that could not be looked up (User.Read.All, -ArchiveMailboxId, -LocationsFile)' {
+        $svc = New-SourceService
+        $session = Set-MbtSession -Graph (New-FakeClient -Service $svc)
+        $upn = 'adele@contoso.test'
+        $ask = { Resolve-MbtMailboxId -Mailbox Archive -TenantId $script:LocTenant -UserPrincipalName $upn }
+        $ask | Should -Throw '*could not be looked up*delegated permission User.Read.All*-ArchiveMailboxId*-LocationsFile*'
+        $session.AppOnly = $true
+        $ask | Should -Throw '*could not be looked up*application permission User.Read.All*'
+        $session.AppOnly = $false
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '"}'
+        $ask | Should -Throw '*adele@contoso.test has no archive mailbox*-Mailbox Primary*'
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '","inPlaceArchiveMailboxId":"' + (Get-LocId $script:LocM) + '"}'
+        (& $ask) | Should -Be (Get-LocId $script:LocM)
+    }
     It 'Resolve-MbtMailboxId: an explicit id wins; the kind is taken from the store or the file; an unknown auxiliary archive is explained' {
         $store = New-TestStoreAt 'loc2'
         try {

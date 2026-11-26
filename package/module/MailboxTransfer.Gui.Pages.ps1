@@ -266,7 +266,7 @@ function New-MbtGuiSigninSetupCard {
     $g = $script:Gui; $s = $g.S
     $appOn = Get-MbtGuiCapability 'AppOnly'
     $app = ($s.AuthMode -eq 'app') -and $appOn
-    $switchTo = { param($mode) if ($s.AuthMode -ne $mode) { $s.AuthMode = $mode; $s.AuthEdit = $false; if ($s.Signed) { & $g.Engine.SignOut; $s.Signed = $false; $s.Locations = @(); $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() } }; $s.SignInError = ''; Show-MbtGuiPage } }.GetNewClosure()
+    $switchTo = { param($mode) if ($s.AuthMode -ne $mode) { $s.AuthMode = $mode; $s.AuthEdit = $false; if ($s.Signed) { & $g.Engine.SignOut; $s.Signed = $false; $s.Locations = @(); $s.ArchiveState = $null; $s.ArchiveIds = @{}; $s.ArchiveText = ''; $s.ArchiveProblem = ''; $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() } }; $s.SignInError = ''; Show-MbtGuiPage } }.GetNewClosure()
     $content = [Collections.Generic.List[object]]::new()
     $content.Add((New-GuiText 'Sign in as' 'Label'))
     $content.Add((New-GuiOption -Type Radio -Group authmode -Title 'Me (delegated, recommended)' -Hint 'A Microsoft sign-in window opens over the console. You see the mailboxes you are allowed to open.' -Checked (-not $app) -Margin '0,4,0,0' -OnChange { & $switchTo 'user' }.GetNewClosure()))

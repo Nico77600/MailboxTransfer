@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: Reference guide
-version: 1.3.0
+version: 1.4.0
 author: Nicolas Fabert
 updated: 2026-11-25
 runtime: PowerShell 7.6+ (engine, window and command line)
@@ -277,6 +277,8 @@ One consent covering everything for a first try: `MailboxFolder.ReadWrite`, `Mai
 ### 4.4 Where the mailbox ids come from
 
 In this order: `-MailboxId`; `-PrimaryMailboxId` / `-ArchiveMailboxId` (or the `Tenant` section); `-LocationsFile`; the locations recorded in the store; Graph (`GET /users/{id}/settings/exchange` for the primary with `User.Read.All`, Graph beta for the archive). An address in `-MailboxId` is resolved through Graph, or else through the import-export API, which accepts the address in place of the id (`parentMailboxUrl` of the folders). If everything fails the message names what was tried and asks for `-MailboxId MBX:...` (from `Get-MailboxLocation -User <address>`).
+
+The archive has two different "not found" answers. When Graph beta answers and names no `inPlaceArchiveMailboxId`, the mailbox has no archive: the error says so (use `-Mailbox Primary`) and the console shows *This mailbox has no archive*. When Graph cannot be read (HTTP 403 without `User.Read.All`, no session, or the call refused), the archive may exist: the error asks for `User.Read.All` (delegated, or application with `-AppOnly`) or for `-ArchiveMailboxId` / `-LocationsFile`, and the **Where to look** card of the console says the archive could not be looked up and offers **Archive mailbox id** and **Look again**. The id typed there is kept for that mailbox only, until you sign out. A shared mailbox or another user's mailbox opened by its address is read as its primary mailbox only; no archive is looked up for it. In PowerShell, `Get-MbtMailboxLocation -ArchiveStatus ([ref]$status)` returns `State` (`Known`, `None` or `Unknown`) and `Detail` (what Graph answered).
 
 ### 4.5 Shared mailboxes and other users' mailboxes
 

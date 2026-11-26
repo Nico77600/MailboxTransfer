@@ -57,7 +57,7 @@ function New-MbtGuiState {
     @{
         Task = $null; Sel = $null; Step = 0
         Mailbox = ''; AuthMode = 'user'; AppTenant = ''; AppClient = ''; AppThumb = ''; TenantId = ''; ClientId = ''; Shared = ''; ImShared = ''; Signed = $false; SigningIn = $false; CodeShown = $false; Code = $null; SignInCts = $null; SwitchToCode = $false; SignInError = ''; Account = ''; Token = $null
-        Locations = @(); LocationChecked = @{}; Reading = $false; LocationsFile = ''; RecoverableItems = $false
+        Locations = @(); LocationChecked = @{}; Reading = $false; LocationsFile = ''; RecoverableItems = $false; ArchiveState = $null; ArchiveIds = @{}; ArchiveText = ''; ArchiveProblem = ''
         Period = 'all'; ArrFrom = ''; ArrTo = ''; PeriodOpen = $false
         Dest = 'pst'; KeepStore = $true; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = ''; OutName = ''
         Conc = 4; Retry = 2; Tries = 3; Reconcile = 5; Awake = $false; WorkFolder = $WorkFolder; Changed = @{}
@@ -103,7 +103,7 @@ function New-MbtGuiWindow {
         -Engine: the adapter (real or fake). -Theme: System (like Windows), Light, Dark.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.3.0')
+    param([Parameter(Mandatory)]$Engine, [ValidateSet('System', 'Light', 'Dark')][string]$Theme = 'System', [string]$WorkFolder, [string]$EntryScript, [string]$Version = '1.4.0')
 
     $look = Initialize-MbtGuiTheme -Theme $Theme
     $xaml = Get-Content -LiteralPath (Join-Path $script:GuiRoot 'module\MailboxTransfer.Gui.xaml') -Raw

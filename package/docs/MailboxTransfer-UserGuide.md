@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: User guide
-version: 1.3.0
+version: 1.4.0
 author: Nicolas Fabert
 updated: 2026-11-25
 runtime: PowerShell 7.6+ (engine, window and command line)
@@ -136,7 +136,7 @@ A mailbox is protected. The tool signs in as **you**, and can only do what **you
 | **Browse and export** a mailbox | The sign-in set up (steps A and B below) with the **read** rights (`MailboxFolder.Read`, `MailboxItem.Read`, `MailboxItem.Export`). Add `Mail.Read` if you want to see subjects and senders while you browse. |
 | **Import** into a mailbox | The same set-up with the **write** rights (`MailboxFolder.ReadWrite`, `MailboxItem.Read`, `MailboxItem.ImportExport`). For `.eml` files with the Exchange conversion option, also `Mail.ReadWrite`. |
 | Work in a **shared mailbox**, or in another person's mailbox | The **FullAccess** right on that mailbox: it is enough to browse and export. To **import** there, the tool must sign in without a person (step C below): ask for it. |
-| Skip typing the mailbox ids (optional) | `User.Read.All`. Without it you give the ids once (reference guide). |
+| Skip typing the mailbox ids (optional) | `User.Read.All`. Without it the tool cannot see the archive of a mailbox: the console says so and you type the archive id once (section 4.3, **If not**). |
 | **Check and repair a PST**, or **Open an export or a PST** | **Nothing.** These tasks work on files on your PC and never contact Microsoft. |
 
 ![Which task needs which permission: a table with one row per task and one column per permission](images/readme-permissions-light.png)
@@ -179,7 +179,7 @@ This section is for the administrator. It is done **once for the whole company**
 **Do:** download the tool, then put it on the PC.
 
 1. Open **https://github.com/Nico77600/MailboxTransfer/releases/latest** in your browser.
-2. Under **Assets**, click **`MailboxTransfer-1.3.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
+2. Under **Assets**, click **`MailboxTransfer-1.4.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
 3. Extract the ZIP into a folder such as `C:\Tools\MailboxTransfer` (right-click, *Extract All*). Write the files directly in that folder: `Start-MailboxTransferConsole.cmd` must be inside it, not one level deeper.
 4. Unblock the folder (one command, once):
 
@@ -295,7 +295,7 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 **If not:**
 
 - *An amber note: "Auxiliary archive 1 is still being filled by Microsoft".* Normal on a very big archive. Some folders will say **not ready**. The tool tries them again later. Nothing is exported as empty. See chapter 10, topic 3.
-- *The archive is missing from the list.* Click **The archive is missing from this list**. Your administrator can give you its id once (see the reference guide).
+- *The archive is missing from the list.* Look under **Primary mailbox**. If it says **This mailbox has no archive**, there is nothing to find. If it says **The archive could not be looked up**, the tool is not allowed to ask Microsoft: ask your administrator to grant the application the permission `User.Read.All` (delegated when you sign in as yourself, application when you sign in as the application), or ask for the archive mailbox id once. Type it in **Archive mailbox id** (the guid, or `MBX:<guid>@<tenant>`) and click **Look again**. Your administrator finds it in Exchange Online PowerShell with `Get-MailboxLocation -User <address> | Select MailboxGuid, MailboxLocationType` (the line *MainArchive*), or with `(Get-Mailbox <address>).ArchiveGuid`. Without a typed id, the box **The archive is missing from this list** explains how to load a locations file.
 - *A shared mailbox.* Click **A shared mailbox, or another user's mailbox** and type its address. You need the FullAccess right (chapter 2).
 
 **Deleted items (optional).** Tick **Include deleted items (Recoverable Items)** if you also need what was deleted and emptied from *Deleted Items* in Outlook. Exchange keeps it for a while (14 days, up to 30) in a hidden folder, and the browser then shows it like any other folder. Choose it before you tick: changing the box reloads the browser. The details (the four folders inside) are in the [reference guide](MailboxTransfer-Guide.md#recoverable-items).

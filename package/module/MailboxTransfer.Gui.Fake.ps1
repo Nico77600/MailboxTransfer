@@ -163,11 +163,22 @@ function New-MbtGuiFakeEngine {
         $engine.State.Signed = $true
         & $OnDone ([pscustomobject]@{ Account = $Mailbox; TenantId = 'contoso.onmicrosoft.com'; Scopes = @('MailboxFolder.Read', 'MailboxItem.Read', 'MailboxItem.ImportExport', 'Mail.Read', 'MailboxFolder.ReadWrite'); Missing = @(); CanReadMail = $true; Access = $(if ($App) { 'Application (certificate, no user)' } else { 'Delegated (you, with your rights)' }) }) }.GetNewClosure()
     $engine.SignOut = { $engine.State.Signed = $false }.GetNewClosure()
-    $engine.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError)
-        & $OnDone @(
+    # State.Archive: Known (default), None (the lookup answered: no archive) or Unknown (the lookup could not be made, unless an archive id is typed)
+    $engine.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId)
+        $mode = if ($engine.State.ContainsKey('Archive')) { [string]$engine.State.Archive } else { 'Known' }
+        $typed = ($mode -eq 'Unknown') -and $ArchiveId
+        $all = @(
             [pscustomobject]@{ Kind = 'Primary'; Label = 'Primary mailbox'; Hint = '3,496 items - 5.1 GiB'; Root = 'r-p'; MailboxId = 'MBX:primary' }
             [pscustomobject]@{ Kind = 'Archive'; Label = 'Archive'; Hint = '10,070 items - 35.3 GiB'; Root = 'r-a'; MailboxId = 'MBX:archive' }
-            [pscustomobject]@{ Kind = 'AuxArchive'; Label = 'Auxiliary archive 1'; Hint = '278 items - size not given by Microsoft'; Root = 'r-x'; MailboxId = 'MBX:aux1'; Filling = $true }) }
+            [pscustomobject]@{ Kind = 'AuxArchive'; Label = 'Auxiliary archive 1'; Hint = '278 items - size not given by Microsoft'; Root = 'r-x'; MailboxId = 'MBX:aux1'; Filling = $true })
+        $keep = if ($mode -eq 'Known' -or $typed) { $all } else { @($all | Where-Object Kind -EQ 'Primary') }
+        & $OnDone $keep ([pscustomobject]@{ State = $(if ($typed) { 'Known' } else { $mode }); Detail = $(if ($mode -eq 'Unknown' -and -not $typed) { 'https://graph.microsoft.com/beta/users/adele.vance@contoso.com/settings/exchange HTTP 403 Authorization_RequestDenied' } else { '' }) }) }.GetNewClosure()
+    $engine.ParseMailboxId = { param($Text, $TenantId)
+        $guid = [guid]::Empty; $tenant = [guid]::Empty
+        $v = ([string]$Text).Trim()
+        if ($v -match '^(?i:MBX):(?<m>[^@]+)@(?<t>.+)$' -and [guid]::TryParse($Matches.m, [ref]$guid) -and [guid]::TryParse($Matches.t, [ref]$tenant)) { return [pscustomobject]@{ Ok = $true; Id = "MBX:$guid@$tenant"; Problem = '' } }
+        if ([guid]::TryParse($v, [ref]$guid)) { return [pscustomobject]@{ Ok = $true; Id = "MBX:$guid@$TenantId"; Problem = '' } }
+        return [pscustomobject]@{ Ok = $false; Id = ''; Problem = 'This is not a mailbox id. Type the guid, or MBX:<guid>@<tenant>.' } }
     $engine.Roots = { param($Locations, $OnDone, $OnError, $IncludeRecoverable)
         $all = Get-MbtGuiFakeTree -Recoverable:([bool]$IncludeRecoverable)
         $keep = @($all | Where-Object { $r = $_; @($Locations | Where-Object { $_.Root -eq $r.Id }).Count -gt 0 })

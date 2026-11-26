@@ -115,6 +115,7 @@ function Start-MbtGuiSignIn {
         $win = $null; if ($probe) { try { $win = & $probe } catch { $win = $null } }
         if ($win -and -not $win.Available) { $UseCode = $true; $s.SignInNote = "The Windows sign-in window cannot be used on this PC ($($win.Reason)). A code is used instead." }
     }
+    if ((Get-MbtGuiArchiveKey $s.Mailbox) -ne (Get-MbtGuiArchiveKey $addr)) { $s.ArchiveIds = @{}; $s.ArchiveState = $null; $s.ArchiveText = ''; $s.ArchiveProblem = '' }
     $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null; $s.SwitchToCode = $false
     $s.SignInCts = [Threading.CancellationTokenSource]::new()
     $codeFile = Get-MbtGuiDeviceCodeFile
@@ -149,18 +150,26 @@ function Step-MbtGuiSignInCode {
     }
 }
 
+function Get-MbtGuiArchiveKey {
+    <# The archive mailbox id typed for a mailbox is kept under its address, in lower case. #>
+    param([string]$Address)
+    return $Address.Trim().ToLowerInvariant()
+}
+
 function Read-MbtGuiLocations {
     $g = $script:Gui; $s = $g.S
     $s.Reading = $true
+    $archiveKey = Get-MbtGuiArchiveKey $s.Mailbox
+    $archiveId = if (-not $s.Shared -and $s.ArchiveIds.ContainsKey($archiveKey)) { [string]$s.ArchiveIds[$archiveKey] } else { '' }
     & $g.Engine.Locations $s.Mailbox $s.LocationsFile {
-        param($locs)
-        $s.Locations = @($locs); $s.Reading = $false
+        param($locs, $archive)
+        $s.Locations = @($locs); $s.ArchiveState = $archive; $s.Reading = $false
         foreach ($l in $s.Locations) { if (-not $s.LocationChecked.ContainsKey($l.Kind)) { $s.LocationChecked[$l.Kind] = $true } }
         Sync-MbtGuiLocationRoots
         Show-MbtGuiPage
     }.GetNewClosure() {
-        param($msg) $s.Reading = $false; $s.Locations = @(); $m = ConvertTo-MbtGuiMessage $msg; $s.SignInError = $m.Text; $s.SignInTech = $m.Tech; $s.Shared = ''; Show-MbtGuiPage
-    }.GetNewClosure() $s.Shared
+        param($msg) $s.Reading = $false; $s.Locations = @(); $s.ArchiveState = $null; $m = ConvertTo-MbtGuiMessage $msg; $s.SignInError = $m.Text; $s.SignInTech = $m.Tech; $s.Shared = ''; Show-MbtGuiPage
+    }.GetNewClosure() $s.Shared $null $archiveId
 }
 
 function Sync-MbtGuiLocationRoots {
@@ -181,7 +190,7 @@ function New-MbtGuiSignInCard {
     $g = $script:Gui; $s = $g.S
     if ($s.Signed) {
         $box = New-GuiTextBox -Text $s.Mailbox -ReadOnly -Automation 'Mailbox address'
-        $out = New-GuiButton -Text 'Sign out' -OnClick { & $g.Engine.SignOut; $s.Signed = $false; $s.Shared = ''; $s.ImShared = ''; $s.Locations = @(); $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() }; Show-MbtGuiPage }
+        $out = New-GuiButton -Text 'Sign out' -OnClick { & $g.Engine.SignOut; $s.Signed = $false; $s.Shared = ''; $s.ImShared = ''; $s.Locations = @(); $s.ArchiveState = $null; $s.ArchiveIds = @{}; $s.ArchiveText = ''; $s.ArchiveProblem = ''; $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() }; Show-MbtGuiPage }
         $out.Margin = [Windows.Thickness]::new(0)
         $row = New-GuiRow -Box $box -Button $out
         $tok = $s.Token
@@ -295,6 +304,37 @@ function New-MbtGuiSharedMailboxSection {
     return (New-GuiMore -Summary $title -Content $content.ToArray() -Open:([bool]$s[$key]))
 }
 
+function New-MbtGuiArchiveLookupItem {
+    <# What "Where to look" says about the archive when it is not in the list: the mailbox has none, or it could not be looked up (why, and how to type its id). Nothing for a shared mailbox. #>
+    $g = $script:Gui; $s = $g.S
+    $state = [string](Get-MbtGuiProp $s.ArchiveState 'State' '')
+    if ($s.Shared -or -not $s.Signed -or @($s.Locations | Where-Object { $_.Kind -eq 'Archive' }).Count) { return @() }
+    if ($state -eq 'None') { return @(New-GuiText 'This mailbox has no archive.' 'Muted' -Margin '0,8,0,0') }
+    if ($state -ne 'Unknown') { return @() }
+    $permission = if ($s.AuthMode -eq 'app') { 'the application permission' } else { 'the delegated permission' }
+    $out = [Collections.Generic.List[object]]::new()
+    $out.Add((New-GuiMessage -Kind warn -Icon warn -Text "**The archive could not be looked up.** If this mailbox has an archive, it is not in the list. Ask an administrator to grant the application $permission **User.Read.All**, or type the archive mailbox id below."))
+    $out.Add((New-GuiText 'Archive mailbox id' 'Label'))
+    $box = New-GuiTextBox -Text ([string]$s.ArchiveText) -Automation 'Archive mailbox id' -OnChange { param($x, $e) $s.ArchiveText = $x.Text }.GetNewClosure()
+    $look = New-GuiButton -Text 'Look again' -Small -Icon refresh -OnClick {
+        $text = ([string]$s.ArchiveText).Trim()
+        $key = Get-MbtGuiArchiveKey $s.Mailbox
+        $s.ArchiveProblem = ''
+        if ($text) {
+            $parsed = & $g.Engine.ParseMailboxId $text ([string](Get-MbtGuiProp $s.Token 'TenantId' ''))
+            if (-not $parsed.Ok) { $s.ArchiveProblem = [string]$parsed.Problem; Show-MbtGuiPage; return }
+            $s.ArchiveIds[$key] = [string]$parsed.Id
+        } else { $s.ArchiveIds.Remove($key) }
+        Read-MbtGuiLocations
+        Show-MbtGuiPage
+    }.GetNewClosure()
+    $look.Margin = [Windows.Thickness]::new(0, 6, 0, 0); $look.HorizontalAlignment = 'Left'
+    $out.Add($box); $out.Add($look)
+    if ($s.ArchiveProblem) { $out.Add((New-GuiMessage -Kind bad -Icon warn -Text ([string]$s.ArchiveProblem))) }
+    $out.Add((New-GuiText "Type the guid, or **MBX:<guid>@<tenant>**. An administrator finds it in Exchange Online PowerShell with **Get-MailboxLocation -User $($s.Mailbox) | Select MailboxGuid, MailboxLocationType** (the line MainArchive), or with **(Get-Mailbox $($s.Mailbox)).ArchiveGuid**." 'Hint'))
+    return $out.ToArray()
+}
+
 function New-MbtGuiLocationsCard {
     $g = $script:Gui; $s = $g.S
     $items = @()
@@ -303,7 +343,8 @@ function New-MbtGuiLocationsCard {
         $opt = New-GuiOption -Type Check -Title $l.Label -Hint $l.Hint -Checked ([bool]$s.LocationChecked[$kind]) -OnChange { param($x, $e) $s.LocationChecked[$kind] = [bool]$x.IsChecked; Sync-MbtGuiLocationRoots }.GetNewClosure()
         $items += $opt
     }
-    if (-not $items.Count) { $items += New-GuiText $(if ($s.Reading) { 'Reading the locations...' } else { 'No location found.' }) 'Hint' }
+    if (-not $s.Reading) { $items += @(New-MbtGuiArchiveLookupItem) }
+    if (-not @($s.Locations).Count) { $items += New-GuiText $(if ($s.Reading) { 'Reading the locations...' } else { 'No location found.' }) 'Hint' }
     else {
         $items += New-GuiOption -Type Check -Title 'Include deleted items (Recoverable Items)' -Margin '0,10,0,0' -Checked ([bool]$s.RecoverableItems) `
             -Hint 'Off: only the folders you see in Outlook. On: the browser also shows the hidden folder where deleted mail waits. Changing this reloads the browser.' `

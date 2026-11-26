@@ -29,7 +29,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.3.0
+    Version : 1.4.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -40,7 +40,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ToolVersion = '1.3.0'
+$script:ToolVersion = '1.4.0'
 $script:ToolRoot = $PSScriptRoot
 function Get-PathReparseTag {
     <#
@@ -1210,7 +1210,7 @@ function Get-MbtGraphMailboxLocation {
     .SYNOPSIS
         What Microsoft Graph says about the mailboxes of a user: GET /beta/users/{upn}/settings/exchange (primaryMailboxId and
         inPlaceArchiveMailboxId), else GET /v1.0/... (primaryMailboxId only). Needs a session and the delegated permission User.Read.All.
-        No Graph API lists the AUXILIARY archives. Returns the locations found and, in Lookup, what each call answered.
+        No Graph API lists the AUXILIARY archives. Returns the locations found, in Lookup what each call answered, and in ArchiveAnswered whether the beta call (the only one that knows the archive) was readable.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$UserPrincipalName, [Parameter(Mandatory)][string]$TenantId)
@@ -1218,7 +1218,7 @@ function Get-MbtGraphMailboxLocation {
     $base = $s.Graph.Options.BaseUrl
     $beta = $base -replace '/v1\.0$', '/beta'
     $paths = Get-MbtExchangeSettingsPath -UserPrincipalName $UserPrincipalName -Session $s
-    $found = @(); $lookup = @()
+    $found = @(); $lookup = @(); $answered = $false
     foreach ($root in @($beta, $base) | Select-Object -Unique) {
         foreach ($path in $paths) {
             try {
@@ -1233,6 +1233,7 @@ function Get-MbtGraphMailboxLocation {
                         }
                     }
                     $lookup += $note
+                    if ($root -eq $beta) { $answered = $true }
                 } finally { $doc.Dispose() }
             } catch {
                 $ge = Get-MbtGraphException $_
@@ -1244,7 +1245,7 @@ function Get-MbtGraphMailboxLocation {
         }
         if ($found) { break }
     }
-    [pscustomobject]@{ Locations = $found; Lookup = $lookup }
+    [pscustomobject]@{ Locations = $found; Lookup = $lookup; ArchiveAnswered = $answered }
 }
 
 function Get-MbtMailboxLocation {
@@ -1260,6 +1261,9 @@ function Get-MbtMailboxLocation {
           4. The store (-Store): the locations recorded by earlier runs, and above all the auxiliary archives LEARNED from the redirects of
              the service (308 Location, ErrorArchiveFolderMovedPermanently, 409 "target session is expected in mailbox"), which always works.
         What is given (operator, parameters, Graph) beats what was guessed from a redirect. With a writable -Store the new locations are recorded.
+        -ArchiveStatus [ref] receives what is known about the main archive: State Known (an Archive location is in the result), None (Graph beta answered
+        and names no archive: the mailbox has none) or Unknown (Graph was not asked, was refused or has no session: the archive may exist), and in Detail
+        what Graph answered.
     #>
     [CmdletBinding()]
     param(
@@ -1272,18 +1276,23 @@ function Get-MbtMailboxLocation {
         [string]$ArchiveMailboxId,
         [string[]]$AuxArchiveMailboxId,
         [switch]$SkipGraph,
-        [switch]$NoSave
+        [switch]$NoSave,
+        [ref]$ArchiveStatus
     )
     begin { $piped = [System.Collections.Generic.List[object]]::new() }
     process { if ($null -ne $InputObject) { $piped.Add($InputObject) } }
     end {
         $found = [System.Collections.Generic.List[object]]::new()
+        $graphAnswered = $false
+        $graphDetail = if ($SkipGraph) { 'Microsoft Graph was not asked.' } elseif (-not ($script:Session -and $UserPrincipalName)) { 'There is no sign-in to ask Microsoft Graph.' } else { '' }
         if (-not $TenantId -and $script:Session -and $script:Session.TenantId) { $TenantId = $script:Session.TenantId }
         if ($Store) { Initialize-MbtEngine }
         # 1. Graph
         if (-not $SkipGraph -and $script:Session -and $UserPrincipalName) {
             $g = Get-MbtGraphMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $(if ($TenantId) { $TenantId } else { $script:Session.TenantId })
             foreach ($l in $g.Locations) { $found.Add($l) }
+            $graphAnswered = [bool]$g.ArchiveAnswered
+            $graphDetail = ($g.Lookup -join '; ')
             foreach ($n in $g.Lookup) { Write-Verbose "Graph: $n" }
             if (-not $g.Locations) { Write-Verbose 'Graph gave no mailbox id (User.Read.All is needed); the other sources are used. No Graph API lists the auxiliary archives.' }
         }
@@ -1330,6 +1339,10 @@ function Get-MbtMailboxLocation {
                 $obj = [pscustomobject]@{ Kind = $sl.Kind.ToString(); MailboxId = $sl.MailboxId; Source = $sl.Source; Detail = $sl.Detail; DiscoveredUtc = $sl.DiscoveredUtc; Learned = ($sl.Rank -lt [MailboxTransfer.StoreMailboxLocation]::RankGiven) }
                 $byId[$key] = $obj; $result.Add($obj)
             }
+        }
+        if ($ArchiveStatus) {
+            $state = if (@($result | Where-Object Kind -EQ 'Archive').Count) { 'Known' } elseif ($graphAnswered) { 'None' } else { 'Unknown' }
+            $ArchiveStatus.Value = [pscustomobject]@{ State = $state; Detail = $graphDetail }
         }
         $result | Sort-Object { $order[$_.Kind] }, DiscoveredUtc, MailboxId
     }
@@ -1477,14 +1490,15 @@ function Get-MbtBrowseLocation {
     <#
     .SYNOPSIS
         The locations of the user as the browse view takes them: Get-MbtMailboxLocation (Graph, operator file, parameters, the store) converted to
-        browse locations. Same parameters as Get-MbtMailboxLocation; nothing is recorded in the store.
+        browse locations. Same parameters as Get-MbtMailboxLocation (-ArchiveStatus included); nothing is recorded in the store.
     #>
     [CmdletBinding()]
     param(
         [string]$UserPrincipalName, [string]$TenantId, $Store, [string]$LocationsFile, [string]$PrimaryMailboxId, [string]$ArchiveMailboxId,
-        [string[]]$AuxArchiveMailboxId, [switch]$SkipGraph
+        [string[]]$AuxArchiveMailboxId, [switch]$SkipGraph, [ref]$ArchiveStatus
     )
     $p = @{ NoSave = $true }
+    if ($ArchiveStatus) { $p['ArchiveStatus'] = $ArchiveStatus }
     foreach ($k in 'UserPrincipalName', 'TenantId', 'Store', 'LocationsFile', 'PrimaryMailboxId', 'ArchiveMailboxId', 'AuxArchiveMailboxId') { if ($PSBoundParameters.ContainsKey($k)) { $p[$k] = $PSBoundParameters[$k] } }
     if ($SkipGraph) { $p['SkipGraph'] = $true }
     foreach ($l in @(Get-MbtMailboxLocation @p)) { New-MbtBrowseLocation -Kind $l.Kind -MailboxId $l.MailboxId -Source $l.Source }
@@ -2287,7 +2301,8 @@ function Resolve-MbtMailboxId {
     }
     $given = if ($Mailbox -eq 'Primary') { $PrimaryMailboxId } elseif ($Mailbox -eq 'Archive') { $ArchiveMailboxId } else { $null }
     if ($given) { return ConvertTo-MbtMailboxId -Value $given -TenantId $TenantId }
-    $known = @(Get-MbtMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $TenantId -Store $Store -LocationsFile $LocationsFile -NoSave | Where-Object Kind -EQ $Mailbox)
+    $archiveStatus = $null
+    $known = @(Get-MbtMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $TenantId -Store $Store -LocationsFile $LocationsFile -NoSave -ArchiveStatus ([ref]$archiveStatus) | Where-Object Kind -EQ $Mailbox)
     if ($known.Count -eq 1) { return $known[0].MailboxId }
     if ($known.Count -gt 1) {
         throw ("$($known.Count) $Mailbox mailboxes are known for ${UserPrincipalName}: " + (($known | ForEach-Object { $_.MailboxId }) -join ', ') + '. Choose one with -MailboxId.')
@@ -2297,7 +2312,13 @@ function Resolve-MbtMailboxId {
         throw ("No auxiliary archive of $UserPrincipalName is known yet. Pass -MailboxId MBX:<mailbox guid>@$TenantId (Exchange Online PowerShell: Get-MailboxLocation -User $UserPrincipalName, " +
             "MailboxLocationType AuxArchive), or -LocationsFile with that output; they are also learned from the redirects of an Archive export or import.")
     }
-    throw ("The archive mailbox id of $UserPrincipalName is not known (Graph beta gives inPlaceArchiveMailboxId with User.Read.All, nothing else does): pass -ArchiveMailboxId MBX:<mailbox guid>@$TenantId " +
+    if ($archiveStatus -and $archiveStatus.State -eq 'None') {
+        throw ("$UserPrincipalName has no archive mailbox: Microsoft Graph answered and names none. Use -Mailbox Primary (or -TargetMailbox Primary). " +
+            "If the mailbox does have an archive, pass -ArchiveMailboxId MBX:<mailbox guid>@$TenantId.")
+    }
+    $permission = if (Test-MbtAppOnly) { 'the application permission User.Read.All to the application' } else { 'the delegated permission User.Read.All to the application' }
+    throw ("The archive of $UserPrincipalName could not be looked up, so its mailbox id is unknown" + $(if ($archiveStatus -and $archiveStatus.Detail) { " ($($archiveStatus.Detail))" }) + ". Ask an administrator to grant $permission " +
+        "(Microsoft Graph gives the archive id only with it), or pass -ArchiveMailboxId MBX:<mailbox guid>@$TenantId " +
         "(Exchange Online PowerShell: Get-MailboxLocation -User $UserPrincipalName, MailboxLocationType MainArchive) or -LocationsFile with that output.")
 }
 

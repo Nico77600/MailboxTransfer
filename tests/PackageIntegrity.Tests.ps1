@@ -95,12 +95,12 @@ Describe 'Static package contract' {
         }
     }
     It 'has one version: the module manifest, the module, the entry scripts, product.json and the top of the changelog' {
-        $v = '1.3.0'
+        $v = '1.4.0'
         (Import-PowerShellDataFile -LiteralPath (Join-Path $script:Package 'MailboxTransfer.psd1')).ModuleVersion | Should -Be $v
         [IO.File]::ReadAllText((Join-Path $script:Package 'MailboxTransfer.psm1')) | Should -Match "(?m)^\`$script:ToolVersion = '$v'"
         [IO.File]::ReadAllText((Join-Path $script:Package 'Start-MailboxTransferConsole.ps1')) | Should -Match "(?m)^\`$script:ConsoleVersion = '$v'"
         (Get-Content -LiteralPath (Join-Path $script:Package 'product.json') -Raw | ConvertFrom-Json).version | Should -Be $v
-        [IO.File]::ReadAllText((Join-Path $script:Repo 'CHANGELOG.md')) | Should -Match "(?m)^## $([regex]::Escape($v)) "
+        [IO.File]::ReadAllText((Join-Path $script:Repo 'CHANGELOG.md')) | Should -Match "(?m)^## \[?$([regex]::Escape($v))\]? "
     }
     It 'distributes no data, no private configuration and no test or tool (builder dry run)' {
         $destination = Join-Path $script:Tmp 'dry-run'

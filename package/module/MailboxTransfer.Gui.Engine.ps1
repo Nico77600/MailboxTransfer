@@ -237,12 +237,14 @@ function New-MbtGuiRealEngine {
 
     # -Shared: the address of a shared mailbox or of another user's mailbox (resolved to its physical id, one location: the primary mailbox of it);
     # -AuxIds: auxiliary archives already known (ids or guids), as the -AuxArchiveMailboxId of the entry script
-    $e.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds)
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, $LocationsFile, $Shared, $AuxIds) -OnError $OnError -Script {
-            param($upn, $file, $shared, $auxIds)
+    # -ArchiveId: the archive mailbox id typed for this mailbox (it replaces the one of the configuration)
+    # OnDone gets the locations and, second, what is known about the archive (State Known, None or Unknown; $null for a shared mailbox, which is read by its primary mailbox only)
+    $e.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, $LocationsFile, $Shared, $AuxIds, $ArchiveId) -OnError $OnError -Script {
+            param($upn, $file, $shared, $auxIds, $archiveId)
             if ($shared) {
                 $id = Resolve-MbtMailboxAddress -Address $shared -TenantId (Get-MbtSession).TenantId
-                return @(New-MbtBrowseLocation -Kind Primary -MailboxId $id -Source "address $shared")
+                return [pscustomobject]@{ Locations = @(New-MbtBrowseLocation -Kind Primary -MailboxId $id -Source "address $shared"); Archive = $null }
             }
             $p = @{ UserPrincipalName = $upn }
             if ($file) { $p.LocationsFile = $file }
@@ -251,21 +253,31 @@ function New-MbtGuiRealEngine {
             $configured = Get-MbtConfiguredMailboxId -Configuration (Import-MbtConfiguration) -UserPrincipalName $upn
             if ($configured.Primary) { $p.PrimaryMailboxId = $configured.Primary }
             if ($configured.Archive) { $p.ArchiveMailboxId = $configured.Archive }
-            $found = @(Get-MbtBrowseLocation @p)
+            if ($archiveId) { $p.ArchiveMailboxId = $archiveId }
+            $archive = $null
+            $found = @(Get-MbtBrowseLocation @p -ArchiveStatus ([ref]$archive))
             # Graph gives no mailbox id without User.Read.All: the primary mailbox is then found through the import-export API (its folder listing names the mailbox)
             if (-not @($found | Where-Object Kind -EQ 'Primary')) {
                 try { $found = @(New-MbtBrowseLocation -Kind Primary -MailboxId (Resolve-MbtMailboxAddress -Address $upn -TenantId (Get-MbtSession).TenantId) -Source 'address') + $found } catch { Write-Verbose "primary by address: $_" }
             }
-            $found
+            [pscustomobject]@{ Locations = $found; Archive = $archive }
         } -OnDone {
-            param($locs)
+            param($result)
+            $answer = @($result)[0]
+            $locs = $answer.Locations
             $aux = 0
             $out = foreach ($l in @($locs)) {
                 $label = switch ($l.Kind) { 'Primary' { $(if ($Shared) { "Shared mailbox $Shared" } else { 'Primary mailbox' }) } 'Archive' { 'Archive' } default { $aux++; "Auxiliary archive $aux" } }
                 [pscustomobject]@{ Kind = [string]$l.Kind; Label = $label; Hint = $(if ($l.Kind -eq 'AuxArchive') { 'Counts appear as you open folders. Size not given by Microsoft.' } else { 'Counts appear as you open folders.' }); Root = [string]$l.MailboxId; MailboxId = [string]$l.MailboxId; Loc = $l; Filling = ($l.Kind -eq 'AuxArchive') }
             }
-            & $OnDone @($out)
+            & $OnDone @($out) $answer.Archive
         }.GetNewClosure()
+    }.GetNewClosure()
+
+    # The mailbox id typed by the operator (a bare guid or MBX:<guid>@<tenant>, in any case): @{ Ok; Id; Problem }
+    $e.ParseMailboxId = { param($Text, $TenantId)
+        try { [pscustomobject]@{ Ok = $true; Id = (ConvertTo-MbtMailboxId -Value ([string]$Text) -TenantId ([string]$TenantId)); Problem = '' } }
+        catch { [pscustomobject]@{ Ok = $false; Id = ''; Problem = 'This is not a mailbox id. Type the guid, or MBX:<guid>@<tenant>.' } }
     }.GetNewClosure()
 
     # -IncludeRecoverable: the box "Include deleted items (Recoverable Items)" of the From page; the folders are read as the user opens them, so only Children needs it

@@ -25,7 +25,7 @@ function Get-MbtGuiScenarioName {
 
 function Get-MbtGuiEdgeScenarioName {
     <# The states with exactly one of something (one folder, one message, one finding, one step...) or with none, and a plan check that failed: the lists of the pages are built from loops that run once or not at all. Walked by the tests, not drawn for the documentation. #>
-    @('StartOneJob', 'StartNoJob', 'ExportFromOneLocation', 'ExportFromNoLocation', 'ExportFromOneMessage', 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ImportToOneLocation', 'ImportPlanOneFolder',
+    @('StartOneJob', 'StartNoJob', 'ExportFromOneLocation', 'ExportFromNoLocation', 'ExportFromArchiveUnknown', 'ExportFromArchiveIdInvalid', 'ExportFromNoArchive', 'CopyMailboxFromArchiveUnknown', 'ExportFromOneMessage', 'ExportPlanOneFolder', 'ExportPlanOneMessage', 'ImportToOneLocation', 'ImportPlanOneFolder',
         'RepairFromOneFinding', 'CopyPlanOneFolder', 'RunOneStep', 'DoneExportOneStep', 'DoneImportOneRefused', 'DoneImportOneDecision', 'DoneRepairOneIncomplete', 'DoneCopyOneRefused', 'ExportPlanFailed', 'ImportFromManyFolders', 'ExportFromPeriodInvalid', 'ExportFromPeriodOpenEnd',
         'CopyMailboxFromSeveralPlaces', 'CopyMailboxToApplication', 'CopyMailboxToSame', 'CopyMailboxToArchive', 'CopyMailboxPlanChecking', 'DoneCopyMailboxError', 'DoneCopyMailboxDecision')
 }
@@ -232,13 +232,14 @@ function Show-MbtGuiRunScenario {
 function Initialize-MbtGuiScenarioExport {
     <#
         Signed in, the three locations, some folders and messages ticked. -Kinds: only the locations of these kinds ('None': no location). -OneFolder: one folder ticked alone, nothing else.
-        -OneMessage: the one message of a folder, ticked alone.
+        -OneMessage: the one message of a folder, ticked alone. -Archive: what the lookup of the archive answers (Known, None: the mailbox has no archive, Unknown: it could not be looked up).
     #>
-    param([switch]$Ticks, [string[]]$Kinds, [switch]$OneFolder, [switch]$OneMessage, [switch]$OnePlace)
+    param([switch]$Ticks, [string[]]$Kinds, [switch]$OneFolder, [switch]$OneMessage, [switch]$OnePlace, [ValidateSet('Known', 'None', 'Unknown')][string]$Archive = 'Known')
     $g = $script:Gui; $s = $g.S
+    $g.Engine.State.Archive = $Archive
     $s.Task = 'export'; $s.Sel = 'export'; $s.Mailbox = 'adele.vance@contoso.com'; $s.Signed = $true; $s.Account = $s.Mailbox
-    $s.Token = [pscustomobject]@{ Access = 'Delegated (you, with your rights)'; CanReadMail = $true; Missing = @() }
-    & $g.Engine.Locations $s.Mailbox '' { param($l) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds }); foreach ($x in $s.Locations) { $s.LocationChecked[$x.Kind] = $true } } { }
+    $s.Token = [pscustomobject]@{ Access = 'Delegated (you, with your rights)'; CanReadMail = $true; Missing = @(); TenantId = 'contoso.onmicrosoft.com' }
+    & $g.Engine.Locations $s.Mailbox '' { param($l, $archive) $s.Locations = @($l | Where-Object { -not $Kinds -or $_.Kind -in $Kinds }); $s.ArchiveState = $archive; foreach ($x in $s.Locations) { $s.LocationChecked[$x.Kind] = $true } } { }
     $browser = Get-MbtGuiBrowser 'export'
     & $g.Engine.Roots $s.Locations { param($r) Set-MbtGuiBrowserRoots -Browser $browser -Roots @($r) } { }
     $inbox = $null
@@ -306,6 +307,7 @@ function Set-MbtGuiScenario {
     $s.WorkFolder = 'D:\MailboxTransfer'
     $script:FakeJobCount = $null
     $script:FakePstExtraFolders = 0
+    $g.Engine.State.Archive = 'Known'
     switch ($Name) {
         'Start' { $s.Step = 1; Show-MbtGuiPage }
         'StartImport' { $s.Step = 1; $s.Sel = 'import'; Show-MbtGuiPage }
@@ -396,6 +398,10 @@ function Set-MbtGuiScenario {
         'StartNoJob' { $script:FakeJobCount = 0; $s.Step = 1; Show-MbtGuiPage }
         'ExportFromOneLocation' { Initialize-MbtGuiScenarioExport -Kinds Primary -OneFolder; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportFromNoLocation' { Initialize-MbtGuiScenarioExport -Kinds None; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromArchiveUnknown' { Initialize-MbtGuiScenarioExport -Ticks -Archive Unknown; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromArchiveIdInvalid' { Initialize-MbtGuiScenarioExport -Ticks -Archive Unknown; $s.ArchiveText = 'not-a-guid'; $s.ArchiveProblem = 'This is not a mailbox id. Type the guid, or MBX:<guid>@<tenant>.'; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'ExportFromNoArchive' { Initialize-MbtGuiScenarioExport -Ticks -Archive None; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
+        'CopyMailboxFromArchiveUnknown' { Initialize-MbtGuiScenarioExport -Ticks -Archive Unknown; $s.Task = 'mailcopy'; $s.Sel = 'mailcopy'; $s.Step = (Get-MbtGuiScenarioStep 'mailcopy' 'exFrom'); Show-MbtGuiPage }
         'ExportFromOneMessage' { Initialize-MbtGuiScenarioExport -OneMessage; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exFrom'); Show-MbtGuiPage }
         'ExportPlanFailed' { Initialize-MbtGuiScenarioExport -Ticks; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage; Set-MbtGuiPlanState error '**The plan cannot be used.** Microsoft did not answer correctly (a temporary problem). Press Check again.' }
         'ExportPlanOneFolder' { Initialize-MbtGuiScenarioExport -OneFolder; $s.Step = (Get-MbtGuiScenarioStep 'export' 'exPlan'); Show-MbtGuiPage }
