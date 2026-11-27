@@ -831,6 +831,28 @@ Describe 'Mailbox ids and folder creation' {
         $caught | Should -BeLike '*User.Read.All*'
         Disconnect-MbtGraph
     }
+    It 'Resolve-MbtMailboxId finds the primary mailbox by the address of the user when Graph refuses settings/exchange (no User.Read.All), whatever the case of the UPN' {
+        $h = [MailboxTransfer.Tests.FakeHandler]::new()
+        foreach ($i in 1..3) { $h.Enqueue(403, '{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}') }
+        $h.Enqueue(200, ('{"value":[{"id":"F1","displayName":"Inbox","parentMailboxUrl":"https://graph.microsoft.com/v1.0/admin/Exchange/Mailboxes/' + $script:Mbx + '","childFolderCount":0,"totalItemCount":0}]}'))
+        $null = Set-MbtSession -Graph (New-TestClient $h)
+        Resolve-MbtMailboxId -Mailbox Primary -TenantId $script:Tenant -UserPrincipalName 'Adele.Vance@CONTOSO.com' | Should -Be $script:Mbx
+        $h.Requests[-1].Url | Should -BeLike "$($script:Base)/admin/exchange/mailboxes/Adele.Vance%40CONTOSO.com/folders*"
+        Disconnect-MbtGraph
+    }
+    It 'Resolve-MbtMailboxId says what Graph and the address lookup answered, and how to give the id, when neither finds the primary mailbox' {
+        $h = [MailboxTransfer.Tests.FakeHandler]::new()
+        foreach ($i in 1..3) { $h.Enqueue(403, '{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}') }
+        $h.Enqueue(404, '{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}')
+        $null = Set-MbtSession -Graph (New-TestClient $h)
+        $caught = $null
+        try { Resolve-MbtMailboxId -Mailbox Primary -TenantId $script:Tenant -UserPrincipalName 'ADELE.vance@contoso.com' } catch { $caught = $_.Exception.Message }
+        $caught | Should -BeLike '*Graph settings/exchange*HTTP 403 ErrorAccessDenied*'
+        $caught | Should -BeLike '*import-export API: HTTP 404 ErrorItemNotFound*'
+        $caught | Should -BeLike '*User.Read.All*'
+        $caught | Should -BeLike '*-PrimaryMailboxId MBX:<mailbox guid>@1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d*'
+        Disconnect-MbtGraph
+    }
     It 'names the missing right and permissions on an access denial for another mailbox, and says nothing otherwise' {
         $denied = 'POST https://graph.microsoft.com/v1.0/admin/exchange/mailboxes/MBX:x/folders -> 403 ErrorAccessDenied: Access is denied.'
         Get-MbtAccessHint -Message $denied -Mode Import -OtherMailbox -Scopes @('MailboxFolder.Read') | Should -BeLike '*Missing in the token: MailboxFolder.ReadWrite, MailboxItem.ImportExport*FullAccess*'

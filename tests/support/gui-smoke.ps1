@@ -208,7 +208,7 @@ foreach ($theme in 'Light', 'Dark') {
         } finally { $g.Engine.SignIn = $keep; $g.S.SigningIn = $false; $g.S.SignInError = ''; $g.S.CodeShown = $false; $g.S.SignInCts = $null; $g.S.SwitchToCode = $false; Show-MbtGuiPage }
     }
     Check 'sign-in (fake) succeeds' { $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.SignInError = ''; Start-MbtGuiSignIn; $g.S.Signed -and @($g.S.Locations).Count -eq 3 }
-    Check 'browse: three roots' { (Get-MbtGuiBrowser 'export').Roots.Count -eq 3 }
+    Check 'browse: two roots, the Primary and the Archive (the auxiliary archive is part of the Archive, not a place of its own)' { (Get-MbtGuiBrowser 'export').Roots.Count -eq 2 -and @((Get-MbtGuiBrowser 'export').Roots | ForEach-Object Name) -notmatch 'uxiliary' }
     Check 'from: the box "Include deleted items (Recoverable Items)" is off by default, with its help in plain words' {
         Measure-Window $window
         (Find-Text $g.C.Page.Content 'Include deleted items (Recoverable Items)') -and (Find-Text $g.C.Page.Content 'What are deleted items') -and (Find-Text $g.C.Page.Content 'never back into Recoverable Items') -and -not $g.S.RecoverableItems `
@@ -229,14 +229,15 @@ foreach ($theme in 'Light', 'Dark') {
         $other = Get-MbtGuiSelection -Roots @($tree2[0])
         (Test-MbtGuiSelectionHasDeletedItems $withDeleted) -and -not (Test-MbtGuiSelectionHasDeletedItems $other) -and $withDeleted.Items -eq 24 }
     Check 'ticking a folder ticks its subfolders and makes the parent indeterminate' {
+        $g.S.SelMode = 'ticks'; Update-MbtGuiModeRow (Get-MbtGuiBrowser 'export')
         $b = Get-MbtGuiBrowser 'export'; $nodes = @($b.Roots[0].Descendants()); $inbox = $nodes | Where-Object Id -eq 'inbox'; $pc = $nodes | Where-Object Id -eq 'p-c'
         $pc.Check = $true; $sel = Get-MbtGuiSelection -Roots @($b.Roots)
         ($null -eq $inbox.Check) -and ($sel.Items -eq 410) -and $sel.Entries.Count -eq 1 }
-    Check 'unknown size is counted apart, never summed' { $b = Get-MbtGuiBrowser 'export'; $x = @($b.Roots[2].Descendants()) | Where-Object Id -eq 'x-18'; $x.Check = $true; $sel = Get-MbtGuiSelection -Roots @($b.Roots); $sel.UnknownSize -eq 1 -and $sel.Bytes -eq [long](1.0GB) }
+    Check 'unknown size is counted apart, never summed (a folder of the Archive that Microsoft gives none for)' { $b = Get-MbtGuiBrowser 'export'; $x = @($b.Roots[1].Descendants()) | Where-Object Id -eq 'x-18'; $x.Check = $true; $sel = Get-MbtGuiSelection -Roots @($b.Roots); $sel.UnknownSize -eq 1 -and $sel.Bytes -eq [long](1.0GB) }
     Check 'messages: ticking one makes the folder indeterminate' {
         $b = Get-MbtGuiBrowser 'export'; $inbox = @($b.Roots[0].Descendants()) | Where-Object Id -eq 'inbox'; $inbox.IsSelected = $true; Open-MbtGuiFolder $inbox
         $b.Rows[0].IsChecked = $true; ($null -eq $inbox.Check) -and $inbox.Picks.Count -eq 1 }
-    Check 'headers-only archive: subject not available' { $b = Get-MbtGuiBrowser 'export'; $x = @($b.Roots[2].Descendants()) | Where-Object Id -eq 'x-18'; Open-MbtGuiFolder $x; $b.Rows.Count -gt 0 -and $b.Rows[0].SubjectNa }
+    Check 'headers-only folder of the Archive: subject not available' { $b = Get-MbtGuiBrowser 'export'; $x = @($b.Roots[1].Descendants()) | Where-Object Id -eq 'x-18'; Open-MbtGuiFolder $x; $b.Rows.Count -gt 0 -and $b.Rows[0].SubjectNa }
     Check 'continue to To' { Show-MbtGuiPage; $en = $g.C.Primary.IsEnabled; Move-MbtGuiStep 1; $en -and (Get-MbtGuiScreen) -eq 'exTo' }
     Check 'EML is enabled when the engine has it' { $g.Engine.Capability.EmlExport = $true; Show-MbtGuiPage; $ok = (Find-Text $g.C.Page.Content 'EML files') -and -not (Find-Text $g.C.Page.Content 'EML files (coming'); $g.Engine.Capability.EmlExport = $false; Show-MbtGuiPage; $ok }
     Check 'EML is shown disabled when the engine lacks it' { Find-Text $g.C.Page.Content 'EML files (coming in this version)' }
@@ -285,7 +286,7 @@ foreach ($theme in 'Light', 'Dark') {
         Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
         $b = Get-MbtGuiBrowser 'export'
         Switch-MbtGuiPeriodDetail; Measure-Window $window
-        $a = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1 -and @(Find-ByAutomationName $b.C.PeriodDetail 'Period to').Count -eq 1 -and (Find-Text $b.C.PeriodDetail 'not the original date of the message') -and (Find-Text $b.C.PeriodDetail 'whatever their date') -and $g.S.PeriodOpen -and $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
+        $a = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1 -and @(Find-ByAutomationName $b.C.PeriodDetail 'Period to').Count -eq 1 -and (Find-Text $b.C.PeriodDetail 'is the date shown in the list of messages') -and (Find-Text $b.C.PeriodDetail 'whatever their date') -and $g.S.PeriodOpen -and $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
         $d = @(Find-ByAutomationName $b.C.PeriodRow 'Close the period').Count -eq 1
         Switch-MbtGuiPeriodDetail; Measure-Window $window
         $c = -not $g.S.PeriodOpen -and $null -eq $b.C.PeriodDetail.Content
@@ -296,18 +297,18 @@ foreach ($theme in 'Light', 'Dark') {
         Switch-MbtGuiPeriodDetail; Measure-Window $window
         (@(Find-ByAutomationName $b.C.PeriodDetail 'Period from')[0]).SelectedDate = [datetime]::new(2026, 1, 1)
         (@(Find-ByAutomationName $b.C.PeriodDetail 'Period to')[0]).SelectedDate = [datetime]::new(2026, 3, 31)
-        $a = $g.S.Period -eq 'between' -and $g.S.ArrFrom -eq '2026-01-01' -and $g.S.ArrTo -eq '2026-03-31' -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived between 2026-01-01 and 2026-03-31' -and @(Find-ByAutomationName $b.C.PeriodRow 'Take all dates').Count -eq 1
+        $a = $g.S.Period -eq 'between' -and $g.S.ArrFrom -eq '2026-01-01' -and $g.S.ArrTo -eq '2026-03-31' -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items received between 2026-01-01 and 2026-03-31' -and @(Find-ByAutomationName $b.C.PeriodRow 'Take all dates').Count -eq 1
         Reset-MbtGuiPeriod; Measure-Window $window
         $c = $g.S.Period -eq 'all' -and $g.S.ArrFrom -eq '' -and $g.S.ArrTo -eq '' -and -not $g.S.PeriodOpen -and ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'all dates \(recommended\)' -and $null -eq $b.C.PeriodDetail.Content
         $a -and $c }
     Check 'period (From): the line of a chosen period is in the scenarios, with the days open or closed, and the left column has no Period card' {
         Reset-State; Set-MbtGuiScenario 'ExportFromPeriod'; Measure-Window $window
         $b = Get-MbtGuiBrowser 'export'
-        $a = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived between 2026-01-01 and 2026-03-31' -and $null -eq $b.C.PeriodDetail.Content -and -not (Find-Text $g.C.Page.Content 'All dates (recommended) ') -and (Find-Text $g.C.Page.Content 'at most')
+        $a = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items received between 2026-01-01 and 2026-03-31' -and $null -eq $b.C.PeriodDetail.Content -and -not (Find-Text $g.C.Page.Content 'All dates (recommended) ') -and (Find-Text $g.C.Page.Content 'at most')
         Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-Window $window
         $o = @(Find-ByAutomationName $b.C.PeriodDetail 'Period from').Count -eq 1
         Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpenEnd'; Measure-Window $window
-        $e = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items that arrived from 2025-07-01' -and $g.C.Primary.IsEnabled
+        $e = ((Get-AllText $b.C.PeriodRow) -join ' ') -match 'items received from 2025-07-01' -and $g.C.Primary.IsEnabled
         $a -and $o -and $e }
     Check 'period (From): the first day after the last one says so and greys Continue; a valid pair turns it on' {
         Reset-State; Set-MbtGuiScenario 'ExportFromPeriodInvalid'; Measure-Window $window
@@ -319,7 +320,7 @@ foreach ($theme in 'Light', 'Dark') {
         $from.SelectedDate = $null; $to.SelectedDate = $null
         $d = $g.S.Period -eq 'all' -and $g.C.Primary.IsEnabled
         $to.SelectedDate = [datetime]::new(2026, 3, 31)
-        $f = $g.S.ArrTo -eq '2026-03-31' -and $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Text -eq 'arrived until 2026-03-31'
+        $f = $g.S.ArrTo -eq '2026-03-31' -and $g.C.Primary.IsEnabled -and (Get-MbtGuiPeriod $g.S).Text -eq 'received until 2026-03-31'
         $a -and $c -and $d -and $f }
     Check 'period (From): the line is in view at 1366 x 700 too, days open or closed' {
         Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-WindowAt $window 1366 700
@@ -339,31 +340,78 @@ foreach ($theme in 'Light', 'Dark') {
         Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
         $cmd = Get-CommandLineText
         $atMost = { @(Get-AllText $g.C.Page.Content | Where-Object { $_ -match '^at most [\d,]+$' }).Count -gt 0 }
-        $a = @(($g.S.PlanState -eq 'ok'), (Find-Text $g.C.Page.Content 'keeping the ones that arrived between 2026-01-01 and 2026-03-31'), (& $atMost), (Find-Text $g.C.Page.Content 'The period is applied while the items are listed'), (Find-Text $g.C.Page.Content 'the period is applied while the items are listed'))
-        $b = @(($cmd -match '-SelectionFile \S+ -ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31 '), $g.C.Primary.IsEnabled)
+        $a = @(($g.S.PlanState -eq 'ok'), (Find-Text $g.C.Page.Content 'keeping the items received between 2026-01-01 and 2026-03-31'), (& $atMost), (Find-Text $g.C.Page.Content 'The period is applied to the received date while the items are listed'), (Find-Text $g.C.Page.Content 'the period is applied to the received date while the items are listed'))
+        $b = @(($cmd -match '-SelectionFile \S+ -ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31 '), $g.C.Primary.IsEnabled)
         $g.S.Period = 'all'; Show-MbtGuiPage; Measure-Window $window
-        $c = @(((Get-CommandLineText) -notmatch 'Arrived'), -not (& $atMost), -not (Find-Text $g.C.Page.Content 'The period is applied'))
+        $c = @(((Get-CommandLineText) -notmatch 'Received'), -not (& $atMost), -not (Find-Text $g.C.Page.Content 'The period is applied'))
         if (($a + $b + $c) -contains $false) { throw ('a=' + ($a -join ',') + ' b=' + ($b -join ',') + ' c=' + ($c -join ',') + ' cmd=' + $cmd) }
         $true }
     Check 'period (Verify): the Time fact and the plan check read as sentences' {
         Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'; Measure-Window $window
         $t = (Get-AllText $g.C.Page.Content) -join ' | '
-        $t -notmatch '[a-z] It can be shorter' -and $t -match '\. It can be shorter: only the items of the period are downloaded\.' -and $t -match 'counted by the service: at most [\d,]+ items in \d+ folders?, .*\(the period is applied while the items are listed\)' -and $t -notmatch 'the most the period leaves' }
+        $t -notmatch '[a-z] It can be shorter' -and $t -match '\. It can be shorter: only the items of the period are downloaded\.' -and $t -match 'counted by the service: at most [\d,]+ items in \d+ folders?, .*\(the period is applied to the received date while the items are listed\)' -and $t -notmatch 'the most the period leaves' }
     Check 'period (Verify): a period or an end of it that changes voids the plan; the store of an export with a period is its own folder' {
         Reset-State; Set-MbtGuiScenario 'ExportPlanPeriod'
         $k1 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-04-30'; $k2 = Get-MbtGuiPlanKey; $g.S.ArrTo = '2026-03-31'; $k3 = Get-MbtGuiPlanKey
         $store = (New-MbtGuiRequest -Task export).StorePath
         $g.S.Period = 'all'; $plain = (New-MbtGuiRequest -Task export).StorePath
         $g.S.Period = 'between'; $g.S.ArrTo = ''; $open = (New-MbtGuiRequest -Task export).StorePath
-        $k1 -ne $k2 -and $k1 -eq $k3 -and $store -match 'adele\.vance@contoso\.com-arrived-2026-01-01_2026-03-31$' -and $plain -match 'adele\.vance@contoso\.com$' -and $open -match 'adele\.vance@contoso\.com-arrived-from-2026-01-01$' }
-    Check 'period (Run): the listing step says how many items it left out' {
+        $k1 -ne $k2 -and $k1 -eq $k3 -and $store -match 'adele\.vance@contoso\.com-received-2026-01-01_2026-03-31$' -and $plain -match 'adele\.vance@contoso\.com$' -and $open -match 'adele\.vance@contoso\.com-received-from-2026-01-01$' }
+    Check 'period (Run): the listing step says how many items it left out, and on which date' {
         Reset-State; Set-MbtGuiScenario 'RunExportPeriod'; Measure-Window $window
-        (Find-Text $g.C.Page.Content '4,612 items outside the period left out') }
+        (Find-Text $g.C.Page.Content '4,612 items outside the period left out') -and (Find-Text $g.C.Page.Content 'on the received date') }
+    Check 'period (From): the messages outside the period are greyed in the list and say so, what is inside is not, and the days change it' {
+        Reset-State; Set-MbtGuiScenario 'ExportPeriodReceived'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $rows = @($b.Rows)
+        $expect = { param($r) $day = $r.When.ToLocalTime().ToString('yyyy-MM-dd'); ($day -lt '2026-10-28') -or ($day -gt '2026-11-01') }
+        $outside = @($rows | Where-Object { $_.OutsidePeriod }).Count
+        $a = $rows.Count -gt 3 -and $outside -gt 0 -and $outside -lt $rows.Count -and @($rows | Where-Object { [bool]$_.OutsidePeriod -ne [bool](& $expect $_) }).Count -eq 0
+        $g.S.ArrFrom = ''; $g.S.ArrTo = '2026-10-01'; Update-MbtGuiPeriodState
+        $c = @($rows | Where-Object { -not $_.OutsidePeriod }).Count -eq 0 -or @($rows | Where-Object { $_.When.ToLocalTime().ToString('yyyy-MM-dd') -le '2026-10-01' -and $_.OutsidePeriod }).Count -eq 0
+        Reset-MbtGuiPeriod; Measure-Window $window
+        $d = @($b.Rows | Where-Object { $_.OutsidePeriod }).Count -eq 0
+        $a -and $c -and $d }
+    Check 'period (From): a message near midnight is shown in the local time zone and greyed by that same local day, whatever the zone of the PC' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $g.S.Period = 'between'; $g.S.ArrFrom = '2026-10-30'; $g.S.ArrTo = '2026-10-31'
+        $make = { param($local) ConvertTo-MbtGuiMessageRow ([pscustomobject]@{ Id = 'x'; Size = 1000; Received = [datetimeoffset]::new($local).ToUniversalTime(); Created = $null; HasDetails = $false }) $true }
+        $in = & $make ([datetime]::new(2026, 10, 31, 23, 30, 0, [DateTimeKind]::Local))
+        $out = & $make ([datetime]::new(2026, 11, 1, 0, 30, 0, [DateTimeKind]::Local))
+        $before = & $make ([datetime]::new(2026, 10, 29, 23, 59, 0, [DateTimeKind]::Local))
+        $b.Rows.Clear(); foreach ($r in $in, $out, $before) { $b.Rows.Add($r) }
+        Update-MbtGuiRowsOutsidePeriod $b
+        $a = $in.DateText -eq '2026-10-31 23:30' -and $out.DateText -eq '2026-11-01 00:30' -and $before.DateText -eq '2026-10-29 23:59'
+        $c = (-not $in.OutsidePeriod) -and $out.OutsidePeriod -and $before.OutsidePeriod
+        $b.Rows.Clear(); Reset-MbtGuiPeriod
+        $a -and $c }
+    Check 'period (From): the list shows the note "outside the period" on a greyed message, and the footer says that only the messages received in the period go' {
+        Reset-State; Set-MbtGuiScenario 'ExportPeriodReceived'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $notes = [Collections.Generic.List[object]]::new()
+        $walk = { param($o) if ($null -eq $o) { return }; if ($o -is [Windows.Controls.TextBlock] -and $o.Name -eq 'OutsideNote' -and $o.Visibility -eq 'Visible') { $notes.Add($o) }; for ($i = 0; $i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($o); $i++) { & $walk ([Windows.Media.VisualTreeHelper]::GetChild($o, $i)) } }
+        & $walk $b.C.MessageList
+        $a = $notes.Count -gt 0 -and $notes[0].Text -match '^outside the period'
+        $a -and (Get-TextBlockText $g.C.Footer) -match 'only the messages received in the period go' }
+    Check 'period (From): the open days explain the received date and the arrival date' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromPeriodOpen'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $t = (Get-AllText $b.C.PeriodDetail) -join ' '
+        $t -match 'is the date shown in the list of messages' -and $t -match 'arrived in this mailbox' -and $t -match 'Mail\.Read' }
+    Check 'period (Next steps): the sentence says which date the period used, and warns when it was the arrival date' {
+        Reset-State; Set-MbtGuiScenario 'DoneExportPeriod'; Measure-Window $window
+        $ok = (Find-Text $g.C.Page.Content 'Date used: received date of the messages')
+        Reset-State; Set-MbtGuiScenario 'DoneExportPeriodArrival'; Measure-Window $window
+        $arrival = (@(Get-AllText $g.C.Page.Content) -join ' | ')
+        Reset-State; Set-MbtGuiScenario 'DoneExportPeriodMixed'; Measure-Window $window
+        $mixed = (@(Get-AllText $g.C.Page.Content) -join ' | ')
+        $ok -and $arrival -match 'Date used: arrival date in the mailbox' -and $arrival -match 'neither Mail\.Read nor Mail\.ReadBasic' -and $mixed -match '2 folder\(s\) filtered on the arrival date' }
     Check 'period (Next steps): the tiles and the sentence give the items kept, the ones outside the period, and the ones without a date that were kept; nothing is called an error' {
         Reset-State; Set-MbtGuiScenario 'DoneExportPeriod'; Measure-Window $window
         $t = @(Get-AllText $g.C.Page.Content) -join ' | '
         $cmd = Get-CommandLineText
-        $t -match 'items that arrived between 2026-01-01 and 2026-03-31' -and $t -match '1,208 items kept' -and $t -match '4,612 outside the period \(skipped, not an error\)' -and $t -match '3 items had no date and were kept' -and $cmd -match '-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31' }
+        $t -match 'items received between 2026-01-01 and 2026-03-31' -and $t -match '1,208 items kept' -and $t -match '4,612 outside the period \(skipped, not an error\)' -and $t -match '3 items had no date and were kept' -and $cmd -match '-ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31' }
     Check 'period (Next steps): an export without a period has no sentence about it' {
         Reset-State; Set-MbtGuiScenario 'DoneExportComplete'; Measure-Window $window
         -not (Find-Text $g.C.Page.Content 'outside the period') -and -not (Find-Text $g.C.Page.Content 'Period:') }
@@ -600,22 +648,22 @@ foreach ($theme in 'Light', 'Dark') {
         $a -and $b -and $c }
     Check 'import: the default destination is a new folder' { (New-MbtGuiState -WorkFolder $Work).TgtMode -eq 'new' }
     Check 'copy to another mailbox: the task card is on the Task page between Import and Check and repair, and leads to the From page of the browser' {
-        Reset-State; $g.S.Step = 1; $g.S.Sel = 'mailcopy'; Show-MbtGuiPage; Measure-Window $window
+        Reset-State; $g.S.Step = 1; $g.S.AuthMode = 'app'; $g.S.Sel = 'mailcopy'; Show-MbtGuiPage; Measure-Window $window
         $seen = Find-Text $g.C.Page.Content 'Copy to another mailbox'
         $names = @($script:Tasks.Keys | Where-Object { -not (Get-MbtGuiProp $script:Tasks[$_] 'Hidden') })
         & $g.PrimaryAction
         $seen -and ($names -join ',') -eq 'export,import,mailcopy,repair,open' -and $g.S.Task -eq 'mailcopy' -and (Get-MbtGuiScreen) -eq 'exFrom' }
     Check 'copy to another mailbox: the task of the PST copy is not confused with it: hidden, its own flow and its own name' {
         ($script:Flows.copy -join ',') -eq 'setup,start,opFrom,cpTo,cpPlan,run,done' -and $script:Tasks.copy.Hidden -and $script:Tasks.copy.Title -eq 'Copy part of a PST' -and $script:Tasks.mailcopy.Title -eq 'Copy to another mailbox' -and ($script:Flows.mailcopy -join ',') -eq 'setup,start,exFrom,mcTo,mcPlan,run,done' }
-    Check 'copy to another mailbox (From): ticks in one place go on; ticks in an auxiliary archive or in several places say so and keep Continue grey' {
+    Check 'copy to another mailbox (From): ticks in the Primary, in the Archive or in both go on; nothing is refused, and the Archive is one place (no auxiliary archive anywhere on the page)' {
         Reset-State; Set-MbtGuiScenario 'CopyMailboxFromSeveralPlaces'; Measure-Window $window
-        $several = -not $g.C.Primary.IsEnabled -and $g.C.Footer.Tag -match 'auxiliary archive cannot be copied|more than one place'
+        $several = $g.C.Primary.IsEnabled -and -not (Find-Text $g.C.Page.Content 'uxiliary')
         Reset-State; Set-MbtGuiScenario 'CopyMailboxFrom'; Measure-Window $window
         $one = $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'Copy to another mailbox.') -and $g.C.PrimaryLabel.Text -eq 'Continue to the mailbox that receives' -and (Find-Text $g.C.Page.Content 'Period:')
         $several -and $one }
     Check 'copy to another mailbox (To): the own mailbox and the folder are named, the mailbox it copies from is refused, the five steps of the stepper are there' {
         Reset-State; Set-MbtGuiScenario 'CopyMailboxTo'; Measure-Window $window
-        $a = (Find-Text $g.C.Page.Content 'Where to copy') -and (Find-Text $g.C.Page.Content 'The copy goes into your own mailbox') -and (Find-Text $g.C.Page.Content 'A new folder (recommended)') -and $g.C.Primary.IsEnabled
+        $a = (Find-Text $g.C.Page.Content 'Where to copy') -and (Find-Text $g.C.Page.Content 'Mailbox that receives the copy') -and (Find-Text $g.C.Page.Content 'A new folder (recommended)') -and $g.C.Primary.IsEnabled
         $st = Get-StepperState; $b = [bool](($st | Where-Object { $_.Label -eq 'To' }) -and ($st | Where-Object { $_.Label -match 'Verify$' }) -and ($st | Where-Object { $_.Label -match 'Next steps$' }))
         Reset-State; Set-MbtGuiScenario 'CopyMailboxToSame'; Measure-Window $window
         $c = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'This is the mailbox you copy from')
@@ -630,13 +678,13 @@ foreach ($theme in 'Light', 'Dark') {
         Reset-State; Set-MbtGuiScenario 'CopyMailboxPlan'; Measure-Window $window
         $off = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'I checked: copy') -and (Find-Text $g.C.Page.Content 'Adds only.') -and $g.C.Footer.Tag -match 'Tick the box to unlock Start'
         $t = Get-CommandLineText
-        $line = $t -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Copy -UserPrincipalName adele\.vance@contoso\.com -SelectionFile \S+selections\\mailcopy-[0-9a-f]{8}\.json -TargetRoot ''Copy of projects 2026-11-12'' -StorePath \S+stores\\copy-projects@contoso\.com-[0-9a-f]{8}$' -and $t.Split("`n").Count -eq 1 -and $t -notmatch '-NoPrompt|-EventsFile|-StopFile|-JobId|-TempPath|-WhatIf'
+        $line = $t -match '^\.\\Invoke-MailboxTransfer\.ps1 -Mode Copy -UserPrincipalName projects@contoso\.com -SelectionFile \S+selections\\mailcopy-[0-9a-f]{8}\.json -TargetMailboxId adele\.vance@contoso\.com -TargetRoot ''Copy of projects 2026-11-12'' -StorePath \S+stores\\copy-projects@contoso\.com-[0-9a-f]{8} -CertificateThumbprint 5D41402ABC4B2A76B9719D911017C59228F3D1AE$' -and $t.Split("`n").Count -eq 1 -and $t -notmatch '-NoPrompt|-EventsFile|-StopFile|-JobId|-TempPath|-WhatIf'
         $g.S.Confirmed = $true; $g.S.ConfirmKey = Get-MbtGuiPlanKey; Show-MbtGuiPage
         $off -and $line -and $g.C.Primary.IsEnabled -and $g.C.PrimaryLabel.Text -eq 'Start the copy into adele.vance@contoso.com' }
     Check 'copy to another mailbox (Verify): the tick is not cleared by a change of case, and is cleared by a real change of the plan' {
         Reset-State; Set-MbtGuiScenario 'CopyMailboxPlanTicked'; Measure-Window $window
         $a = $g.S.Confirmed -and $g.C.Primary.IsEnabled
-        $g.S.Mailbox = 'ADELE.VANCE@CONTOSO.COM'; $g.S.TgtName = $g.S.TgtName.ToUpper(); Show-MbtGuiPage; Measure-Window $window
+        $g.S.Mailbox = $g.S.Mailbox.ToUpperInvariant(); $g.S.TgtName = $g.S.TgtName.ToUpper(); Show-MbtGuiPage; Measure-Window $window
         $b = $g.S.Confirmed -and $g.C.Primary.IsEnabled
         $g.S.TgtLoc = 'Archive'; Show-MbtGuiPage; Measure-Window $window
         $c = -not $g.S.Confirmed -and -not $g.C.Primary.IsEnabled
@@ -653,6 +701,181 @@ foreach ($theme in 'Light', 'Dark') {
     Check 'copy to another mailbox (Next steps): not finished says that a part that is finished is not done again, and offers Continue' {
         Reset-State; Set-MbtGuiScenario 'DoneCopyMailboxPartial'; Measure-Window $window
         (Find-Text $g.C.Page.Content 'not done again') -and (Find-Text $g.C.Page.Content 'Continue') }
+    Check 'what: as Me the page names your mailbox and offers four tasks; as the application it offers five, with Copy to another mailbox' {
+        Reset-State; $g.S.Step = 1; $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.Account = 'adele.vance@contoso.com'; $g.S.Sel = 'import'; Show-MbtGuiPage; Measure-Window $window
+        $me = (Find-Text $g.C.Page.Content 'your mailbox (adele.vance@contoso.com)') -and -not (Find-Text $g.C.Page.Content 'Copy to another mailbox') -and @(Get-MbtGuiTaskKeys).Count -eq 4 -and (Find-Text $g.C.Page.Content 'Copy part')  -eq $false
+        $g.S.AuthMode = 'app'; Show-MbtGuiPage; Measure-Window $window
+        $app = (Find-Text $g.C.Page.Content 'Copy to another mailbox') -and @(Get-MbtGuiTaskKeys).Count -eq 5
+        $me -and $app }
+    Check 'what: a copy of the application stays in the list of jobs as Me, with the line that says it needs the application sign-in' {
+        Reset-State; Set-MbtGuiScenario 'StartJobsMe'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'This job needs the application sign-in') -and (Find-Text $g.C.Page.Content 'Stopped by you on 2026-11-23')
+        $g.S.AuthMode = 'app'; Show-MbtGuiPage; Measure-Window $window
+        $b = -not (Find-Text $g.C.Page.Content 'This job needs the application sign-in')
+        $a -and $b }
+    Check 'what: a task chosen as the application and no longer offered as Me is left behind' {
+        Reset-State; $g.S.Step = 1; $g.S.AuthMode = 'app'; $g.S.Sel = 'mailcopy'; Show-MbtGuiPage; $a = $g.C.Primary.IsEnabled
+        $g.S.AuthMode = 'user'; Show-MbtGuiPage; $a -and -not $g.C.Primary.IsEnabled -and -not $g.S.Sel }
+    Check 'from: Everything is chosen by default: Continue is ready with nothing ticked, the footer says Everything and the places; Only what I tick waits for a tick' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromEverything'; Measure-Window $window
+        $a = $g.S.SelMode -eq 'all' -and $g.C.Primary.IsEnabled -and (Get-TextBlockText $g.C.Footer) -like '*Everything:*Primary + Archive*' -and (Find-Text $g.C.Page.Content 'Everything (recommended)') -and (Find-Text $g.C.Page.Content 'Only what I tick')
+        $g.S.SelMode = 'ticks'; Update-MbtGuiModeRow (Get-MbtGuiBrowser 'export'); Update-MbtGuiBrowseTrays; Measure-Window $window
+        $b = -not $g.C.Primary.IsEnabled -and (Get-TextBlockText $g.C.Footer) -like '*Choose Everything*'
+        $a -and $b }
+    Check 'from: the ticks are kept and ignored while Everything is chosen, and the page says so; the plan counts the whole tree and the command has no selection file' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromEverythingTicksIgnored'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'Your ticks are ignored while Everything is chosen') -and $g.C.Primary.IsEnabled
+        Reset-State; Set-MbtGuiScenario 'ExportPlanEverything'; Measure-Window $window
+        $t = Get-CommandLineText
+        $b = $t -match '-Mode Export' -and $t -match '-Mailbox All' -and $t -notmatch '-SelectionFile' -and (Find-Text $g.C.Page.Content 'Everything: the whole tree of each place') -and (Find-Text $g.C.Page.Content 'Primary mailbox') -and $g.C.Primary.IsEnabled
+        $a -and $b }
+    Check 'from: Everything without a place ticked in Where to look says so and keeps Continue grey' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromEverythingNoPlace'; Measure-Window $window
+        -not $g.C.Primary.IsEnabled }
+    Check 'import (From): the choice above the tree, Everything by default; Only what I tick sends the selection, Everything sends none' {
+        Reset-State; Set-MbtGuiScenario 'ImportFrom'; Measure-Window $window
+        $a = $g.S.ImSelMode -eq 'all' -and (Find-Text $g.C.Page.Content 'Everything (recommended)') -and (Find-Text $g.C.Page.Content 'Only what I tick') -and (Find-Text $g.C.Page.Content 'will be imported')
+        Reset-State; Set-MbtGuiScenario 'ImportPlanOneFolder'; Measure-Window $window
+        $b = $g.S.ImSelMode -eq 'ticks' -and (Get-CommandLineText) -match '-FolderFile'
+        $g.S.ImSelMode = 'all'; Show-MbtGuiPage; Measure-Window $window
+        $c = (Get-CommandLineText) -notmatch '-FolderFile'
+        $a -and $b -and $c }
+    Check 'import (To): as Me the import goes into the mailbox that signs in, with no box for another address; as the application the shared mailbox can be typed' {
+        Reset-State; Set-MbtGuiScenario 'ImportToMe'; Measure-Window $window
+        $a = (Find-Text $g.C.Page.Content 'Into your own mailbox') -and -not (Find-Text $g.C.Page.Content 'A shared mailbox, or another user')
+        $g.S.AuthMode = 'app'; Show-MbtGuiPage; Measure-Window $window
+        $b = -not (Find-Text $g.C.Page.Content 'Into your own mailbox')
+        $a -and $b }
+    Check 'setup: as Me the fold Expert holds the boxes Primary mailbox id and Archive mailbox id' {
+        Reset-State; Set-MbtGuiScenario 'SetupExpert'; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'Primary mailbox id') -and (Find-Text $g.C.Page.Content 'Archive mailbox id') }
+    Check 'setup: an id typed in Expert is read in any case and with braces, an empty box is fine, anything else is said in plain words' {
+        $ok = Get-MbtGuiSetupId '{1A2B3C03-5E7F-4A1B-9C2D-3E4F5A6B7C8D}'; $bad = Get-MbtGuiSetupId 'archive of adele'; $none = Get-MbtGuiSetupId '  '
+        $ok.Ok -and $ok.Id -match '^MBX:1a2b3c03-5e7f-4a1b-9c2d-3e4f5a6b7c8d@' -and -not $bad.Ok -and $bad.Problem -match 'not a mailbox id' -and $none.Ok -and -not $none.Id }
+    Check 'setup: an id that is not an id is said in red under the boxes' {
+        Reset-State; Set-MbtGuiScenario 'SetupExpertInvalid'; Measure-Window $window
+        Find-Text $g.C.Page.Content 'Archive mailbox id: This is not a mailbox id' }
+    Check 'setup: the application has no Expert ids (they are those of the account that signs in)' {
+        Reset-State; $g.Engine.Capability.AppOnly = $true; Set-MbtGuiScenario 'SetupApplication'; Measure-Window $window
+        -not (Find-Text $g.C.Page.Content 'Primary mailbox id') }
+    Check 'setup: the ids typed in Expert are in the command line of an export and the plan is checked again' {
+        Reset-State; Set-MbtGuiScenario 'ExportPlanEverything'; $g.S.PrimaryIdValue = 'MBX:1a2b3c03-5e7f-4a1b-9c2d-3e4f5a6b7c8d@contoso.onmicrosoft.com'; $g.S.ArchiveIdValue = 'MBX:1a2b3c04-5e7f-4a1b-9c2d-3e4f5a6b7c8d@contoso.onmicrosoft.com'; Show-MbtGuiPage; Measure-Window $window
+        $t = Get-CommandLineText
+        $t -match '-PrimaryMailboxId MBX:1a2b3c03' -and $t -match '-ArchiveMailboxId MBX:1a2b3c04' }
+    Check 'where to look: the archive id typed there wins over the one of Setup (which wins over the file); the application and a shared mailbox take none of Setup' {
+        $keep = $g.Engine.Locations; $script:locCalls = [Collections.Generic.List[object]]::new()
+        $g.Engine.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId, $PrimaryId) $script:locCalls.Add(@{ Archive = $ArchiveId; Primary = $PrimaryId; Shared = $Shared }) }
+        try {
+            Reset-State; $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.PrimaryIdValue = 'P1'; $g.S.ArchiveIdValue = 'A1'
+            Read-MbtGuiLocations; $a = $script:locCalls[0]
+            $g.S.ArchiveIds['adele.vance@contoso.com'] = 'A2'; Read-MbtGuiLocations; $b = $script:locCalls[1]
+            $g.S.AuthMode = 'app'; Read-MbtGuiLocations; $c = $script:locCalls[2]
+            $g.S.AuthMode = 'user'; $g.S.Shared = 'projects@contoso.com'; Read-MbtGuiLocations; $d = $script:locCalls[3]
+            $a.Primary -eq 'P1' -and $a.Archive -eq 'A1' -and $b.Archive -eq 'A2' -and $b.Primary -eq 'P1' -and -not $c.Primary -and $c.Archive -eq 'A2' -and -not $d.Primary -and -not $d.Archive
+        } finally { $g.Engine.Locations = $keep }
+    }
+    Check 'where to look: another mailbox with the application lists every place of its address; Unknown asks for its archive id under that address; with a delegated sign-in only the Primary and one muted line say why' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromOtherMailboxApp'; Measure-Window $window
+        $a = @($g.S.Locations | ForEach-Object Kind) -contains 'Archive' -and (Find-Text $g.C.Page.Content 'Archive of projects@contoso.com') -and -not (Find-Text $g.C.Page.Content 'can be read only with the application sign-in')
+        Reset-State; Set-MbtGuiScenario 'ExportFromOtherMailboxArchiveUnknown'; Measure-Window $window
+        $b = @($g.S.Locations).Count -eq 1 -and (Find-Text $g.C.Page.Content 'The archive could not be looked up') -and (Find-Text $g.C.Page.Content 'Look again')
+        Reset-State; Set-MbtGuiScenario 'ExportFromOtherMailboxDelegated'; Measure-Window $window
+        $c = @($g.S.Locations).Count -eq 1 -and (Find-Text $g.C.Page.Content 'The archive of another mailbox can be read only with the application sign-in (Setup).') -and -not (Find-Text $g.C.Page.Content 'Archive mailbox id')
+        $a -and $b -and $c }
+    Check 'another mailbox that is open: the header and the roots of the tree carry its name, the delegated note is a secondary line (12, not body text)' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromOtherMailboxApp'; Measure-Window $window
+        $names = @((Get-MbtGuiBrowser 'export').Roots | ForEach-Object Name)
+        $a = $g.C.StepperContext.Text -like '*projects@contoso.com' -and $names -contains 'Shared mailbox projects@contoso.com' -and $names -contains 'Archive of projects@contoso.com' -and (@((Get-MbtGuiBrowser 'export').Roots | Where-Object Kind -EQ 'primary')[0].Sub -eq 'projects@contoso.com')
+        Reset-State; Set-MbtGuiScenario 'ExportFromOtherMailboxDelegated'; Measure-Window $window
+        $names = @((Get-MbtGuiBrowser 'export').Roots | ForEach-Object Name)
+        $note = @(New-MbtGuiArchiveLookupItem)
+        $b = $g.C.StepperContext.Text -like '*projects@contoso.com' -and $names -contains 'Shared mailbox projects@contoso.com' -and $note.Count -eq 1 -and $note[0].FontSize -eq 12
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $c = $g.C.StepperContext.Text -like '*adele.vance@contoso.com' -and @((Get-MbtGuiBrowser 'export').Roots | ForEach-Object Name) -contains 'Adele Vance - Primary mailbox'
+        $a -and $b -and $c }
+    Check 'Everything: the tick boxes of the tree and of the message list are greyed and cannot be used, and come back with their ticks in Only what I tick (export and import)' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromEverythingTicksIgnored'; Measure-Window $window
+        $b = Get-MbtGuiBrowser 'export'
+        $box = Find-Visual $b.C.FolderTree ([Windows.Controls.CheckBox])
+        $kept = (Get-MbtGuiSelection -Roots @($b.Roots)).Folders
+        $off = $b.C.FolderTree.Tag -eq 'noticks' -and $b.C.MessageList.Tag -eq 'noticks' -and -not $b.C.PickAll.IsEnabled -and $box -and -not $box.IsEnabled -and $box.Opacity -lt 1 -and $kept -gt 0
+        $g.S.SelMode = 'ticks'; Update-MbtGuiModeRow $b; Update-MbtGuiTray $b; Measure-Window $window
+        $box2 = Find-Visual $b.C.FolderTree ([Windows.Controls.CheckBox])
+        $on = -not $b.C.FolderTree.Tag -and $b.C.PickAll.IsEnabled -and $box2.IsEnabled -and (Get-MbtGuiSelection -Roots @($b.Roots)).Folders -eq $kept
+        Reset-State; Set-MbtGuiScenario 'ImportFrom'; Measure-Window $window
+        $i = Get-MbtGuiBrowser 'import'
+        $ibox = Find-Visual $i.C.FolderTree ([Windows.Controls.CheckBox])
+        $ioff = $i.C.FolderTree.Tag -eq 'noticks' -and -not $i.C.PickAll.IsEnabled -and $ibox -and -not $ibox.IsEnabled
+        Reset-State; Set-MbtGuiScenario 'ImportFromTicks'; Measure-Window $window
+        $t = Get-MbtGuiBrowser 'import'
+        $ion = -not $t.C.FolderTree.Tag -and $t.C.PickAll.IsEnabled
+        $off -and $on -and $ioff -and $ion }
+    Check 'a dialog of an earlier scenario does not stay on the page of the next one' {
+        Reset-State; Set-MbtGuiScenario 'JobDeleteUnfinished'; Measure-Window $window
+        $open = $g.DialogOpen -and $g.C.Overlay.Visibility -eq 'Visible'
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBoth'; Measure-Window $window
+        $open -and -not $g.DialogOpen -and $g.C.Overlay.Visibility -eq 'Collapsed' }
+    Check 'where to look: the archive id typed for another mailbox is kept under its address and passed to the lookup' {
+        $keep = $g.Engine.Locations; $script:locCalls = [Collections.Generic.List[object]]::new()
+        $g.Engine.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId, $PrimaryId) $script:locCalls.Add(@{ Mailbox = $Mailbox; Shared = $Shared; Archive = $ArchiveId }) }
+        try {
+            Reset-State; $g.S.Mailbox = 'adele.vance@contoso.com'; $g.S.AuthMode = 'app'; $g.S.Shared = 'projects@contoso.com'
+            $g.S.ArchiveIds['projects@contoso.com'] = 'MBX:A9'; $g.S.ArchiveIds['adele.vance@contoso.com'] = 'MBX:A1'
+            Read-MbtGuiLocations
+            $script:locCalls[0].Shared -eq 'projects@contoso.com' -and $script:locCalls[0].Archive -eq 'MBX:A9'
+        } finally { $g.Engine.Locations = $keep }
+    }
+    Check 'copy to another mailbox (From): Everything and ticks in the Primary and in the Archive go on, the places are named' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFromBoth'; Measure-Window $window
+        $a = $g.C.Primary.IsEnabled -and $g.S.SelMode -eq 'ticks' -and (Get-TextBlockText $g.C.Footer) -like '*ticked:*'
+        $g.S.SelMode = 'all'; Update-MbtGuiModeRow (Get-MbtGuiBrowser 'export'); Update-MbtGuiBrowseTrays; Measure-Window $window
+        $b = $g.C.Primary.IsEnabled -and (Get-TextBlockText $g.C.Footer) -like '*Everything:*Primary + Archive*'
+        $a -and $b }
+    Check 'copy to another mailbox (To): both places ask where each part goes, Mirror is the default, and each part has its folder' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBoth'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $a = (Find-Text $p 'Where does each part go?') -and (Find-Text $p 'Mirror (recommended)') -and (Find-Text $p 'All into the Primary mailbox') -and (Find-Text $p 'All into the Archive') -and (Find-Text $p 'Folder of the Primary part') -and (Find-Text $p 'Folder of the Archive part') -and $g.C.Primary.IsEnabled
+        $e = Get-MbtGuiMailCopyEnds
+        $b = $e.Both -and $e.Layout -eq 'Mirror' -and $e.ToKind -eq 'Primary + Archive' -and $g.S.McFromKind -eq 'All'
+        $g.S.TgtName2 = '-Force'; Show-MbtGuiPage; Measure-Window $window; $c = -not $g.C.Primary.IsEnabled -and (Test-MbtGuiMailCopyTarget $g.S)
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (To): a target without an archive takes both parts into the Primary and says so; Mirror and All into the Archive are not offered' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothNoArchive'; Measure-Window $window
+        $p = $g.C.Page.Content; $e = Get-MbtGuiMailCopyEnds
+        $a = (Find-Text $p 'This mailbox has no archive.') -and (Find-Text $p 'The Archive part goes into the Primary mailbox') -and $e.Layout -eq 'Primary' -and $e.ToKind -eq 'Primary' -and $g.C.Primary.IsEnabled
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToOneNoArchive'; Measure-Window $window
+        $b = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'This mailbox has no archive. Choose its Primary mailbox.')
+        $a -and $b }
+    Check 'copy to another mailbox (To): a target whose archive could not be looked up shows the box for its id; the id typed makes the Archive usable again' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothArchiveUnknown'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $a = (Find-Text $p 'could not be looked up') -and (Find-Text $p 'Look again') -and (Find-Text $p 'Archive mailbox id') -and (Get-MbtGuiMailCopyEnds).Layout -eq 'Primary'
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothArchiveId'; Measure-Window $window
+        $e = Get-MbtGuiMailCopyEnds
+        $b = $e.Archive.State -eq 'Known' -and $e.Archive.Typed -and $e.Layout -eq 'Mirror' -and (Find-Text $g.C.Page.Content 'The archive mailbox id you typed is used')
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothReading'; Measure-Window $window
+        $c = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'Looking up whether this mailbox has an archive')
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (To): all into the Primary or the Archive, and the mailbox that is the source refused for any part' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothPrimary'; $e = Get-MbtGuiMailCopyEnds; $a = $e.Layout -eq 'Primary' -and $e.ToKind -eq 'Primary' -and $e.Pairs.Count -eq 2
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothArchive'; $e = Get-MbtGuiMailCopyEnds; $b = $e.Layout -eq 'Archive' -and $e.ToKind -eq 'Archive'
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxToBothSame'; Measure-Window $window; $c = -not $g.C.Primary.IsEnabled -and (Find-Text $g.C.Page.Content 'This is the mailbox you copy from')
+        $a -and $b -and $c }
+    Check 'copy to another mailbox (Verify): both parts in one plan, the box names the places and the folders, the command is one -Mode Copy command with the layout' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxPlanBoth'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $a = (Find-Text $p 'I checked: copy everything from Primary + Archive of projects@contoso.com into Primary / Archive of adele.vance@contoso.com') -and (Find-Text $p 'Primary part:') -and (Find-Text $p 'Archive part:') -and (Find-Text $p 'Everything: ')
+        $t = Get-CommandLineText
+        $b = $t -match '-Mode Copy' -and $t -match '-Mailbox All' -and $t -match '-TargetLayout Mirror' -and $t -match '-TargetRoot' -and $t -match '-TargetArchiveRoot' -and $t.Split("`n").Count -eq 1 -and $t -notmatch '-SelectionFile'
+        $a -and $b -and $g.S.Confirmed -and $g.C.Primary.IsEnabled }
+    Check 'copy to another mailbox (Run): the steps of both parts are in one list, the second part says its name' {
+        Reset-State; Set-MbtGuiScenario 'RunCopyMailboxBoth'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $g.Run.Steps.Count -eq 14 -and $g.Run.ImportHalf -and (Find-Text $p 'Send the items (Archive part)') -and (Find-Text $p 'Verify the export store (Primary part)') -and (Find-Text $p 'Why is it slow?') }
+    Check 'copy to another mailbox (Next steps): a copy of both places names both folders' {
+        Reset-State; Set-MbtGuiScenario 'DoneCopyMailboxBoth'; Measure-Window $window
+        $p = $g.C.Page.Content
+        (Find-Text $p 'Primary part') -and (Find-Text $p 'Archive part') -and (Find-Text $p 'Open the store') -and (Get-CommandLineText) -match '-TargetLayout' }
     Check 'repair: a damaged file offers a repair, a clean one does not' { Reset-State; Set-MbtGuiScenario 'RepairFromDamaged'; $a = $g.C.PrimaryLabel.Text; Reset-State; Set-MbtGuiScenario 'RepairFromClean'; $b = $g.C.PrimaryLabel.Text; $a -eq 'Repair into a new file' -and $b -eq 'Start a new task' }
     Check 'repair: the destination is never the original and never AUX' { (Test-MbtGuiRepairDestination @{ RpDest = 'D:\a.pst'; RpPath = 'D:\a.pst' }) -match 'original' -and (Test-MbtGuiRepairDestination @{ RpDest = 'D:\aux.pst'; RpPath = 'D:\a.pst' }) -match 'AUX' }
     Check 'closing without a job is allowed' { $e = [ComponentModel.CancelEventArgs]::new(); $g.Job = $null; Invoke-MbtGuiClosing $e; -not $e.Cancel }
@@ -703,6 +926,54 @@ foreach ($theme in 'Light', 'Dark') {
         return $found.ToArray()
     }
     function Invoke-ButtonClick($button) { $button.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $button)); Wait-Dispatcher }
+    Check 'where to look: when the archive could not be looked up, the card says so in plain words, with the permission, a box for the archive id, Look again and where to get the id' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $box = @(Find-ByAutomationName $p 'Archive mailbox id' | Where-Object { $_ -is [Windows.Controls.TextBox] })
+        (Find-Text $p 'The archive could not be looked up') -and (Find-Text $p 'delegated permission') -and (Find-Text $p 'User.Read.All') -and (Find-Text $p 'type the archive mailbox id below') -and
+        $box.Count -eq 1 -and @(Find-ButtonsByText $p 'Look again').Count -eq 1 -and (Find-Text $p 'Get-MailboxLocation -User adele.vance@contoso.com | Select MailboxGuid, MailboxLocationType') -and (Find-Text $p '(Get-Mailbox adele.vance@contoso.com).ArchiveGuid') -and
+        -not (Find-Text $p 'This mailbox has no archive') -and @($g.S.Locations).Count -eq 1 }
+    Check 'where to look: as the application the card asks for the application permission' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; $g.S.AuthMode = 'app'; Show-MbtGuiPage; Measure-Window $window
+        (Find-Text $g.C.Page.Content 'the application permission') -and -not (Find-Text $g.C.Page.Content 'delegated permission') }
+    Check 'where to look: when the mailbox has no archive, one muted line says so and there is no box' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromNoArchive'; Measure-Window $window
+        $p = $g.C.Page.Content
+        (Find-Text $p 'This mailbox has no archive.') -and -not (Find-Text $p 'could not be looked up') -and @(Find-ByAutomationName $p 'Archive mailbox id').Count -eq 0 -and @(Find-ButtonsByText $p 'Look again').Count -eq 0 }
+    Check 'where to look: when the archive is known the card says nothing about it' {
+        Reset-State; Set-MbtGuiScenario 'ExportFrom'; Measure-Window $window
+        $p = $g.C.Page.Content
+        -not (Find-Text $p 'This mailbox has no archive') -and -not (Find-Text $p 'could not be looked up') -and @(Find-ButtonsByText $p 'Look again').Count -eq 0 }
+    Check 'where to look: Copy to another mailbox shows the same card' {
+        Reset-State; Set-MbtGuiScenario 'CopyMailboxFromArchiveUnknown'; Measure-Window $window
+        $p = $g.C.Page.Content
+        $g.S.Task -eq 'mailcopy' -and (Find-Text $p 'The archive could not be looked up') -and @(Find-ButtonsByText $p 'Look again').Count -eq 1 }
+    Check 'where to look: Look again with a typed id (a guid in any case, or MBX:<guid>@<tenant>, with spaces) keeps it for this mailbox and finds the archive' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $g.S.ArchiveText = '  3F2504E0-4F89-11D3-9A0C-0305E82C3301  '
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0]); Measure-Window $window
+        $a = $g.S.ArchiveIds['adele.vance@contoso.com'] -eq 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@contoso.onmicrosoft.com' -and $g.S.ArchiveState.State -eq 'Known' -and @($g.S.Locations | Where-Object Kind -EQ 'Archive').Count -eq 1
+        $b = -not (Find-Text $g.C.Page.Content 'The archive could not be looked up')
+        $g.S.ArchiveText = 'mbx:3F2504E0-4F89-11D3-9A0C-0305E82C3301@6BA7B810-9DAD-11D1-80B4-00C04FD430C8'
+        $g.S.ArchiveState = [pscustomobject]@{ State = 'Unknown'; Detail = '' }; $g.S.Locations = @($g.S.Locations | Where-Object Kind -NE 'Archive'); Show-MbtGuiPage; Measure-Window $window
+        $g.S.ArchiveIds.Clear()
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0])
+        $c = $g.S.ArchiveIds.ContainsKey('adele.vance@contoso.com') -and $g.S.ArchiveIds['adele.vance@contoso.com'] -eq 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+        $a -and $b -and $c }
+    Check 'where to look: a text that is not a mailbox id is refused in plain words, nothing is kept, and the lookup is not run again' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $g.S.ArchiveText = 'not-a-guid'
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0]); Measure-Window $window
+        $g.S.ArchiveIds.Count -eq 0 -and $g.S.ArchiveProblem -match 'not a mailbox id' -and (Find-Text $g.C.Page.Content 'This is not a mailbox id') -and $g.S.ArchiveState.State -eq 'Unknown' }
+    Check 'where to look: Look again with an empty box runs the lookup again and forgets the id of this mailbox; the ids are per mailbox and go at sign-out' {
+        Reset-State; Set-MbtGuiScenario 'ExportFromArchiveUnknown'; Measure-Window $window
+        $g.S.ArchiveIds['adele.vance@contoso.com'] = 'MBX:3f2504e0-4f89-11d3-9a0c-0305e82c3301@contoso.onmicrosoft.com'; $g.S.ArchiveIds['someone@contoso.com'] = 'MBX:x'
+        $g.S.ArchiveText = ''
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Look again')[0])
+        $a = -not $g.S.ArchiveIds.ContainsKey('adele.vance@contoso.com') -and $g.S.ArchiveIds.ContainsKey('someone@contoso.com')
+        $g.S.Signed = $true; Show-MbtGuiPage; Measure-Window $window
+        Invoke-ButtonClick (@(Find-ButtonsByText $g.C.Page.Content 'Sign out')[0])
+        $a -and $g.S.ArchiveIds.Count -eq 0 -and $null -eq $g.S.ArchiveState }
     Check 'start: the jobs that are not finished come first, each says why it stopped and the step it reached; the finished ones are in a fold' {
         Reset-State; Set-MbtGuiScenario 'StartJobs'; Measure-Window $window
         $p = $g.C.Page.Content

@@ -105,7 +105,7 @@ function Get-MbtJobDescription {
         $isCopy = ([string](Get-MbtJobField $Job 'Mode' '') -eq 'Copy') -or ([string](Get-MbtJobField $Job 'Task' '') -eq 'mailcopy')
         if ($isCopy -and $id) {
             if ($id -in 'tree', 'list', 'download', 'verify') { $progress += ' (reading the source mailbox)' }
-            elseif ($id -in 'check', 'folders', 'send', 'reconcile', 'final') { $progress += ' (adding to the target mailbox)' }
+            elseif (($id -replace '-\d$', '') -in 'check', 'folders', 'send', 'reconcile', 'final') { $progress += $(if ($id -match '-(\d)$') { " (adding to the target mailbox, part $($Matches[1]))" } else { ' (adding to the target mailbox)' }) }
         }
         $done = Get-MbtJobField $step 'done'; $total = Get-MbtJobField $step 'total'
         if ($null -ne $done -and $null -ne $total -and [long]$total -gt 0) { $progress += ", $(Format-MbtJobCount $done) of $(Format-MbtJobCount $total) done" }
@@ -391,23 +391,27 @@ function Get-MbtJobResumeText {
         }
         'Copy' {
             $heading = 'Copy to another mailbox'
-            $notes.Add('A copy has two parts: reading the source mailbox into the store on this PC, then adding the items to the target mailbox. The source mailbox is only read.')
+            $bothParts = if ([string](Get-MbtJobField $Request 'McFromKind' '') -eq 'All') { ' A copy of the Primary and the Archive adds the items once for each of them, the Primary part first.' } else { '' }
+            $notes.Add('A copy has two parts: reading the source mailbox into the store on this PC, then adding the items to the target mailbox.' + $bothParts + ' The source mailbox is only read.')
             $reading = $stepId -in 'tree', 'list', 'download', 'verify'
-            $adding = $stepId -in 'check', 'folders', 'send', 'reconcile', 'final'
+            $adding = ($stepId -replace '-\d$', '') -in 'check', 'folders', 'send', 'reconcile', 'final'
+            $parts = if ($stepOf -gt 9) { 2 } else { 1 }
+            $firstAdding = 5
             if ($adding) {
                 $already.Add('The first part is complete: the source mailbox is not read again, and the store is used as it is.')
                 $already.Add('The items already added to the target mailbox are not added again.')
                 $again.Add('The store is checked again, and so are the target folders: a missing folder is created, an existing one is used as it is.')
                 $again.Add($uncertain)
                 $again.Add($sendAgain)
-                $from = "It resumes the second part, adding the items to the target mailbox: from step 5 of 9, Verify the export store.$reached"
+                $from = "It resumes the second part, adding the items to the target mailbox: from step $firstAdding of $(if ($stepOf -gt 0) { $stepOf } else { 9 }), Verify the export store.$reached"
+                if ($parts -gt 1) { $already.Add('A part of the copy that is complete (the Primary part, or the Archive part) is not done again: the next run continues with the part that is not.') }
             }
             elseif ($reading) {
                 $already.Add('The items already read into the store are not read again.')
                 $again.Add('The folder tree and the list of the items are read again from the source mailbox, so that what arrived or changed since is taken. An item that changed since is read again.')
                 $again.Add("Items that failed are tried again, up to $tries tries in all.")
                 $again.Add('When the reading is complete, the second part follows: adding the items to the target mailbox.')
-                $from = "It resumes the first part, reading the source mailbox: from step 1 of 9, Read the folder tree.$reached"
+                $from = "It resumes the first part, reading the source mailbox: from step 1 of $(if ($stepOf -gt 0) { $stepOf } else { 9 }), Read the folder tree.$reached"
             }
             else {
                 $already.Add('A part that is complete is not done again: when the reading of the source mailbox is complete, the tool goes straight to adding the items to the target mailbox.')
@@ -523,6 +527,10 @@ function Get-MbtCliConsoleState {
             $state.TgtLoc = [string](& $get 'TargetMailbox' 'Primary')
             $state.TgtName = [string](& $get 'TargetRoot' ''); $state.TgtMode = $(if ($state.TgtName) { 'new' } else { 'same' })
             $state.McTarget = [string](& $get 'TargetMailboxId' '')
+            if ($state.McFromKind -eq 'All') {
+                $state.McLayout = [string](& $get 'TargetLayout' 'Mirror')
+                $state.TgtName2 = [string](& $get 'TargetArchiveRoot' $state.TgtName); $state.TgtMode2 = $(if ($state.TgtName2) { 'new' } else { 'same' })
+            }
         }
     }
     return $state
@@ -616,8 +624,8 @@ function New-MbtCliJob {
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB4mj43qQ+d7ePk
-# KdlsX3Cbs3xRhhqottc2K1HtxTe396CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB40ZPYgwr8KJEn
+# ERA45bsVeI2afOe8QGf9a0C0wAPJB6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -694,23 +702,23 @@ function New-MbtCliJob {
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAIbMvKIjn4
-# oJ+DaIKYE991iqxsyB+8/Y120Zy4TvypBTANBgkqhkiG9w0BAQEFAASCAgBkAhhS
-# H0t9Lkim1vgsWBjePB7G+CSocUTpyXpV7fjj6vsogVz7o22PR46z2PaR6vdDE8CU
-# q6nDofvpp7UFvH8fDlLfiFXpB1kUvrOT4IGTK27+2VzpeUTSOUKKb9YoKfqlz0X0
-# X34eSWPZjvtzwbzokE4D7EV+Z4ABfFemsroMRPOw53rDQ5GzV+GuYutafNwAEALU
-# vh96sRLvJc+ZDr50DRFpyU8Dgc2+M6ajZ8k38GyU8qUlnERx2msaDdfMi8CjAtVY
-# NyipxBi43CMXQJ1PWT7lS81yE7WQzXunXIxE7RehurVGVqqJbrbBlKoikunjvd02
-# gK+RIMzizZcJ5cRhbDPztMptGGuLV/SNeAXvCLi7QmcqwwV72L2kWEgl9UMHlHru
-# /1XEENms3zREFellxVxLnk99CRJyJ5Ve5674JbTGpsbq/MZH2tM2BultHmjiKmHL
-# RfbSsUj1ZGGaFsUHQDprdpyy7dc/rN81Fjg/VCFH4Qj/zA452dv2ccSye+mzvfxk
-# OKySKr6uGf0prrZnzpDjY6Cj3CBQ5oyQqwdcT8rB+gCg2teK8yNIad1kB26nVghz
-# DP6ohcWrsTXiXr6O7qJqzIeS2g+QkYe3SBi53irVyhTGezi+r7YP55PjdCoQvHRr
-# j6gRgO3C2qivg8WBdM08IWp87RnqQWyb+yHqg6GCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA2JWKPhRTe
+# FzFoT7pjLUggdQ9bZaHY5F0XHxC3aPaXeDANBgkqhkiG9w0BAQEFAASCAgA2Sfl/
+# /SK+jHldc103MHYoux9wV1Hd2lJSvwYn+YshWplCw4+LPIMupidrQz2a4EIbG/s7
+# 70KLV+zirbm1lByQK7I99/zIS5B2bJWbk3P7VpjIczg2JE6a/r2A2QuEiWUdmEek
+# RX34xlctKIeu8zDJER4Pn8Q3kppWHxcoLmZijLIfqkp2CNuGo6XUd8uqvHNJG5V5
+# FXOfN/XQ0rA4+V0nBUeMe77Q6+eBYeUAFSfZB9fCmJoGzxc+Px7HF7qlJj1p0dUY
+# ZZVAL2HKPx9iLULtXFPUK656K+vD73Ri3sjtdYHpebGSWvVOAVHzIFqopf5XJ3kc
+# peTsVx9lxIozuJBKDGF2wBs/Y19WG1WlyFT/NJz+/qwGezsbW+LjuAjUdYzfAEGG
+# PimoAq3sgePpLsi1fc8QyhqUnXWGjXFECMN02+dc5I+pkfOUDE5s3+OykpLnc/Pf
+# ZivV3VA6oDQ7C6zOVdzxm+tVN32dTKgfGdauEErgoa8AmyADVpN855R3bU2P+mlL
+# CLQwo9yUEqIjW49ujYkUrQSePRjNBV3IbwIDa2JTYY3u5hQxv12uXYS38BdBtsmX
+# 8gfjb41nyjE8/5FBULWBv5E2npOiN+zO9LrWw/6IAId+NMqVwEYIvJOQoAOMT5Fs
+# G/UCiml/db0qeJVSt+5CwK6atqE7nm9fNcddzKGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIDfoohIVHOHiTL8oxNOHE+5ePdHESF6qbgPH92l7y4xJAghe42siVrOk
-# qBgPMjAyNjExMjUxNTM3MDNaMAMCAQECEG1ZqP4HjIaMoLdhByef6NOgghGnMIIE
+# BAIBBQAEIDQipdrY7VrYsT3kMx+A8CmHlG0tonXuCIVl1B8bfBdfAggv4egOW0S2
+# PBgPMjAyNjExMjcwNTI4MzJaMAMCAQECEFXgOd2bYy5PeTt/p3sOoMOgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -809,13 +817,13 @@ function New-MbtCliJob {
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcwM1owKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIM1m
-# lS5QJgFNHVaOHBPK5gbUxq9IHa5PGMwLSJntXXl+MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjgzMlowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIO/V
+# UdpUzLPLkwsuL4kLJdIxOfu2tykZj1x7/g61weZEMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiBYRW8hebcpsWOHOCFBesnxX9uh3QWnbmd6hZdfRNyDPAIhAMlf
-# 6WWKXUKFb2k8ndq6ykDcd44e2X2Znl8zDDUTQ+a6
+# zj0EAwIERzBFAiEAtWa/3HSABcj4uTiW+mQkFvLSyHGmyR8N7JhbHKiLoA4CICsZ
+# qo/4XiMQNAC2VBlu103ZyiXtiLaAfOjfbFaC9Q5R
 # SIG # End signature block

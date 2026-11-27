@@ -17,8 +17,8 @@
                   (redirections to an auxiliary archive of an auto-expanding archive are followed). -IncludeRecoverableItems also exports the
                   deleted items kept in Recoverable Items (Deletions, Purges, Versions, DiscoveryHolds; -RecoverableItemsFolders names others), stored
                   under one top folder "Recoverable Items" in the store and in the PST, never mixed with the normal folders. An import of such an export
-                  puts them in a normal folder named "Restored deleted items", never back into Recoverable Items. -ArrivedFrom / -ArrivedTo keep only the
-                  items that arrived in the mailbox inside a period (see them below).
+                  puts them in a normal folder named "Restored deleted items", never back into Recoverable Items. -ReceivedFrom / -ReceivedTo keep only the
+                  messages received inside a period (see them below).
     Mode ExportPst  Converts the store into PST files with our own writer (no Outlook, no third-party component): the real folder tree of each
                   location under one top folder (Primary, Archive, "Auxiliary archive n (guid8)"), the standard folders first, split at -PstMaxSizeGB
                   (default 50 = 51,200 MiB) on item boundaries, <name>.pst, <name>-002.pst... and <name>.manifest.json. The auxiliary archives are merged
@@ -41,23 +41,29 @@
                   missing or of the wrong kind, the same target, Location and Source twice, and with a delegated sign-in a target that is not the signed-in account (the service refuses a delegated write into another
                   mailbox: use -AppOnly). Lines that write into the same mailbox location, or read the same source, run one after the other, never together. Every import is create only and is never done twice:
                   the same line again, in this batch or another, skips what was imported. -WhatIf lists every target and writes nothing. Exit codes as above.
-    Mode Copy     Copies ONE mailbox location into ONE other in a single job: the export of the source into an export store, then the import of that store into the target, chained by this one
+    Mode Copy     Copies ONE mailbox location into ONE other, or the Primary and the Archive of a mailbox together (-Mailbox All), in a single job: the export of the source into an export store, then the import of that store into the target, chained by this one
                   command (it is not a direct copy: nothing is streamed from one mailbox to the other). The store stays on disk: it is the resume point, the proof of what was read, and it can be
                   imported again (-Mode Import) or opened in the console. The source is given as for an export (-UserPrincipalName, -Mailbox Primary or Archive, -MailboxId, -SelectionFile or -Folder, the
-                  period -ArrivedFrom / -ArrivedTo, -IncludeRecoverableItems), the target as for an import (-TargetMailbox Primary or Archive, -TargetMailboxId, -TargetRoot, or the same folder names, -MappingFile).
+                  period -ReceivedFrom / -ReceivedTo, -IncludeRecoverableItems), the target as for an import (-TargetMailbox Primary or Archive, -TargetMailboxId, -TargetRoot, or the same folder names, -MappingFile).
                   -WhatIf prints ONE plan for both halves (what is read, the store, where it goes, the time at about 4 GiB per hour per target mailbox, dominated by the import) and creates nothing.
                   The same command again continues where it stopped: an export half that is complete is not read again (-Force reads the source again to take what arrived since), the import resumes
                   its job (named after the target, the store and the folder, whatever the case) and never creates an item twice. A source and a target that are the same location are refused. Sign-in:
                   delegated, it reads what the signed-in account can read and writes into the mailbox of that account only (the service refuses a delegated write into another person's or a shared mailbox:
                   use -AppOnly with -TargetMailboxId); with a certificate (app-only) it reads and writes the mailboxes of its scope. An export half that left items (a failed item, a deferred folder)
                   does not stop the import of what was read: the copy ends with exit code 2 and the next run does only what is left.
+                  -Mailbox All (or a selection that holds the Primary and the Archive) copies both places of the source in one store, then imports the store once for each part, the Primary part first, each part
+                  with its own import job and its own folder: -TargetLayout Mirror (default: the Primary part into the target Primary below -TargetRoot, the Archive part into the target Archive below
+                  -TargetArchiveRoot), Primary (both parts into the target Primary) or Archive (both parts into the target Archive). The steps of the second part are written as check-2, folders-2, send-2,
+                  reconcile-2 and final-2. A part that is complete is not done again; a part that stops (a stop, an item that failed or is uncertain) keeps the next one waiting until the same command is run again.
     Copy batch    -Mode Copy with -MailboxCsv copies a list: one ordinary copy job for each line, up to -ParallelMailboxes at a time. Columns (headers not case sensitive): SourceAddress (the mailbox read, required),
-                  SourceLocation (Primary or Archive; empty: -Mailbox), TargetAddress (the mailbox written into, required), TargetLocation (Primary or Archive; empty: -TargetMailbox), TargetRoot (empty: -TargetRoot; empty
-                  everywhere: the folder names of the source), SelectionFile (optional: what to copy, of one mailbox location), Notes (ignored); any other column is a problem. The whole file is checked first, every problem
+                  SourceLocation (Primary, Archive or All, both places; empty: -Mailbox), TargetAddress (the mailbox written into, required), TargetLocation (Primary or Archive; empty: -TargetMailbox; not for a line that
+                  copies both places), TargetLayout (Mirror, Primary or Archive: where the two parts of a line that copies both places go; empty: -TargetLayout, else Mirror), TargetRoot (empty: -TargetRoot; empty
+                  everywhere: the folder names of the source), TargetArchiveRoot (the folder of the Archive part of a line that copies both places; empty: -TargetArchiveRoot, else TargetRoot), SelectionFile
+                  (optional: what to copy, of one mailbox location or of the Primary and the Archive), Notes (ignored); any other column is a problem. The columns and the values of an earlier file are unchanged. The whole file is checked first, every problem
                   printed together: an address, a Location, a selection, a source that is the target, the same copy twice, and with a delegated sign-in a target that is not the signed-in account (the service refuses a
                   delegated write into another mailbox: use -AppOnly) and the archive of another mailbox as a source. Lines that write into the same target mailbox location, or read the same source mailbox location, run
                   one after the other, never together; a source copied into two targets is read once (one store). -StorePath is the folder that holds the stores of the batch (default <work folder>\stores\<batch>);
-                  -ArrivedFrom, -ArrivedTo, -Folder, -IncludeRecoverableItems, -Force and the tuning options apply to every line. Every copy is create only and is never done twice: the same line again, in this batch or
+                  -ReceivedFrom, -ReceivedTo, -Folder, -IncludeRecoverableItems, -Force and the tuning options apply to every line. Every copy is create only and is never done twice: the same line again, in this batch or
                   another, skips what was copied. -WhatIf lists every line and writes nothing. Exit codes as above.
     Mode Import   Creates the folder tree in the target mailbox (below -TargetRoot, or at the same paths, or following -MappingFile;
                   a folder is found by its name under its parent, never renamed or deleted) and imports the Exported items of the
@@ -68,13 +74,11 @@
                   (-MaxAttempts respected), several candidates = left Unknown and reported. Unknown rows left by an earlier run are
                   looked up at the start. -NoAutoReconcile keeps them Unknown. Running it again with the same -JobName resumes.
                   -WhatIf shows the plan and creates nothing.
-    Auto-expanding archive (Mode Export and Import): the archive of a user may be made of the main archive and auxiliary archives. -Mailbox
-                  Archive exports the main archive AND the items of its expanded folders, which live in the auxiliary archives: the
-                  folder is recorded once (main archive tree), each item with the mailbox that really holds it. -Mailbox AuxArchive
-                  -MailboxId MBX:... exports one auxiliary archive by itself, -Mailbox All exports the primary, the archive and every
-                  auxiliary archive known. The import follows the service when a folder lives in an auxiliary archive (see -MailboxId).
-                  The auxiliary archives are LEARNED from the redirects of the service and recorded in the store (shown by Mode Status);
-                  -LocationsFile gives them up front.
+    The Archive (Mode Export and Import): a very big archive is split by Microsoft, and the split is the service's business, not yours. -Mailbox
+                  Archive exports the whole archive: the folders are recorded once (in the tree of the archive), each item with the mailbox
+                  that really holds it, -Mailbox All exports the primary and the archive. The import follows the service when a folder
+                  lives in another part of the archive (see -MailboxId). Those other parts are LEARNED from the redirects of the service
+                  and recorded in the store (shown by Mode Status); -LocationsFile gives them up front.
     Mode ImportPst Imports one or more PST files into a mailbox (create only), without Outlook: -PstPath is a PST file, several files or a folder of PST files (the parts
                   of a split PST, name.pst, name-0002.pst, ..., are taken in order as one tree). The folder tree of the PST is recreated below -TargetRoot (container classes
                   kept; the Inbox, Sent Items ... of the PST become subfolders of it and are never merged into the real Inbox unless -MergeWellKnown), -MappingFile maps
@@ -89,8 +93,8 @@
                   sender, To/Cc counts, dates, size, attachments, importance, sensitivity, item class, categories, flag). With -Folder -ItemId: the
                   preview of an item (header, start of the text body, attachments, attached items). -Mailbox Primary and Archive are read with the
                   Microsoft Graph Mail API (delegated Mail.Read; the archive is addressed as a mailbox of its own, /users/MBX:<archive guid>@<tenant>).
-                  -Mailbox AuxArchive is not reachable by the Mail API: the tree and the size and dates of the items come from the import-export API
-                  and the details come after the export (previews of the store). Folders the Mail API does not list (Calendar, Contacts, Tasks...) are
+                  The parts of the archive that the Mail API does not reach are read through the import-export API: the tree and the size and
+                  dates of the items come from it, and the details come after the export (previews of the store). Folders the Mail API does not list (Calendar, Contacts, Tasks...) are
                   merged from the import-export API; -RecoverableItems adds Recoverable Items (exportable). -SaveSelection writes what was chosen (the
                   folder, with -IncludeSubfolders, or the -ItemId items) as a selection file, checked against the import-export API and printed as
                   the export plan; -Mode Export -SelectionFile exports exactly that.
@@ -156,14 +160,13 @@
     The mailbox user (default: Tenant.UserPrincipalName of the configuration). Sign-in is delegated as this user. With -CertificateThumbprint / -CertificatePath it is the OWNER OF THE TARGET MAILBOX (there is no signed-in user and no /me), it is required, and the configuration default is never used.
 
 .PARAMETER Mailbox
-    Copy: the mailbox location READ (Primary or Archive; the target is -TargetMailbox). Primary (default), Archive (the main archive; with Export its expanded folders are followed into the auxiliary archives), AuxArchive
-    (one auxiliary archive of an auto-expanding archive: needs -MailboxId, or a single one known) or All (Export only: Primary, Archive,
-    then every auxiliary archive known): the mailbox exported from (Export) or imported into (Import). The ids come from -MailboxId,
+    Copy: the mailbox location READ (Primary, Archive, or All for both places; the target is -TargetMailbox, or -TargetLayout for both). Primary (default) or Archive (the whole archive; with Export the folders that Microsoft moved to another part of it are followed), or All (Export only:
+    Primary and Archive): the mailbox exported from (Export) or imported into (Import). The ids come from -MailboxId,
     -PrimaryMailboxId / -ArchiveMailboxId, the Tenant section of the configuration (for the user of the configuration only), -LocationsFile, the locations recorded in the store,
     or (Primary; Archive too with User.Read.All and Graph beta) Graph.
 
 .PARAMETER MailboxId
-    Copy: the mailbox READ (the target is -TargetMailboxId). One explicit location, MBX:<mailbox guid>@<tenant id>, the bare guid, or the SMTP address / UPN of a mailbox (a SHARED mailbox or another user's: it is resolved
+    Copy: the mailbox READ (the target is -TargetMailboxId). With -Mailbox Archive or AuxArchive an address names the mailbox whose ARCHIVE is read: only with -AppOnly (a delegated sign-in cannot read the archive of another mailbox: refused). One explicit location, MBX:<mailbox guid>@<tenant id>, the bare guid, or the SMTP address / UPN of a mailbox (a SHARED mailbox or another user's: it is resolved
     to its id through Graph settings/exchange when the token allows it (User.Read.All), else through the import-export API; the sign-in stays -UserPrincipalName, who
     needs FullAccess on that mailbox, see docs/MailboxTransfer-Guide.md, chapter 4.5; -Mailbox then defaults to Primary): the mailbox to export from or import into. Without -Mailbox its
     kind is the one the store or -LocationsFile knows for it. For an import into an auxiliary archive the folders are looked up (and, if
@@ -202,10 +205,19 @@
     Import: which mailbox of the store to import from (Primary or Archive); needed when the store holds both.
 
 .PARAMETER TargetRoot
-    Import, Copy: path in the target below which everything is created, for instance MBT-Phase1-A. Without it the same paths as the source.
+    Import, Copy: path in the target below which everything is created, for instance MBT-Phase1-A. Without it the same paths as the source. A copy of both places: the folder of the Primary part (the Archive part has -TargetArchiveRoot).
 
 .PARAMETER TargetMailbox
     Copy: the location of the target mailbox written into, Primary (default) or Archive. The mailbox is the signed-in account's own, or -TargetMailboxId. The source and the target must not be the same location.
+
+.PARAMETER TargetLayout
+    Copy of the Primary and the Archive (-Mailbox All, or a selection of both): where each part goes in the target mailbox. Mirror (default): the Primary part into the target Primary, the Archive part into the target Archive. Primary: both parts into the target Primary. Archive: both parts into the target Archive. A target without an archive takes Primary only. Not for a copy of one place (-TargetMailbox).
+
+.PARAMETER TargetArchiveRoot
+    Copy of the Primary and the Archive: path below which the Archive part is created (the Primary part has -TargetRoot). Without it the Archive part goes below -TargetRoot too (or keeps the folder names of the source when there is none); given and empty, the Archive part keeps the folder names of the source.
+
+.PARAMETER TargetArchiveMailboxId
+    Copy: the id of the ARCHIVE of the target mailbox (MBX:<mailbox guid>@<tenant id>, or the bare guid), for a target given by its Primary id or when Microsoft Graph cannot look the archive up (no User.Read.All). A target given by its address needs no id when Graph can look it up.
 
 .PARAMETER TargetMailboxId
     Copy: the mailbox written into: its SMTP address, or its id (MBX:<mailbox guid>@<tenant id>, or the bare guid). Without it the signed-in account's own mailbox. A delegated sign-in writes into its own mailbox only: another
@@ -238,19 +250,21 @@
     Export, Import: only this folder and the folders below it (path as in the store). Browse: the folder to list (id or path, or the end of a path
     such as Inbox/Reports).
 
-.PARAMETER ArrivedFrom
-    Export, Copy, ExportEml (live mailbox): the first day, or the first instant, of the period of the export. Only the items that arrived in the mailbox on or after it are listed and exported (the bound is
+.PARAMETER ReceivedFrom
+    Export, Copy, ExportEml (live mailbox): the first day, or the first instant, of the period of the export. Only the messages received on or after it are listed and exported (the bound is
     included). Written year first, whatever the language of Windows: 2026-03-01 (the whole day, from midnight of the local time zone) or 2026-03-01T08:30 (used as it is; seconds, a fraction and
-    Z or +hh:mm are accepted). Not case sensitive. Left out: no start. "Arrived" is the date the item was created in the mailbox (createdDateTime of the import-export listing). For mail that was migrated
-    or imported into the mailbox it is the date of that import, not the original date of the message. One period for the whole export (every mailbox of a -MailboxCsv batch, every location of a selection).
+    Z or +hh:mm are accepted). Not case sensitive. Left out: no start. The date is the RECEIVED date of the message, the one a mail client shows (receivedDateTime of the Mail API), asked folder by folder
+    (it needs Mail.Read or Mail.ReadBasic). An item that has no received date (calendar items, contacts, tasks, notes) keeps the ARRIVAL date, the date it arrived in this mailbox (createdDateTime of the
+    import-export listing; in an archive the date it was moved there, for imported mail the date of the import). A folder the Mail API refuses, and a token without Mail.Read, are filtered on the arrival date
+    too: the plan, the end of the run and the report say so. One period for the whole export (every mailbox of a -MailboxCsv batch, every location of a selection).
     Items named one by one in a -SelectionFile are always taken, whatever their date: the period applies to the items listed from the folders asked. An item that has no date is kept, and counted.
     Items outside the period are skipped, not an error: the exit code does not change. A store keeps one period for a mailbox: continuing an export with another period is refused. -WhatIf shows the
     folder totals as the most the export can take: the exact numbers come at the end of the run (kept, outside the period, without a date). Not for the import modes, nor for -Mode ExportPst
-    and -Mode ExportEml from a store or a PST (they hold no date of arrival): give the period to the -Mode Export that fills the store.
+    and -Mode ExportEml from a store or a PST (they hold no date of arrival): give the period to the -Mode Export that fills the store. -ArrivedFrom is accepted as another name of this parameter.
 
-.PARAMETER ArrivedTo
+.PARAMETER ReceivedTo
     Export, ExportEml (live mailbox): the last day, or the last instant, of the period (the bound is included). 2026-03-31 is the whole day, up to the last instant of it in the local time zone;
-    2026-03-31T18:30 is used as it is. Left out: no end. -ArrivedFrom must not be after -ArrivedTo: the run is refused before anything starts. See -ArrivedFrom.
+    2026-03-31T18:30 is used as it is. Left out: no end. -ReceivedFrom must not be after -ReceivedTo: the run is refused before anything starts. See -ReceivedFrom. -ArrivedTo is accepted as another name.
 
 .PARAMETER IncludeFolder
     ImportPst, ImportEml, ExportPst (from -PstPath): only some folders of the PST or of the folder of .eml files. Paths below the top folder of the PST (Top of Personal Folders)
@@ -295,7 +309,7 @@
 .PARAMETER IncludeRecoverableItems
     Export: also export Recoverable Items, the hidden folders where Exchange keeps what a user deleted from Deleted Items (Deletions), what was purged (Purges), the versions of changed
     items (Versions) and what a hold keeps (DiscoveryHolds). Read through the import-export API, full fidelity. Stored under one top folder "Recoverable Items/<name>" in the store
-    and in the PST, never mixed with the normal folders. Primary, Archive and AuxArchive. Needs the whole mailbox (or -Folder "Recoverable Items/<name>"): with -SelectionFile, select the folders
+    and in the PST, never mixed with the normal folders. Primary and Archive. Needs the whole mailbox (or -Folder "Recoverable Items/<name>"): with -SelectionFile, select the folders
     of Recoverable Items in the browse view instead. An import never puts them back into Recoverable Items: see "Restored deleted items" in the guide.
 
 .PARAMETER RecoverableItemsFolders
@@ -313,10 +327,9 @@
     Browse -SaveSelection: the folder and every folder below it.
 
 .PARAMETER ShowMoves
-    Browse (tree): also reads the other side of an auto-expanding archive and marks the folders that exist in the main archive and in an auxiliary archive:
-    "being moved to aux archive 1" (the items are still in the main archive, the auxiliary archive holds the skeleton), "moved to ..." or "items on both
-    sides". The folder is recognised by the folder entry key of its id. -Mailbox Archive does it by itself when an auxiliary archive is known (it is a small
-    tree); for -Mailbox AuxArchive it needs the tree of the main archive (the Mail API: slow on thousands of folders), hence this switch.
+    Browse (tree): also reads the other part of a split archive and marks the folders that exist in both: "being moved" (the items are still in the first
+    part), "moved" or "items on both sides". The folder is recognised by the folder entry key of its id. -Mailbox Archive does it by itself when another
+    part is known (it is a small tree).
 
 .PARAMETER OutputPst
     Export, ExportPst: the first PST file (D:\out\mail.pst), or a folder (the file is named after the user of the store, "<user>-AuxArchive1" for an auxiliary archive alone; a Windows device name such as aux.pst is refused). The next files are
@@ -332,7 +345,7 @@
     Export, ExportPst: the same limit in MiB (smaller than 1 GB: tests, small drives). Wins over -PstMaxSizeGB.
 
 .PARAMETER SeparateAuxArchives
-    Export, ExportPst: one top folder per auxiliary archive ("Auxiliary archive 1 (guid8)") instead of merging them into the Archive tree.
+    Export, ExportPst: for support: one top folder per part of a split archive instead of merging them into the Archive tree.
 
 .PARAMETER SkipCheck
     Export, ExportPst: do not run the integrity checker (Test-MbtPst) on each finished PST.
@@ -431,9 +444,10 @@
     .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store
     .\Invoke-MailboxTransfer.ps1 -Mode Import -Mailbox Archive -SourceMailbox Primary -TargetRoot MBT-Restore -StorePath D:\store -WhatIf
     .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId shared@contoso.com -TargetRoot 'From the shared mailbox' -WhatIf
-    .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId shared@contoso.com -Folder Inbox/Projects -TargetRoot 'From the shared mailbox' -ArrivedFrom 2026-01-01
+    .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId shared@contoso.com -Folder Inbox/Projects -TargetRoot 'From the shared mailbox' -ReceivedFrom 2026-01-01
     .\Invoke-MailboxTransfer.ps1 -Mode Copy -SelectionFile D:\sel.json -TargetMailbox Archive -TargetRoot Restored -StorePath D:\copy-store
     .\Invoke-MailboxTransfer.ps1 -Mode Copy -AppOnly -UserPrincipalName alex@contoso.com -TargetMailboxId adele@contoso.com -TargetRoot 'Mail of Alex'
+    .\Invoke-MailboxTransfer.ps1 -Mode Copy -AppOnly -UserPrincipalName alex@contoso.com -Mailbox All -TargetMailboxId adele@contoso.com -TargetLayout Mirror -TargetRoot 'Mail of Alex' -TargetArchiveRoot 'Archive of Alex'
     .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxCsv D:\batch\copies.csv -TargetRoot Copied -WhatIf
     .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxCsv D:\batch\copies.csv -BatchName Move1 -ParallelMailboxes 2 -AppOnly
     .\Invoke-MailboxTransfer.ps1 -Mode Copy -ResumeBatch Move1
@@ -446,8 +460,8 @@
     .\Invoke-MailboxTransfer.ps1 -Mode Export -SelectionFile D:\sel.json -StorePath D:\store
     .\Invoke-MailboxTransfer.ps1 -Mode Export -SelectionFile D:\selections\all-locations.json -StorePath D:\store -OutputPst D:\pst\adele.pst -RetryWaitSeconds 5
     .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox Archive -StorePath D:\store -OutputPst D:\pst\adele.pst -PstMaxSizeGB 10
-    .\Invoke-MailboxTransfer.ps1 -Mode Export -StorePath D:\store -ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31
-    .\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\batch\mailboxes.csv -OutputPst D:\pst -ArrivedFrom 2025-07-01
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -StorePath D:\store -ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31
+    .\Invoke-MailboxTransfer.ps1 -Mode Export -MailboxCsv D:\batch\mailboxes.csv -OutputPst D:\pst -ReceivedFrom 2025-07-01
     .\Invoke-MailboxTransfer.ps1 -Mode ExportPst -StorePath D:\store -OutputPst D:\pst\adele.pst
     .\Invoke-MailboxTransfer.ps1 -Mode ExportPst -StorePath D:\store -OutputPst D:\pst\adele.pst -WhatIf
     .\Invoke-MailboxTransfer.ps1 -Mode Export -Mailbox All -StorePath D:\store -WhatIf
@@ -467,7 +481,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.3.0
+    Version : 1.4.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -499,8 +513,8 @@ param(
     [int]$IntervalSeconds = 5,
 
     [string]$Folder,
-    [object]$ArrivedFrom,
-    [object]$ArrivedTo,
+    [Alias('ArrivedFrom')][object]$ReceivedFrom,
+    [Alias('ArrivedTo')][object]$ReceivedTo,
     [string]$SelectionFile,
     [switch]$SkipInventory,
     [int]$MaxAttempts = 3,
@@ -513,6 +527,9 @@ param(
     [string]$TargetRoot,
     [ValidateSet('Primary', 'Archive')][string]$TargetMailbox = 'Primary',
     [string]$TargetMailboxId,
+    [string]$TargetArchiveMailboxId,
+    [ValidateSet('Mirror', 'Primary', 'Archive')][string]$TargetLayout,
+    [string]$TargetArchiveRoot,
     [string[]]$PstPath,
     [switch]$MergeWellKnown,
     [switch]$PerFileSubfolder,
@@ -810,14 +827,14 @@ $batchMode = [bool]($MailboxCsv -or $ResumeBatch)
 if ($batchMode) {
     if ($Mode -notin 'Export', 'Import', 'ImportPst', 'ImportEml', 'Copy') { throw '-MailboxCsv and -ResumeBatch belong to -Mode Export, Import, ImportPst, ImportEml and Copy.' }
     if ($BatchName -and $ResumeBatch -and $BatchName.Trim() -ine $ResumeBatch.Trim()) { throw '-BatchName and -ResumeBatch name two batches: give one of them.' }
-    foreach ($single in 'EventsFile', 'JobId', 'SelectionFile', 'MailboxId', 'TargetMailboxId', 'LocationsFile', 'PrimaryMailboxId', 'ArchiveMailboxId', 'RecoverableItemsFolders', 'TempPath', 'BatchId') {
+    foreach ($single in 'EventsFile', 'JobId', 'SelectionFile', 'MailboxId', 'TargetMailboxId', 'TargetArchiveMailboxId', 'LocationsFile', 'PrimaryMailboxId', 'ArchiveMailboxId', 'RecoverableItemsFolders', 'TempPath', 'BatchId') {
         if ($PSBoundParameters.ContainsKey($single)) { throw "-$single is for one mailbox: with -MailboxCsv give it in the CSV file (SelectionFile, OutputPst), or leave it out. Each mailbox of a batch has its own job folder, store and job." }
     }
     if ($Mode -eq 'Copy') {
         foreach ($single in 'PstPath', 'EmlPath', 'JobName', 'IncludeFolder', 'ExcludeFolder', 'FolderFile', 'IncludeItemFile', 'ResolveEml', 'EmlFile', 'SourceMailbox') {
             if ($PSBoundParameters.ContainsKey($single)) { throw "-$single is for one copy: with -MailboxCsv give the mailboxes in the CSV file (the import job of each line is named after its target, its store and its folder), or leave it out." }
         }
-        if ($Mailbox -in 'AuxArchive', 'All') { throw "-Mailbox $Mailbox is not for a batch of copies: a copy reads Primary or Archive (the SourceLocation column; -Mailbox is the SourceLocation of the lines that have none)." }
+        if ($Mailbox -eq 'AuxArchive') { throw "-Mailbox $Mailbox is not for a batch of copies: a copy reads Primary, Archive or both (All): the SourceLocation column; -Mailbox is the SourceLocation of the lines that have none." }
         if ($PSBoundParameters.ContainsKey('MappingFile') -and -not (Test-Path -LiteralPath $MappingFile -PathType Leaf)) { throw "-MappingFile not found: $MappingFile" }
     }
     elseif ($Mode -ne 'Export') {
@@ -847,15 +864,15 @@ if ($Mode -in 'Export', 'Copy' -and $IncludeRecoverableItems) {
     if ($Folder -and -not [MailboxTransfer.RecoverableItems]::IsPath($Folder)) { throw "-IncludeRecoverableItems adds Recoverable Items to the export of the whole mailbox; it cannot be combined with -Folder '$Folder'. Use -Folder 'Recoverable Items/Deletions' for the deleted items alone." }
 }
 
-# The period of an export (-ArrivedFrom, -ArrivedTo): read here, before the sign-in, so that a date that cannot be read or a start after the end stops everything at once.
+# The period of an export (-ReceivedFrom, -ReceivedTo; -ArrivedFrom and -ArrivedTo are other names): read here, before the sign-in, so that a date that cannot be read or a start after the end stops everything at once.
 $arrivalPeriod = $null
-if ($PSBoundParameters.ContainsKey('ArrivedFrom') -or $PSBoundParameters.ContainsKey('ArrivedTo')) {
-    if ($Mode -eq 'ExportPst') { throw '-ArrivedFrom and -ArrivedTo choose the items an export lists in a mailbox. -Mode ExportPst only converts what a store or a PST already holds: give the period to the -Mode Export that fills the store (with -OutputPst it writes the PST files in the same command).' }
-    if ($Mode -notin 'Export', 'ExportEml', 'Copy') { throw '-ArrivedFrom and -ArrivedTo belong to the export modes (-Mode Export, -Mode Copy, and -Mode ExportEml from the live mailbox): an import takes every item its source holds. Choose the period when the items are exported.' }
-    $arrivalPeriod = ConvertTo-MbtArrivalPeriod -From $ArrivedFrom -To $ArrivedTo
+if ($PSBoundParameters.ContainsKey('ReceivedFrom') -or $PSBoundParameters.ContainsKey('ReceivedTo')) {
+    if ($Mode -eq 'ExportPst') { throw '-ReceivedFrom and -ReceivedTo choose the items an export lists in a mailbox. -Mode ExportPst only converts what a store or a PST already holds: give the period to the -Mode Export that fills the store (with -OutputPst it writes the PST files in the same command).' }
+    if ($Mode -notin 'Export', 'ExportEml', 'Copy') { throw '-ReceivedFrom and -ReceivedTo belong to the export modes (-Mode Export, -Mode Copy, and -Mode ExportEml from the live mailbox): an import takes every item its source holds. Choose the period when the items are exported.' }
+    $arrivalPeriod = ConvertTo-MbtArrivalPeriod -From $ReceivedFrom -To $ReceivedTo
     if ($arrivalPeriod -and $Mode -eq 'ExportEml') {
         $emlSourceAsked = if ($EmlSource) { $EmlSource } elseif ($PstPath) { 'Pst' } elseif ($PSBoundParameters.ContainsKey('StorePath')) { 'Store' } else { 'Live' }
-        if ($emlSourceAsked -ne 'Live') { throw '-ArrivedFrom and -ArrivedTo apply to -Mode ExportEml from the live mailbox: a store or a PST holds no date of arrival. Give the period to the -Mode Export that fills the store.' }
+        if ($emlSourceAsked -ne 'Live') { throw '-ReceivedFrom and -ReceivedTo apply to -Mode ExportEml from the live mailbox: a store or a PST holds no date of arrival. Give the period to the -Mode Export that fills the store.' }
     }
 }
 
@@ -870,23 +887,55 @@ if ($Mode -eq 'Copy' -and -not $batchMode) {
         if ($notCopy -eq 'SourceMailbox') { throw '-SourceMailbox chooses the Primary or the Archive of an export store: it belongs to -Mode Import. A copy takes its source from -Mailbox (and -MailboxId): the mailbox it reads.' }
         throw "-$notCopy is not for -Mode Copy: a copy reads a mailbox. Choose what to copy with -Folder or -SelectionFile."
     }
-    if ($Mailbox -in 'All', 'AuxArchive') { throw "-Mailbox $Mailbox is not for a copy: a copy reads one mailbox location, Primary or Archive (the auxiliary archives of an auto-expanding archive follow the Archive by themselves). Copy the other locations one after the other." }
+    if ($Mailbox -eq 'AuxArchive') { throw "-Mailbox AuxArchive is not for a copy: a copy reads Primary, Archive or both (-Mailbox All); the Archive already includes what Microsoft moved to other parts of it." }
     if ($SelectionFile -and $Folder) { throw '-SelectionFile and -Folder are exclusive: the selection names its folders.' }
     Initialize-MbtEngine
-    $copy = [ordered]@{ SourceKind = [string]$Mailbox; SourceId = ''; SourceAddress = ''; TargetKind = [string]$TargetMailbox; TargetId = ''; TargetAddress = '' }
+    $copy = [ordered]@{ SourceKind = [string]$Mailbox; SourceId = ''; SourceAddress = ''; TargetKind = [string]$TargetMailbox; TargetId = ''; TargetAddress = ''; Both = $false; Layout = ''; Parts = @(); SourceIds = @{} }
     if ($SelectionFile) {
         $selections = @(Read-MbtBrowseSelectionSet -Path $SelectionFile)
-        if ($selections.Count -ne 1) { throw "The selection $SelectionFile names $($selections.Count) mailbox locations: a copy takes one (Primary or Archive). Select what to copy in one mailbox location, or copy the locations one after the other." }
-        if ([string]$selections[0].Kind -notin 'Primary', 'Archive') { throw "The selection $SelectionFile is of the $($selections[0].Kind) mailbox: a copy reads the Primary or the Archive mailbox (the auxiliary archives follow the Archive)." }
-        if ($mailboxGiven -and $Mailbox -ne [string]$selections[0].Kind) { throw "-Mailbox $Mailbox does not match the selection, which is of the $($selections[0].Kind) mailbox." }
-        $copy.SourceKind = [string]$selections[0].Kind
-        $copy.SourceId = ConvertTo-MbtMailboxId -Value $selections[0].MailboxId -TenantId $TenantId
+        $selectionKinds = @($selections | ForEach-Object { [string]$_.Kind })
+        if ($selections.Count -gt 2 -or ($selections.Count -eq 2 -and (@($selectionKinds | Sort-Object -Unique) -join ',') -ne 'Archive,Primary')) { throw "The selection $SelectionFile names $($selections.Count) mailbox locations ($($selectionKinds -join ', ')): a copy takes the Primary mailbox, the Archive, or both. Select what to copy in those places, or copy the other locations one after the other." }
+        if ($selections.Count -eq 1 -and $selectionKinds[0] -notin 'Primary', 'Archive') { throw "The selection $SelectionFile is of the $($selectionKinds[0]) mailbox: a copy reads the Primary or the Archive: copy the Archive (-Mailbox Archive), which includes what Microsoft moved to other parts of it." }
+        if ($selections.Count -eq 1 -and $mailboxGiven -and $Mailbox -ne $selectionKinds[0]) { throw "-Mailbox $Mailbox does not match the selection, which is of the $($selectionKinds[0]) mailbox." }
+        if ($selections.Count -eq 2 -and $mailboxGiven -and $Mailbox -ne 'All') { throw "-Mailbox $Mailbox does not match the selection, which is of the Primary and the Archive mailbox (-Mailbox All)." }
+        $copy.Both = ($selections.Count -eq 2)
+        $copy.SourceKind = if ($copy.Both) { 'All' } else { $selectionKinds[0] }
+        foreach ($selection in $selections) { $copy.SourceIds[[string]$selection.Kind] = ConvertTo-MbtMailboxId -Value $selection.MailboxId -TenantId $TenantId }
+        if (-not $copy.Both) { $copy.SourceId = $copy.SourceIds[$copy.SourceKind] }
+    }
+    elseif ($Mailbox -eq 'All') {
+        if ($MailboxId) { throw '-MailboxId is one location: it cannot be combined with -Mailbox All. Give -UserPrincipalName (the mailbox whose Primary and Archive are copied), or copy the locations one after the other.' }
+        $copy.Both = $true
     }
     elseif ($MailboxId -and -not (Test-MbtMailboxAddress $MailboxId)) { $copy.SourceId = ConvertTo-MbtMailboxId -Value $MailboxId -TenantId $TenantId }
     $copy.SourceAddress = if ($MailboxId -and (Test-MbtMailboxAddress $MailboxId)) { $MailboxId.Trim() } elseif ($MailboxId -or $SelectionFile) { '' } else { [string]$UserPrincipalName }
     if ($TargetMailboxId -and (Test-MbtMailboxAddress $TargetMailboxId)) { $copy.TargetAddress = $TargetMailboxId.Trim() }
     elseif ($TargetMailboxId) { $copy.TargetId = ConvertTo-MbtMailboxId -Value $TargetMailboxId -TenantId $TenantId }
     elseif (-not $useCertificate) { $copy.TargetAddress = [string]$UserPrincipalName }
+    $targetArchiveId = if ($TargetArchiveMailboxId) { ConvertTo-MbtMailboxId -Value $TargetArchiveMailboxId -TenantId $TenantId } else { '' }
+    if ($copy.Both) {
+        # the Primary and the Archive of the source: one export into one store, then one import for each part, the target places chosen by the layout
+        if ($PSBoundParameters.ContainsKey('TargetMailbox')) { throw '-TargetMailbox names the one place a single source goes into. A copy of the Primary and the Archive (-Mailbox All) says where each part goes with -TargetLayout Mirror, Primary or Archive.' }
+        $copy.Layout = if ($TargetLayout) { $TargetLayout } else { 'Mirror' }
+        # -TargetArchiveRoot left out: the Archive part goes below -TargetRoot too; given and empty: the Archive part keeps the folder names of the source
+        $archiveRoot = if ($PSBoundParameters.ContainsKey('TargetArchiveRoot')) { [string]$TargetArchiveRoot } else { $TargetRoot }
+        $copy.Parts = @(
+            [pscustomobject]@{ SourceKind = 'Primary'; SourceId = [string]$copy.SourceIds['Primary']; TargetKind = $(if ($copy.Layout -eq 'Archive') { 'Archive' } else { 'Primary' }); TargetId = ''; Root = [string]$TargetRoot }
+            [pscustomobject]@{ SourceKind = 'Archive'; SourceId = [string]$copy.SourceIds['Archive']; TargetKind = $(if ($copy.Layout -eq 'Primary') { 'Primary' } else { 'Archive' }); TargetId = ''; Root = [string]$archiveRoot }
+        )
+        $copy.TargetKind = switch ($copy.Layout) { 'Mirror' { 'Primary + Archive' } default { $copy.Layout } }
+        foreach ($part in $copy.Parts) { $part.TargetId = if ($part.TargetKind -eq 'Archive') { $targetArchiveId } else { [string]$copy.TargetId } }
+        $copy.TargetId = ''
+    }
+    else {
+        foreach ($onlyBoth in 'TargetLayout', 'TargetArchiveRoot') {
+            if ($PSBoundParameters.ContainsKey($onlyBoth)) { throw "-$onlyBoth belongs to a copy of the Primary and the Archive (-Mailbox All, or a selection of both). A copy of one place goes into the place chosen with -TargetMailbox, below -TargetRoot." }
+        }
+        if ($copy.TargetKind -eq 'Archive' -and $targetArchiveId) { $copy.TargetId = $targetArchiveId }
+        elseif ($targetArchiveId) { throw '-TargetArchiveMailboxId is the id of the target mailbox''s Archive: it needs -TargetMailbox Archive (or a copy of both places, -Mailbox All).' }
+        $copy.Parts = @([pscustomobject]@{ SourceKind = [string]$copy.SourceKind; SourceId = [string]$copy.SourceId; TargetKind = [string]$copy.TargetKind; TargetId = [string]$copy.TargetId; Root = [string]$TargetRoot })
+    }
+    $copy.SourceText = if ($copy.Both) { 'Primary + Archive' } else { [string]$copy.SourceKind }
     if ($useCertificate) {
         if (-not $TargetMailboxId) { throw 'The application has no mailbox of its own: give the mailbox to write into with -TargetMailboxId (its address).' }
         if (-not $copy.SourceAddress -and -not $UserPrincipalName) { throw 'Give the mailbox to read: -UserPrincipalName (its address), or -MailboxId.' }
@@ -895,17 +944,30 @@ if ($Mode -eq 'Copy' -and -not $batchMode) {
     elseif ($copy.TargetAddress -and $UserPrincipalName -and $copy.TargetAddress -ine $UserPrincipalName) {
         throw "A delegated sign-in writes into the mailbox of the signed-in account only ($UserPrincipalName): $($copy.TargetAddress) is another mailbox, and the service refuses a delegated write into another person's or a shared mailbox. Nothing was started, so nothing was read: sign in as the application (-AppOnly) to write into $($copy.TargetAddress), or copy into $UserPrincipalName."
     }
-    if ($copy.SourceKind -ceq $copy.TargetKind -and (($copy.SourceAddress -and $copy.SourceAddress -ieq $copy.TargetAddress) -or ($copy.SourceId -and $copy.SourceId -ieq $copy.TargetId))) {
-        throw "The source and the target are the same mailbox location (the $($copy.SourceKind) mailbox of $(if ($copy.SourceAddress) { $copy.SourceAddress } else { $copy.SourceId })): a copy writes into another location. Choose another -TargetMailbox, another -TargetMailboxId, or another source."
+    foreach ($part in $copy.Parts) {
+        if ($part.SourceKind -ceq $part.TargetKind -and (($copy.SourceAddress -and $copy.SourceAddress -ieq $copy.TargetAddress) -or ($part.SourceId -and $part.SourceId -ieq $part.TargetId))) {
+            throw "The source and the target are the same mailbox location (the $($part.SourceKind) mailbox of $(if ($copy.SourceAddress) { $copy.SourceAddress } else { $part.SourceId })): a copy writes into another location. Choose another $(if ($copy.Both) { '-TargetLayout, ' })-TargetMailbox, another -TargetMailboxId, or another source."
+        }
     }
     if ($MappingFile -and -not (Test-Path -LiteralPath $MappingFile -PathType Leaf)) { throw "-MappingFile not found: $MappingFile" }
     # the store of a copy is named after what it holds, so that another choice never lands in it
     $copy.ChoiceKey = Get-MbtCopyChoiceKey -Kind $copy.SourceKind -SelectionFile $SelectionFile -Folder $Folder -Period $arrivalPeriod -IncludeRecoverableItems:$IncludeRecoverableItems -RecoverableItemsFolders $RecoverableItemsFolders
     if (-not $PSBoundParameters.ContainsKey('StorePath')) {
-        $StorePath = Get-MbtCopyStorePath -WorkFolder $copyWork -Source $(if ($copy.SourceAddress) { $copy.SourceAddress } elseif ($copy.SourceId) { $copy.SourceId } else { 'mailbox' }) -Kind $copy.SourceKind -Key $copy.ChoiceKey
+        $StorePath = Get-MbtCopyStorePath -WorkFolder $copyWork -Source $(if ($copy.SourceAddress) { $copy.SourceAddress } elseif (@($copy.Parts)[0].SourceId) { @($copy.Parts)[0].SourceId } else { 'mailbox' }) -Kind $copy.SourceKind -Key $copy.ChoiceKey
     }
 }
-elseif ($PSBoundParameters.ContainsKey('TargetMailbox') -or $PSBoundParameters.ContainsKey('TargetMailboxId')) { throw '-TargetMailbox and -TargetMailboxId belong to -Mode Copy (the mailbox a copy writes into). The mailbox of an import is -Mailbox and -MailboxId.' }
+elseif ($Mode -ne 'Copy' -and ($PSBoundParameters.ContainsKey('TargetMailbox') -or $PSBoundParameters.ContainsKey('TargetMailboxId') -or $PSBoundParameters.ContainsKey('TargetArchiveMailboxId') -or $PSBoundParameters.ContainsKey('TargetLayout') -or $PSBoundParameters.ContainsKey('TargetArchiveRoot'))) { throw '-TargetMailbox, -TargetMailboxId, -TargetArchiveMailboxId, -TargetLayout and -TargetArchiveRoot belong to -Mode Copy (the mailbox a copy writes into). The mailbox of an import is -Mailbox and -MailboxId.' }
+
+# A copy (one place, or the Primary and the Archive) is a list of parts: each part reads one place of the source and writes into one place of the target, below its own folder.
+# What the copy says about its places, in a few words: "the Primary into the Archive below 'Old'", "Primary into Primary below 'A'; Archive into Archive below 'B'".
+function Get-CopyPartText {
+    param([switch]$Short)
+    $parts = @(foreach ($part in @($copy.Parts)) {
+        $where = if ($part.Root) { " below '$($part.Root)'" } elseif ($MappingFile) { ' following the mapping file' } else { ' with the same folder names' }
+        if ($Short) { '{0} into {1}{2}' -f $part.SourceKind, $part.TargetKind, $(if ($part.Root) { " below '$($part.Root)'" }) } else { 'the {0} into the {1}{2}' -f $part.SourceKind, $part.TargetKind, $where }
+    })
+    return ($parts -join '; ')
+}
 
 # The frames and the icons of the console are Unicode; a redirected output (a job of the console, a scheduled task) is UTF-8 without BOM.
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { Write-Verbose "Console output encoding unchanged: $($_.Exception.Message)" }
@@ -947,8 +1009,8 @@ $bannerDetails = [ordered]@{ Mode = @('Mode', ($Mode + $(if ($batchMode) { ' - a
 if ($batchMode) { $bannerDetails.Mailboxes = @('Folder', $(if ($MailboxCsv) { $MailboxCsv } else { "batch $ResumeBatch" })) }
 elseif ($Mode -in 'Export', 'ExportPst', 'Import', 'Status', 'ExportEml', 'Copy') { $bannerDetails.Store = @('Store', $StorePath) }
 if ($Mode -eq 'Copy' -and -not $batchMode) {
-    $bannerDetails.From = @('Folder', ('{0} mailbox {1}' -f $copy.SourceKind, $(if ($copy.SourceAddress) { $copy.SourceAddress } elseif ($copy.SourceId) { $copy.SourceId } else { 'of the selection' })))
-    $bannerDetails.To = @('Folder', ('{0} mailbox {1}{2}' -f $copy.TargetKind, $(if ($copy.TargetAddress) { $copy.TargetAddress } else { $copy.TargetId }), $(if ($TargetRoot) { ", folder $TargetRoot" } elseif ($MappingFile) { ', mapping file' } else { ', same folder names' })))
+    $bannerDetails.From = @('Folder', ('{0} mailbox {1}' -f $copy.SourceText, $(if ($copy.SourceAddress) { $copy.SourceAddress } elseif (@($copy.Parts)[0].SourceId) { @($copy.Parts)[0].SourceId } else { 'of the selection' })))
+    $bannerDetails.To = @('Folder', ('{0} mailbox {1}{2}' -f $copy.TargetKind, $(if ($copy.TargetAddress) { $copy.TargetAddress } else { @($copy.Parts)[0].TargetId }), $(if ($copy.Both) { ' (' + (Get-CopyPartText -Short) + ')' } elseif ($TargetRoot) { ", folder $TargetRoot" } elseif ($MappingFile) { ', mapping file' } else { ', same folder names' })))
 }
 $bannerSource = @($PstPath, $EmlPath, $Path | Where-Object { $_ } | ForEach-Object { [string]$_ }) -join ', '
 if ($bannerSource) { $bannerDetails.Source = @('Folder', $bannerSource) }
@@ -970,6 +1032,7 @@ $script:phase = $Mode
 $script:resumable = $false
 $script:copyExportStopped = $false
 $script:copyNext = $null
+$script:copyPartCounts = @{}
 # The name of the job folder of a run that has one made by the command line: its Next steps say how to continue it.
 function Get-CliJobName {
     if ($cliJob) { return [string]$cliJob.Name }
@@ -995,11 +1058,12 @@ function Write-MbtRunSummary {
     if ($dryRun -and $ExitCode -eq 0) { $title = "$Mode planned (WhatIf, nothing was written)" }
     $values = [ordered]@{ Result = @($(if ($ExitCode -eq 0) { 'Ok' } elseif ($ExitCode -eq 1) { 'Fail' } else { 'Warn' }), "exit code $ExitCode - $meaning") }
     if ($Failure) { $values.Error = @('Fail', $Failure) }
-    $parts = @(foreach ($k in ($script:counts.Keys | Sort-Object)) { if ($arrivalPeriod -and $k -in 'kept', 'outsidePeriod', 'withoutDate') { continue }; $v = $script:counts[$k]; if ($v -is [ValueType] -or $v -is [string]) { '{0} {1}' -f $k, $(if ($v -is [long] -or $v -is [int]) { Format-MbtNumber $v } else { $v }) } })
+    $parts = @(foreach ($k in ($script:counts.Keys | Sort-Object)) { if ($arrivalPeriod -and $k -in 'kept', 'outsidePeriod', 'withoutDate', 'periodDate', 'periodNote') { continue }; $v = $script:counts[$k]; if ($v -is [ValueType] -or $v -is [string]) { '{0} {1}' -f $k, $(if ($v -is [long] -or $v -is [int]) { Format-MbtNumber $v } else { $v }) } })
     if ($parts) { $values.Counts = @('Store', ($parts -join ', ')) }
     if ($arrivalPeriod -and $script:counts.ContainsKey('outsidePeriod')) {
         $periodNote = "$($arrivalPeriod.Describe()): $(Format-MbtNumber $script:counts['kept']) kept, $(Format-MbtNumber $script:counts['outsidePeriod']) outside the period (skipped, not an error)"
         if ([long]$script:counts['withoutDate'] -gt 0) { $periodNote += "; $(Format-MbtNumber $script:counts['withoutDate']) without a date were kept" }
+        if ($script:counts['periodNote']) { $periodNote += ". Date used: $($script:counts['periodNote'])" }
         $values.Period = @('Clock', $periodNote)
     }
     $values.Duration = @('Clock', (Format-MbtDuration $runClock.Elapsed.TotalSeconds))
@@ -1040,7 +1104,7 @@ if ($EventsFile -and -not $dryRun -and -not $BatchId) {
 }
 if ($StopFile -and -not $batchMode) { Start-MbtStopWatch -Path $StopFile }
 if ($KeepAwake) { [void](Start-MbtKeepAwake) }
-$copyText = if ($copy) { @{ Source = $(if ($copy.SourceAddress) { $copy.SourceAddress } elseif ($copy.SourceId) { $copy.SourceId } else { 'the selection' }); Target = $(if ($copy.TargetAddress) { $copy.TargetAddress } else { $copy.TargetId }) } }
+$copyText = if ($copy) { @{ Source = $(if ($copy.SourceAddress) { $copy.SourceAddress } elseif (@($copy.Parts)[0].SourceId) { @($copy.Parts)[0].SourceId } else { 'the selection' }); Target = $(if ($copy.TargetAddress) { $copy.TargetAddress } else { @($copy.Parts)[0].TargetId }) } }
 if ($EventsFile) {
     $taskName = switch ($Mode) { 'Copy' { 'mailcopy' } 'Export' { 'export' } 'ExportEml' { 'export' } 'ExportPst' { 'exportpst' } 'Import' { 'import' } 'ImportPst' { 'import' } 'ImportEml' { 'import' } 'CheckPst' { 'check' } 'RepairPst' { 'repair' } 'Browse' { 'browse' } default { 'status' } }
     $title = switch ($Mode) {
@@ -1052,12 +1116,12 @@ if ($EventsFile) {
     $mailboxText = ($mailboxText + $(if ($Mailbox -and $Mailbox -ne 'Primary') { " ($Mailbox)" } else { '' })).Trim()
     $sourceText = switch ($Mode) {
         'Export' { $mailboxText } 'ExportPst' { $(if ($PstPath) { $PstPath } else { $StorePath }) } 'Import' { $StorePath } 'ImportPst' { $PstPath } 'ExportEml' { $(if ($PstPath) { $PstPath } elseif ($StorePath) { $StorePath } else { $mailboxText }) }
-        'ImportEml' { $EmlPath } 'CheckPst' { $Path } 'RepairPst' { $Path } 'Copy' { "$($copyText.Source) ($($copy.SourceKind))" } default { '' }
+        'ImportEml' { $EmlPath } 'CheckPst' { $Path } 'RepairPst' { $Path } 'Copy' { "$($copyText.Source) ($($copy.SourceText))" } default { '' }
     }
     $destinationText = switch ($Mode) {
         'Export' { $StorePath + $(if ($OutputPst) { ", PST files: $OutputPst" } else { '' }) } 'ExportPst' { $OutputPst } 'Import' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) }
         'ImportPst' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'ExportEml' { $EmlPath } 'ImportEml' { $mailboxText + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } 'RepairPst' { $Destination }
-        'Copy' { "$($copyText.Target) ($($copy.TargetKind))" + $(if ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } default { '' }
+        'Copy' { "$($copyText.Target) ($($copy.TargetKind))" + $(if ($copy.Both) { ', ' + (Get-CopyPartText -Short) } elseif ($TargetRoot) { ", folder $TargetRoot" } else { '' }) } default { '' }
     }
     Open-MbtEventLog -Path $EventsFile -JobId $JobId -Task $taskName -Title $title -Mode $Mode -Store $(if ($Mode -in 'Export', 'ExportPst', 'Import', 'Copy') { $StorePath }) -Source ([string]$sourceText) -Destination ([string]$destinationText) -Batch $BatchId -Period $arrivalPeriod
     $steps = switch ($Mode) {
@@ -1067,8 +1131,14 @@ if ($EventsFile) {
         }
         'ExportPst' { @(@{ Id = 'pst'; Title = 'Write the PST files' }) + $(if (-not $SkipCheck) { @(@{ Id = 'pstcheck'; Title = 'Check every PST file' }) }) }
         'Copy' {
-            @(@{ Id = 'tree'; Title = 'Read the folder tree' }, @{ Id = 'list'; Title = 'List the items you chose' }, @{ Id = 'download'; Title = 'Download the items' }, @{ Id = 'verify'; Title = 'Check the downloads' },
-                @{ Id = 'check'; Title = 'Verify the export store' }, @{ Id = 'folders'; Title = 'Create the folders' }, @{ Id = 'send'; Title = 'Send the items' }, @{ Id = 'reconcile'; Title = 'Check the uncertain items' }, @{ Id = 'final'; Title = 'Final check' })
+            $copySteps = @(@{ Id = 'tree'; Title = 'Read the folder tree' }, @{ Id = 'list'; Title = 'List the items you chose' }, @{ Id = 'download'; Title = 'Download the items' }, @{ Id = 'verify'; Title = 'Check the downloads' })
+            # a copy of the Primary and the Archive imports the store once for each part: the steps of the second part carry -2 and the name of their part
+            foreach ($copyPart in 1..@($copy.Parts).Count) {
+                $suffix = if ($copyPart -gt 1) { "-$copyPart" } else { '' }
+                $ofPart = if ($copy.Both) { ' (' + $copy.Parts[$copyPart - 1].SourceKind + ' part)' } else { '' }
+                $copySteps += @(@{ Id = "check$suffix"; Title = "Verify the export store$ofPart" }, @{ Id = "folders$suffix"; Title = "Create the folders$ofPart" }, @{ Id = "send$suffix"; Title = "Send the items$ofPart" }, @{ Id = "reconcile$suffix"; Title = "Check the uncertain items$ofPart" }, @{ Id = "final$suffix"; Title = "Final check$ofPart" })
+            }
+            $copySteps
         }
         'Import' { @(@{ Id = 'check'; Title = 'Verify the export store' }, @{ Id = 'folders'; Title = 'Create the folders' }, @{ Id = 'send'; Title = 'Send the items' }, @{ Id = 'reconcile'; Title = 'Check the uncertain items' }, @{ Id = 'final'; Title = 'Final check' }) }
         'ImportPst' { @(@{ Id = 'check'; Title = 'Check the PST files' }, @{ Id = 'folders'; Title = 'Create the folders' }, @{ Id = 'send'; Title = 'Send the items' }, @{ Id = 'reconcile'; Title = 'Check the uncertain items' }, @{ Id = 'final'; Title = 'Final check' }) }
@@ -1087,7 +1157,21 @@ $store = $null
 $exitCode = 0
 
 # App-only: the application signs in with its certificate (no user, no prompt). Nothing here goes through /me: -UserPrincipalName is the owner of the target mailbox.
+# -MailboxId given as an address (a shared mailbox, another user's) with -Mailbox Archive or AuxArchive: the address names the Primary mailbox, so the archive of that address is looked up by the address itself.
+# Only the application can read the archive of another mailbox: a delegated sign-in is refused before anything is asked.
+function Resolve-OtherArchive {
+    if (-not $MailboxId -or -not $mailboxGiven -or $Mailbox -notin 'Archive', 'AuxArchive' -or -not (Test-MbtMailboxAddress $MailboxId)) { return }
+    $address = $MailboxId.Trim()
+    if ($address -ieq $UserPrincipalName) { return }
+    if (-not $useCertificate) {
+        throw "The archive of another mailbox ($address) cannot be read with a delegated sign-in: the service lets a signed-in account read only its own archive. Sign in as the application (-AppOnly), which looks the archive up with User.Read.All, -ArchiveMailboxId or -LocationsFile. Nothing was read."
+    }
+    $script:UserPrincipalName = $address
+    $script:MailboxId = $null
+}
+
 function Connect-AppOnlyForTransfer {
+    Resolve-OtherArchive
     if ($DeviceCode) { throw '-DeviceCode is a delegated sign-in: it cannot be combined with a certificate (app-only).' }
     if (-not $UserPrincipalName) { throw 'App-only sign-in has no signed-in user: give -UserPrincipalName, the address of the target mailbox (its owner, or the shared mailbox itself). The user of the configuration is never assumed.' }
     $certName = if ($CertificateThumbprint) { "certificate $CertificateThumbprint" } else { "certificate file $CertificatePath" }
@@ -1115,6 +1199,7 @@ function Connect-AppOnlyForTransfer {
 }
 
 function Connect-ForTransfer {
+    Resolve-OtherArchive
     if ($useCertificate) { return (Connect-AppOnlyForTransfer) }
     Assert-MbtSignInSettings -TenantId $TenantId -ClientId $ClientId
     Write-MbtItem INFO ('signing in as {0} ({1}); nothing is asked when a valid sign-in is cached' -f $UserPrincipalName, $(if ($DeviceCode) { 'device code: a line "DEVICE CODE: ..." follows' } else { 'Windows sign-in window' }))
@@ -1128,7 +1213,10 @@ function Connect-ForTransfer {
     # Browse of Primary / Archive reads with the Mail API: the scope is Mail.Read. The default scope (.default) carries every permission granted to the
     # application for this user, so no other scope is asked; a token cached before the grant is renewed once with the refresh token to pick it up.
     $browseMail = ($Mode -eq 'Browse' -or $Mode -eq 'ExportEml') -and $Mailbox -ne 'AuxArchive'
-    if ($browseMail -and -not ('Mail.Read' -in $t.Scopes -or 'Mail.ReadWrite' -in $t.Scopes)) {
+    # a period of an export is the received date of the messages: the Mail API gives it, so Mail.Read is wanted there too
+    $periodMail = [bool]$arrivalPeriod -and $Mode -in 'Export', 'Copy'
+    $hasMailRead = { param($Scopes) [bool]('Mail.Read' -in $Scopes -or 'Mail.ReadWrite' -in $Scopes -or 'Mail.ReadBasic' -in $Scopes) }
+    if (($browseMail -or $periodMail) -and -not (& $hasMailRead $t.Scopes)) {
         Write-MbtItem INFO 'Mail.Read is not in the cached token: asking for a new one with the refresh token'
         Disconnect-MbtGraph
         $session = Connect-MbtGraph -TenantId $TenantId -ClientId $ClientId -UserPrincipalName $UserPrincipalName -DeviceCode:$DeviceCode -DeviceCodeFile (Join-Path $outRoot 'device-code.txt') -ForceRefresh -NoPrompt:$NoPrompt -Configuration $config
@@ -1141,7 +1229,8 @@ function Connect-ForTransfer {
     if (-not ('MailboxFolder.Read' -in $t.Scopes -or 'MailboxFolder.ReadWrite' -in $t.Scopes)) { $missing += 'MailboxFolder.Read[Write]' }
     if (-not ('MailboxItem.Read' -in $t.Scopes -or 'MailboxItem.ReadWrite' -in $t.Scopes)) { $missing += 'MailboxItem.Read[Write]' }
     if ($Mode -notin 'Browse', 'ExportEml' -and -not ('MailboxItem.ImportExport' -in $t.Scopes -or ('MailboxItem.Export' -in $t.Scopes -and $Mode -eq 'Export'))) { $missing += 'MailboxItem.ImportExport' }
-    if ($browseMail -and -not ('Mail.Read' -in $t.Scopes -or 'Mail.ReadWrite' -in $t.Scopes)) { $missing += 'Mail.Read (without it the browse shows the import-export listing: no subject, sender or body)' }
+    if ($browseMail -and -not (& $hasMailRead $t.Scopes)) { $missing += 'Mail.Read (without it the browse shows the import-export listing: no subject, sender or body)' }
+    elseif ($periodMail -and -not (& $hasMailRead $t.Scopes)) { $missing += 'Mail.Read or Mail.ReadBasic (without it the period filters on the arrival date in the mailbox, not on the received date of the messages)' }
     if ($Mode -in 'Import', 'ImportEml', 'Copy' -and -not ('MailboxFolder.ReadWrite' -in $t.Scopes)) { $missing += 'MailboxFolder.ReadWrite (creates the folders)' }
     if ($missing) { Write-MbtItem WARN ('missing in the token: ' + ($missing -join ', ') + '. An administrator grants these permissions to the application (admin consent); then sign in again.') }
     # -MailboxId given as an SMTP address / UPN (shared mailbox, another user's mailbox): resolved once to its physical id, the kind is Primary unless -Mailbox says otherwise
@@ -1221,33 +1310,61 @@ function Get-OtherArchiveLocation([string]$ExceptId) {
     }
 }
 
-# A copy, after the sign-in and before anything is read: the id of the target mailbox location, whether it can be read, and that it is not the source. A copy that would be refused at the end
+# The source id of one place of the copy: the id the command or the selection gave, else the one the mailbox location rules find (a copy of both places reads the mailbox of -UserPrincipalName by its address).
+function Resolve-CopySourceId([string]$Kind) {
+    $part = @($copy.Parts | Where-Object { $_.SourceKind -ceq $Kind })[0]
+    if ($part -and $part.SourceId) { return [string]$part.SourceId }
+    $arguments = @{ Mailbox = $Kind; TenantId = $TenantId; UserPrincipalName = $UserPrincipalName; PrimaryMailboxId = $PrimaryMailboxId; ArchiveMailboxId = $ArchiveMailboxId; LocationsFile = $LocationsFile }
+    if (-not $copy.Both) { $arguments.MailboxId = $MailboxId }
+    elseif ($Kind -eq 'Primary' -and -not $PrimaryMailboxId -and -not $LocationsFile) { $arguments.MailboxId = $UserPrincipalName }
+    return (Resolve-MbtMailboxId @arguments)
+}
+
+function Set-CopySourceId([string]$Kind, [string]$Id) {
+    foreach ($part in @($copy.Parts)) { if ($part.SourceKind -ceq $Kind) { $part.SourceId = $Id } }
+    if (-not $copy.Both) { $copy.SourceId = $Id }
+}
+
+# A copy, after the sign-in and before anything is read: the id of each target mailbox location, whether it can be read, and that it is not the source. A copy that would be refused at the end
 # (the target cannot be written, the target is the source) must be refused before hours of reading.
 function Resolve-CopyTarget {
-    $kind = $copy.TargetKind
-    $id = $copy.TargetId
-    if ($id) {
-        if (-not $useCertificate -and (Test-OtherMailbox $id)) {
-            throw "$id is not known as a mailbox of $UserPrincipalName. A delegated sign-in writes into the mailbox of the signed-in account only: give -TargetMailbox Primary or Archive (and -ArchiveMailboxId for the archive) instead of an id, or sign in as the application (-AppOnly). Nothing was read."
+    $resolved = @{}
+    foreach ($part in @($copy.Parts)) {
+        $kind = $part.TargetKind
+        if (-not $resolved.ContainsKey($kind)) {
+            $id = $part.TargetId
+            if ($id) {
+                if (-not $useCertificate -and (Test-OtherMailbox $id)) {
+                    throw "$id is not known as a mailbox of $UserPrincipalName. A delegated sign-in writes into the mailbox of the signed-in account only: give -TargetMailbox Primary or Archive (and -ArchiveMailboxId for the archive) instead of an id, or sign in as the application (-AppOnly). Nothing was read."
+                }
+            }
+            else {
+                $address = $copy.TargetAddress
+                $arguments = @{ Mailbox = $kind; TenantId = $TenantId; UserPrincipalName = $address }
+                if ($address -ieq $UserPrincipalName) { $arguments.PrimaryMailboxId = $PrimaryMailboxId; $arguments.ArchiveMailboxId = $ArchiveMailboxId; $arguments.LocationsFile = $LocationsFile }
+                elseif ($kind -eq 'Primary') { $arguments.MailboxId = $address }
+                try { $id = Resolve-MbtMailboxId @arguments }
+                catch {
+                    if ($kind -ne 'Archive') { throw }
+                    throw "$($_.Exception.Message) For the target give its archive id with -TargetArchiveMailboxId, or send the Archive part into the Primary mailbox of the target (-TargetLayout Primary). Nothing was read."
+                }
+            }
+            try { $folders = @((Get-MbtSession).Api.GetFolderTree($id)) }
+            catch { throw "The $kind mailbox $id cannot be read, so nothing can be written into it: $($_.Exception.Message). Nothing was read from the source." }
+            Write-MbtItem OK "target: the $kind mailbox $(if ($copy.TargetAddress) { $copy.TargetAddress } else { $id }) ($(Format-MbtNumber $folders.Count) folders) can be reached"
+            $resolved[$kind] = $id
         }
+        $part.TargetId = $resolved[$kind]
     }
-    else {
-        $address = $copy.TargetAddress
-        $arguments = @{ Mailbox = $kind; TenantId = $TenantId; UserPrincipalName = $address }
-        if ($address -ieq $UserPrincipalName) { $arguments.PrimaryMailboxId = $PrimaryMailboxId; $arguments.ArchiveMailboxId = $ArchiveMailboxId; $arguments.LocationsFile = $LocationsFile }
-        elseif ($kind -eq 'Primary') { $arguments.MailboxId = $address }
-        $id = Resolve-MbtMailboxId @arguments
-    }
-    $copy.TargetId = $id
-    try { $folders = @((Get-MbtSession).Api.GetFolderTree($id)) }
-    catch { throw "The $kind mailbox $id cannot be read, so nothing can be written into it: $($_.Exception.Message). Nothing was read from the source." }
-    Write-MbtItem OK "target: the $kind mailbox $(if ($copy.TargetAddress) { $copy.TargetAddress } else { $id }) ($(Format-MbtNumber $folders.Count) folders) can be reached"
+    if (-not $copy.Both) { $copy.TargetId = @($copy.Parts)[0].TargetId }
 }
 
 # The source of a copy is never the target.
 function Assert-CopySource([string]$SourceId) {
-    if ($SourceId -ieq $copy.TargetId) {
-        throw "The source and the target are the same mailbox location ($($copy.TargetKind) mailbox $SourceId): a copy writes into another location. Choose another -TargetMailbox, another -TargetMailboxId, or another source. Nothing was read."
+    foreach ($part in @($copy.Parts)) {
+        if ($part.TargetId -and $SourceId -ieq $part.TargetId) {
+            throw "The source and the target are the same mailbox location ($($part.TargetKind) mailbox $SourceId): a copy writes into another location. Choose another $(if ($copy.Both) { '-TargetLayout, ' })-TargetMailbox, another -TargetMailboxId, or another source. Nothing was read."
+        }
     }
 }
 
@@ -1256,10 +1373,11 @@ function Write-CopyPlan {
     param([long]$Items, [double]$Bytes, [bool]$SizeUnknown)
     $what = if ($SelectionFile) { "your selection ($SelectionFile)" } elseif ($Folder) { "the folder $Folder and the folders below it" } else { 'the whole mailbox' }
     $arguments = @{
-        Source = $(if ($copy.SourceAddress) { $copy.SourceAddress } else { $copy.SourceId }); SourceKind = $copy.SourceKind; What = $what
-        Target = $(if ($copy.TargetAddress) { $copy.TargetAddress } else { $copy.TargetId }); TargetKind = $copy.TargetKind; TargetRoot = $TargetRoot; MappingFile = $MappingFile
+        Source = $(if ($copy.SourceAddress) { $copy.SourceAddress } else { @($copy.Parts)[0].SourceId }); SourceKind = $copy.SourceText; What = $what
+        Target = $(if ($copy.TargetAddress) { $copy.TargetAddress } else { @($copy.Parts)[0].TargetId }); TargetKind = $copy.TargetKind; TargetRoot = $TargetRoot; MappingFile = $MappingFile
         StorePath = $StorePath; Items = $Items; Bytes = $Bytes; SizeUnknown = $SizeUnknown; AtMost = [bool]$arrivalPeriod; AppOnly = [bool]$useCertificate; SignedIn = [string]$UserPrincipalName
     }
+    if ($copy.Both) { $arguments.Parts = @($copy.Parts | ForEach-Object { [pscustomobject]@{ SourceKind = $_.SourceKind; TargetKind = $_.TargetKind; Root = $_.Root } }) }
     if ($arrivalPeriod) { $arguments.Period = $arrivalPeriod.Describe() }
     Show-MbtCopyPlan @arguments
     Write-MbtPeriodPlanNote
@@ -1269,26 +1387,27 @@ function Write-CopyPlan {
 # -Mode Copy, before the export half reads anything: the source is not the target, the store is the store of this copy, and an export half that was finished earlier is not done again
 # (-Force reads the source again: what changed or arrived since is taken, and only that is imported). Returns $true when the export half is already complete.
 function Test-CopyExportDone {
-    if ($copy.SourceId) { $sourceId = $copy.SourceId }
-    else {
-        $sourceId = Resolve-MbtMailboxId -Mailbox $copy.SourceKind -TenantId $TenantId -UserPrincipalName $UserPrincipalName -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId -MailboxId $MailboxId -LocationsFile $LocationsFile
-        $copy.SourceId = $sourceId
+    foreach ($part in @($copy.Parts)) {
+        $sourceId = Resolve-CopySourceId $part.SourceKind
+        Set-CopySourceId $part.SourceKind $sourceId
+        Assert-CopySource $sourceId
     }
-    Assert-CopySource $sourceId
     if (-not $script:store) { $script:store = Open-MbtExportStore -Path $StorePath -Name 'export' -Source "$UserPrincipalName ($TenantId)" }
     Set-MbtCopyStoreKey -Store $store -Key (Get-CopyStoreKey) -StorePath $StorePath
     $done = $store.GetExportOption('copy.export')
     if (-not $done -or $Force) { return $false }
-    $exported = [long](@($store.GetItemStats($sourceId) | Where-Object { [string]$_.State -eq 'Exported' } | ForEach-Object { $_.Count } | Measure-Object -Sum).Sum)
+    $stats = @(foreach ($part in @($copy.Parts)) { $store.GetItemStats($part.SourceId) })
+    $exported = [long](@($stats | Where-Object { [string]$_.State -eq 'Exported' } | ForEach-Object { $_.Count } | Measure-Object -Sum).Sum)
     Write-MbtItem OK "the export half is already complete (finished $done, $(Format-MbtNumber $exported) items in the store): it is not read again. -Force reads the source again."
     foreach ($id in 'tree', 'list', 'download', 'verify') { Write-MbtJobStep -Id $id -State done -Msg 'Already done: the export store of this copy is complete.' }
     $script:counts = @{ done = $exported; failed = 0L; deferred = 0L; bytes = 0L }
     return $true
 }
 
-# The key that says a store is the store of this copy: what is read (the choice) and from which mailbox location.
+# The key that says a store is the store of this copy: what is read (the choice) and from which mailbox locations.
 function Get-CopyStoreKey {
-    return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($copy.ChoiceKey + '|' + $copy.SourceId.ToLowerInvariant())))).Substring(0, 16).ToLowerInvariant())
+    $sources = (@($copy.Parts | ForEach-Object { $_.SourceId.ToLowerInvariant() }) -join '+')
+    return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($copy.ChoiceKey + '|' + $sources)))).Substring(0, 16).ToLowerInvariant())
 }
 
 # After the export half of a copy: its counts under their own names, so that the import half and the end of the job add theirs.
@@ -1296,16 +1415,19 @@ function Convert-CopyExportCounts {
     $c = $script:counts
     $kept = @{ exported = [long]$c['done']; exportFailed = [long]$c['failed']; failed = [long]$c['failed']; deferred = [long]$c['deferred']; bytes = [long]$c['bytes']; done = 0L }
     foreach ($k in 'kept', 'outsidePeriod', 'withoutDate') { if ($c.ContainsKey($k)) { $kept[$k] = [long]$c[$k] } }
+    foreach ($k in 'periodDate', 'periodNote') { if ($c.ContainsKey($k)) { $kept[$k] = [string]$c[$k] } }
     $script:counts = $kept
 }
 
 # What to do next after a copy, by its exit code.
 function Get-CopyNext([int]$ExitCode) {
-    $target = "$($copy.TargetKind) mailbox $(if ($copy.TargetAddress) { $copy.TargetAddress } else { $copy.TargetId })"
+    $targetName = if ($copy.TargetAddress) { $copy.TargetAddress } else { @($copy.Parts)[0].TargetId }
+    $target = "$($copy.TargetKind) mailbox $targetName"
+    $where = if ($copy.Both) { "the folders named in the plan ($(Get-CopyPartText -Short))" } elseif ($TargetRoot) { "the folder '$TargetRoot'" } else { 'the folders of the same names' }
     if ($dryRun) { return @('Run the same command without -WhatIf to start the copy. Nothing was read or written by this plan.') }
     switch ($ExitCode) {
         0 {
-            return @("Open the $target in Outlook and look in $(if ($TargetRoot) { "the folder '$TargetRoot'" } else { 'the folders of the same names' }): everything that was there before is unchanged.",
+            return @("Open the $target in Outlook and look in ${where}: everything that was there before is unchanged.",
                 "The export store $StorePath is kept: it is the proof of what was read and the resume point. Open it in the console, or import it again with -Mode Import (nothing is created twice). Delete the folder when you no longer need it.",
                 'Running the same command again adds nothing: an item that was copied is never created twice. -Force reads the source again to take what arrived since.')
         }
@@ -1315,20 +1437,25 @@ function Get-CopyNext([int]$ExitCode) {
     }
 }
 
-# -Mode Copy, between the two halves: from here the script speaks as an import. The export store is the source (its Primary or Archive), the target location is the mailbox.
-function Enter-CopyImport {
+# -Mode Copy, between the parts: from here the script speaks as an import. The export store is the source (its Primary or Archive), the target location is the mailbox, the folder is the one of this part.
+function Enter-CopyImport([int]$Index) {
+    $part = @($copy.Parts)[$Index]
     $script:storeExists = $true
-    $script:SourceMailbox = [string]$copy.SourceKind
-    $script:Mailbox = [string]$copy.TargetKind; $script:mailboxGiven = $true
-    $script:MailboxId = [string]$copy.TargetId
-    if (-not $boundParameters.ContainsKey('JobName')) { $script:JobName = Get-MbtCopyJobName -Target $copy.TargetId -TargetKind $copy.TargetKind -StorePath $StorePath -TargetRoot $TargetRoot -SourceKind $copy.SourceKind }
+    $script:SourceMailbox = [string]$part.SourceKind
+    $script:Mailbox = [string]$part.TargetKind; $script:mailboxGiven = $true
+    $script:MailboxId = [string]$part.TargetId
+    $script:TargetRoot = [string]$part.Root
+    if ($boundParameters.ContainsKey('JobName')) { if ($copy.Both) { $script:JobName = "$($boundParameters['JobName'])-$($part.SourceKind.ToLowerInvariant())" } }
+    else { $script:JobName = Get-MbtCopyJobName -Target $part.TargetId -TargetKind $part.TargetKind -StorePath $StorePath -TargetRoot $part.Root -SourceKind $part.SourceKind }
 }
-
 # What a plan (-WhatIf) of an export with a period says about its numbers: the folder totals are the most the export can take; the period is applied while the items are listed.
 function Write-MbtPeriodPlanNote {
     if (-not $arrivalPeriod) { return }
-    $note = "period ($($arrivalPeriod.Describe())): the numbers above are the totals of the folders, the most this export can take. The period is applied while the items are listed during the export; the end of the export gives the exact numbers (items kept, items outside the period)."
-    Write-MbtItem INFO $note
+    $available = Get-MbtReceivedDateAvailability
+    $dateText = if ($available.Available) { 'on the received date of the messages, asked to the Mail API folder by folder (an item that is not a message, such as a calendar item or a contact, and a folder the Mail API refuses use the arrival date in the mailbox, and the end of the export says which)' }
+        else { "on the arrival date in the mailbox, not the received date ($($available.Reason))" }
+    $note = "period ($($arrivalPeriod.Describe())): the numbers above are the totals of the folders, the most this export can take. The period is applied while the items are listed during the export, $dateText; the end of the export gives the exact numbers (items kept, items outside the period)."
+    Write-MbtItem $(if ($available.Available) { 'INFO' } else { 'WARN' }) $note
     Write-MbtEvent info ([ordered]@{ msg = $note })
 }
 
@@ -1376,6 +1503,11 @@ function Invoke-BatchRun {
     $storedPass = if ($stored.Contains('Pass') -and $stored.Pass -is [System.Collections.IDictionary]) { $stored.Pass } else { @{} }
     $pass = @{}
     foreach ($k in $storedPass.Keys) { $pass[[string]$k] = $storedPass[$k] }
+    # the bounds of a batch are read under either name: -ReceivedFrom / -ReceivedTo, or the aliases -ArrivedFrom / -ArrivedTo
+    foreach ($pair in @(@('ArrivedFrom', 'ReceivedFrom'), @('ArrivedTo', 'ReceivedTo'))) {
+        if ($pass.Contains($pair[0])) { if (-not $pass.Contains($pair[1])) { $pass[$pair[1]] = $pass[$pair[0]] }; $pass.Remove($pair[0]) }
+        if ($storedPass.Contains($pair[0]) -and -not $storedPass.Contains($pair[1])) { $storedPass[$pair[1]] = $storedPass[$pair[0]] }
+    }
     $valueOptions = switch ($Mode) {
         'Export' { 'Concurrency', 'MaxAttempts', 'RetryWaitSeconds', 'NotReadyTrip', 'BatchItems', 'BatchMiB', 'IntervalSeconds', 'Folder', 'PstMaxSizeGB', 'PstMaxSizeMiB', 'ConfigPath' }
         'Import' { 'Concurrency', 'MaxAttempts', 'RetryWaitSeconds', 'IntervalSeconds', 'Folder', 'ConfigPath', 'ReconcileDelaySeconds', 'ReconcileRounds' }
@@ -1398,15 +1530,15 @@ function Invoke-BatchRun {
     }
     if ($Mode -ne 'Export' -and $boundParameters.ContainsKey('MappingFile') -and $Mode -ne 'ImportEml') { $pass['MappingFile'] = [IO.Path]::GetFullPath($MappingFile) }
     # the period applies to every mailbox of the batch: the children get the bounds as written (ISO text), the same ones again when the batch is continued
-    foreach ($n in 'ArrivedFrom', 'ArrivedTo') {
+    foreach ($n in 'ReceivedFrom', 'ReceivedTo') {
         if ($boundParameters.ContainsKey($n)) {
             $v = Get-Variable -Name $n -ValueOnly
             $pass[$n] = if ($v -is [datetime]) { $v.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff", [Globalization.CultureInfo]::InvariantCulture) } elseif ($null -eq $v) { '' } else { ([string]$v).Trim() }
         }
     }
-    if ($batch -and ($boundParameters.ContainsKey('ArrivedFrom') -or $boundParameters.ContainsKey('ArrivedTo'))) {
-        $wasPeriod = ConvertTo-MbtArrivalPeriod -From $storedPass['ArrivedFrom'] -To $storedPass['ArrivedTo']
-        $nowPeriod = ConvertTo-MbtArrivalPeriod -From $pass['ArrivedFrom'] -To $pass['ArrivedTo']
+    if ($batch -and ($boundParameters.ContainsKey('ReceivedFrom') -or $boundParameters.ContainsKey('ReceivedTo'))) {
+        $wasPeriod = ConvertTo-MbtArrivalPeriod -From $storedPass['ReceivedFrom'] -To $storedPass['ReceivedTo']
+        $nowPeriod = ConvertTo-MbtArrivalPeriod -From $pass['ReceivedFrom'] -To $pass['ReceivedTo']
         if ([MailboxTransfer.ArrivalPeriod]::KeyOf($wasPeriod) -ne [MailboxTransfer.ArrivalPeriod]::KeyOf($nowPeriod)) {
             & $stop @("The batch $id was started with the period '$(if ($wasPeriod) { $wasPeriod.Describe() } else { 'all dates' })', this run asks '$(if ($nowPeriod) { $nowPeriod.Describe() } else { 'all dates' })'. Continuing it would mix two periods in the stores of the batch. Give the same period, or another -BatchName."); return
         }
@@ -1441,7 +1573,7 @@ function Invoke-BatchRun {
             if ($Folder) { $choice.Folder = $Folder }
             if ($arrivalPeriod) { $choice.Period = $arrivalPeriod }
             if ($RecoverableItemsFolders) { $choice.RecoverableItemsFolders = $RecoverableItemsFolders }
-            Read-MbtCopyBatchCsv -Path $MailboxCsv -DefaultSourceLocation $Mailbox -DefaultTargetLocation $TargetMailbox -DefaultTargetRoot $TargetRoot -StoreBase $storeBase -Choice $choice -SignedInUser $signInUser -AppOnly:$appOnly
+            Read-MbtCopyBatchCsv -Path $MailboxCsv -DefaultSourceLocation $Mailbox -DefaultTargetLocation $TargetMailbox -DefaultTargetLayout $TargetLayout -DefaultTargetRoot $TargetRoot -DefaultTargetArchiveRoot $TargetArchiveRoot -StoreBase $storeBase -Choice $choice -SignedInUser $signInUser -AppOnly:$appOnly
         }
         else { Read-MbtImportBatchCsv -Path $MailboxCsv -Mode $Mode -DefaultLocation $Mailbox -DefaultTargetRoot $TargetRoot -DefaultSourceMailbox $SourceMailbox -MergeWellKnown:$MergeWellKnown -SignedInUser $signInUser -AppOnly:$appOnly -WorkFolder $work }
         if ($csv.Problems.Count) { & $stop $csv.Problems; return }
@@ -1522,10 +1654,14 @@ function Invoke-BatchRun {
 
 try {
     # -Mode Copy is two jobs in one process: the export of the source into the store, then the import of that store into the target
-    $phases = if ($Mode -eq 'Copy' -and -not $batchMode) { @('Export', 'Import') } elseif ($Mode -eq 'Copy') { @('Export') } else { @($Mode) }
+    $phases = if ($Mode -eq 'Copy' -and -not $batchMode) { @('Export') + @(1..@($copy.Parts).Count | ForEach-Object { if ($_ -eq 1) { 'Import' } else { "Import$_" } }) } elseif ($Mode -eq 'Copy') { @('Export') } else { @($Mode) }
     foreach ($phase in $phases) {
+        # the second import of a copy of two places is the same phase for the rest of the script, for another part
+        $partIndex = 0
+        if ($phase -match '^Import(\d+)$') { $partIndex = [int]$Matches[1] - 1; $phase = 'Import' }
         $script:phase = $phase
-        if ($Mode -eq 'Copy' -and -not $batchMode) { Set-MbtJobPhase -Phase $phase.ToLowerInvariant(); if ($phase -eq 'Import') { Enter-CopyImport } }
+        $script:copyPartComplete = $false
+        if ($Mode -eq 'Copy' -and -not $batchMode) { Set-MbtJobPhase -Phase $phase.ToLowerInvariant() -Part ($partIndex + 1); if ($phase -eq 'Import') { Enter-CopyImport $partIndex } }
         switch ($phase) {
             'Status' {
                 Write-MbtItem OK 'the C# engine compiles'
@@ -1604,7 +1740,7 @@ try {
                         $selectionPlan = Resolve-MbtBrowsePlan -Selection $selection -AlsoSearch $also -RecoverableItemsFolders $RecoverableItemsFolders
                         Show-MbtExportPlan -Plan $selectionPlan -AtMost:([bool]$arrivalPeriod)
                         if (-not $selectionPlan.IsComplete) { throw "-SelectionFile: $($selectionPlan.Problems.Count) problem(s), nothing was exported. Remove those entries from the selection (or select them again) and run again." }
-                        if ($Mode -eq 'Copy') { Assert-CopySource $selectedId; $copy.SourceId = $selectedId }
+                        if ($Mode -eq 'Copy') { Assert-CopySource $selectedId; Set-CopySourceId ([string]$selection.Kind) $selectedId }
                         $units += [pscustomobject]@{ Plan = $selectionPlan; Kind = [string]$selection.Kind; Id = $selectedId }
                     }
                     Stop-MbtPhaseProgress
@@ -1633,16 +1769,16 @@ try {
                     $targets = [System.Collections.Generic.List[object]]::new()
                     foreach ($kind in $(if ($asked -eq 'All') { @('Primary', 'Archive') } else { @($asked) })) {
                         try {
-                            $id = Resolve-MbtMailboxId -Mailbox $kind -TenantId $TenantId -UserPrincipalName $UserPrincipalName -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId `
-                                -MailboxId $(if ($asked -ne 'All') { $MailboxId }) -Store $store -LocationsFile $LocationsFile
-                            if ($Mode -eq 'Copy') { Assert-CopySource $id; $copy.SourceId = $id }
+                            $id = if ($Mode -eq 'Copy' -and $copy.Both) { Resolve-CopySourceId $kind }
+                            else { Resolve-MbtMailboxId -Mailbox $kind -TenantId $TenantId -UserPrincipalName $UserPrincipalName -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId -MailboxId $(if ($asked -ne 'All') { $MailboxId }) -Store $store -LocationsFile $LocationsFile }
+                            if ($Mode -eq 'Copy') { Assert-CopySource $id; Set-CopySourceId $kind $id }
                             $targets.Add([pscustomobject]@{ Kind = $kind; Id = $id })
                         } catch {
                             if ($asked -ne 'All') { throw }
                             Write-MbtItem WARN "the $kind mailbox cannot be planned: $($_.Exception.Message)"
                         }
                     }
-                    if ($asked -eq 'All') {
+                    if ($asked -eq 'All' -and $Mode -ne 'Copy') {
                         foreach ($a in @(Get-MbtMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $TenantId -Store $store -LocationsFile $LocationsFile -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId -SkipGraph -NoSave -Verbose:$false | Where-Object Kind -EQ 'AuxArchive')) {
                             $targets.Add([pscustomobject]@{ Kind = 'AuxArchive'; Id = $a.MailboxId })
                         }
@@ -1677,6 +1813,7 @@ try {
                 $failures = 0
                 $exported = @{}
                 $script:resumable = $false
+                $script:periodResults = @()
                 function Invoke-OneExport([string]$Kind, [string]$Id) {
                     Stop-MbtPhaseProgress
                     # a plan names folders of several mailboxes when a folder moved to an auxiliary archive: each mailbox exports its own part
@@ -1691,6 +1828,10 @@ try {
                         $script:counts['kept'] = [long]$script:counts['kept'] + [long]$r.Result.Inventoried
                         $script:counts['outsidePeriod'] = [long]$script:counts['outsidePeriod'] + [long]$r.Result.ItemsOutsidePeriod
                         $script:counts['withoutDate'] = [long]$script:counts['withoutDate'] + [long]$r.Result.ItemsWithoutDate
+                        $script:periodResults += @($r.Result)
+                        $periodDateNote = Get-MbtPeriodDateNote -Result $script:periodResults
+                        $script:counts['periodDate'] = [string]$periodDateNote.Date
+                        $script:counts['periodNote'] = [string]$periodDateNote.Text
                     }
                     $script:counts['done'] = [long]$script:counts['done'] + [long]$r.Result.Exported
                     $script:counts['failed'] = [long]$script:counts['failed'] + [long]$r.Result.Failed
@@ -1708,8 +1849,8 @@ try {
                 $kinds = if ($asked -eq 'All') { @('Primary', 'Archive') } else { @($asked) }
                 foreach ($kind in $kinds) {
                     try {
-                        $id = Resolve-MbtMailboxId -Mailbox $kind -TenantId $TenantId -UserPrincipalName $UserPrincipalName -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId `
-                            -MailboxId $(if ($asked -ne 'All') { $MailboxId }) -Store $store -LocationsFile $LocationsFile
+                        $id = if ($Mode -eq 'Copy' -and $copy.Both) { Resolve-CopySourceId $kind }
+                        else { Resolve-MbtMailboxId -Mailbox $kind -TenantId $TenantId -UserPrincipalName $UserPrincipalName -PrimaryMailboxId $PrimaryMailboxId -ArchiveMailboxId $ArchiveMailboxId -MailboxId $(if ($asked -ne 'All') { $MailboxId }) -Store $store -LocationsFile $LocationsFile }
                         if ($Mode -eq 'Copy') { Assert-CopySource $id }
                         Invoke-OneExport $kind $id
                     } catch {
@@ -1718,7 +1859,7 @@ try {
                         Write-MbtItem FAIL "export of the $kind mailbox failed: $($_.Exception.Message)"
                     }
                 }
-                if ($asked -eq 'All') {
+                if ($asked -eq 'All' -and $Mode -ne 'Copy') {
                     # the auxiliary archives learned while the main archive was exported are exported by themselves too (their own tree; folders the
                     # main archive already records are not recorded twice); one that cannot be listed is reported and does not stop the others
                     $aux = @(Get-MbtMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $TenantId -Store $store -SkipGraph -NoSave -Verbose:$false | Where-Object Kind -EQ 'AuxArchive')
@@ -1935,7 +2076,7 @@ try {
                     $script:counts.kept = [long]($r.Exported + $r.Resumed + $r.Skipped + $r.Failed)
                     $script:counts.outsidePeriod = [long]$r.OutsidePeriod
                     $script:counts.withoutDate = [long]$r.WithoutDate
-                    Write-MbtItem INFO ("period ({0}): {1} message(s) outside the period left out (not an error){2}" -f $arrivalPeriod.Describe(), (Format-MbtNumber $r.OutsidePeriod), $(if ($r.WithoutDate) { "; $(Format-MbtNumber $r.WithoutDate) without a date were kept" }))
+                    Write-MbtItem INFO ("period ({0}): {1} message(s) outside the period left out (not an error){2}; date used: the received date of the messages" -f $arrivalPeriod.Describe(), (Format-MbtNumber $r.OutsidePeriod), $(if ($r.WithoutDate) { "; $(Format-MbtNumber $r.WithoutDate) without a date were kept" }))
                 }
                 if ($r.Failed -gt 0 -or $r.Cancelled) { $exitCode = 2 }
                 Write-MbtJobStep -Id export -State $(if ($exitCode -eq 0) { 'done' } else { 'running' }) -Done ($r.Exported + $r.Resumed + $r.Skipped + $r.Failed) -Bytes $r.Bytes -Msg $(if ($r.Cancelled) { 'stopped' })
@@ -2046,11 +2187,14 @@ try {
                     $jr = $r.Result
                     $importCounts = @{ done = [long]$jr.JobDone; failed = [long]$jr.JobFailed; unknown = [long]$jr.JobUnknown; pending = [long]$jr.JobPending; total = [long]$jr.JobTotal; foldersCreated = [long]$jr.FoldersCreated }
                     if ($Mode -eq 'Copy') {
-                        # both halves in the counts of the job: what the export half did stays, its failed items count as failed
+                        # every half and every part in the counts of the job: what the export half did stays, its failed items count as failed, the second part adds to the first
+                        if ($partIndex -gt 0) { foreach ($k in 'done', 'unknown', 'pending', 'total', 'foldersCreated') { $importCounts[$k] = [long]$importCounts[$k] + [long]$script:copyPartCounts[$k] } }
                         foreach ($k in $script:counts.Keys) { if (-not $importCounts.ContainsKey($k)) { $importCounts[$k] = $script:counts[$k] } }
-                        $importCounts.failed = [long]$jr.JobFailed + [long]$script:counts['exportFailed']
+                        $importCounts.failed = [long]$jr.JobFailed + [long]$script:counts['exportFailed'] + $(if ($partIndex -gt 0) { [long]$script:copyPartCounts['failed'] } else { 0L })
+                        $script:copyPartCounts = @{ failed = [long]$importCounts.failed - [long]$script:counts['exportFailed']; done = [long]$importCounts.done; unknown = [long]$importCounts.unknown; pending = [long]$importCounts.pending; total = [long]$importCounts.total; foldersCreated = [long]$importCounts.foldersCreated }
                     }
                     $script:counts = $importCounts
+                    $script:copyPartComplete = [bool]$jr.JobComplete
                     if (-not $jr.JobComplete) {
                         $exitCode = if ($jr.JobUnknown -gt 0) { 3 } else { 2 }
                         Write-MbtItem WARN ("exit code ${exitCode}: " + $jr.JobSummary())
@@ -2077,6 +2221,8 @@ try {
             if ($exitCode -eq 0 -and -not $script:resumable -and -not $script:copyExportStopped -and -not (Test-MbtStopRequested)) { [void]$store.SetExportOption('copy.export', [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm') + ' UTC', $true) }
             Convert-CopyExportCounts
         }
+        # the second part of a copy of two places follows a first part that is complete: a stop, a failed item or an uncertain one waits for the next run
+        if ($Mode -eq 'Copy' -and -not $batchMode -and $phase -eq 'Import' -and $partIndex -lt @($copy.Parts).Count - 1 -and (-not $script:copyPartComplete -or (Test-MbtStopRequested))) { break }
         # the import half of a copy follows an export half that finished its work, not a plan, an error or a stop
         if ($Mode -eq 'Copy' -and -not $batchMode -and $phase -eq 'Export' -and ($dryRun -or $exitCode -eq 1 -or $script:copyExportStopped -or (Test-MbtStopRequested))) { break }
     }
@@ -2113,8 +2259,8 @@ exit $exitCode
 # SIG # Begin signature block
 # MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCSTQG/9q+q4WV1
-# 19driqjm10TSA+MuMZtTbNeNRRQv46CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDKd2jaTpuhOmuP
+# FBhoicq/mwyuH3NAm6OR16HJDBB3l6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -2191,23 +2337,23 @@ exit $exitCode
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDQidxVaVH0
-# OTL0zYOkS3NbYJ0wsY2Hhbzy0s4mezQtBjANBgkqhkiG9w0BAQEFAASCAgCW8anb
-# 57RB49jwN6njB1yMTHd5owCfQQdfb9qBKuQcV2zVHj1sbJg+ovmTVFqGfjgEsJYd
-# SY6Qr4TUvnRmGMqM7KRLGvlpQ89p3M6Ub7Ab80TLrnxVtqu3HNcqfJWldmWSJJ41
-# ezo0dsuTQg301XAqIaz4R7PEaV6SiGCyIbGt+osczI335Ih8DFIhRKiThTcSn2ly
-# GhHyNs8BSU/bt+73yj3q6NVFbea1VVqHr26XGL8KwpJ8e1upu7U9pkFqMQO7Jtlr
-# YQdAuyRRb8+xltIuUA6p0OpsWOcB1T8V4rKEw3RZwcakEmFqc3iRyVzdcPR0b5QH
-# rxr35koWXagTIoHXUG+FzSgXvJU3p5GvJ6T44LmWLaAw4f7bnQNcEBUrGUHIOjI4
-# HoE7BFKpO61hOg7xEqAa/WDBTxfL8+SycHQ1vyQcfey2SkGXWi3sZcKTNOHZX52Z
-# irFsl2H8FeUi6FozvU5Kh0p98VRtFQlB7cMs/QB20O1e76ypBVPRLUmBe335TGPD
-# PodRxZmkZitufLQf+DxThaWubU22vJgvJ7tovq7Ynajx2oCe/ojUlhBIl/O/Yu4f
-# TpUHHNDeTZtTQXZJFqOil94Vs7oywVNSnfiFbu8arcWFcaG8S7VLg/8pbuKDg+Yq
-# bIBXqD3rowGMmcmkdTIHFRg+lf/P7Katy1tccqGCFM4wghTKBgorBgEEAYI3AwMB
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCD69nwY06o3
+# G6yHQ8wro0ccGSjKdxAsjWboqI80ihcCNTANBgkqhkiG9w0BAQEFAASCAgAaDNud
+# T8ABX+EovdghKy9iyZgVm5gmINCUgQWkpqUyLbEbB3t4U0hZhtx7OGCzcUYeUShW
+# 6DYYdiG1mYA1/LT7P4xrxMcrdsipgaYsgmc76o+kxt5MsBMJFxol++AhSPeGdepu
+# Jbk6PuD+2ZY83xYGCabb5ED0NevPJvtL0MZHjb7ZpqYLN5FXesRz2Mf6IvZ2XiPl
+# 3yt6mbtaSWxZ57w071is1RIN7eKGd301QFUCvzL+sxi8G1T1dxH+9BTfEbWqY1sC
+# xgXSL0tmI8CxlfnYhdPGC39pcV94pzWao7jeDOzfoYNf00s2YUdpmP9dFegz0D8Z
+# XUzlpqFYi5SQt3xPW6d7I72K178Teh+/ZsmUuwj+Xi+z8YnTGzk4sJjmxfnYf2qF
+# 7gKX61c9630awY11qhl4Ad+TtGo6P3+eEK0lGPJO9ZbFLUoC1O+zC25ykkwRJwAY
+# azCMC/D7ZUlQdMUvxfmIvwafcnobo/HTtWd4GvBzHVWfBwE+vMsUjZ3TrWGIHsIL
+# hkjHyj0qWuCaZlXkFBDxYSgrbgPho77Ckj4kBC3As9m9jJ8YRY1q1UqLJZeWNPBd
+# M4iiHUwM3TVEQ+dA+yDtUeYg6cpNie/p887QXt6d/NAxOiwN4FPI9fLKij+ZsngX
+# pHKKEeFEmpNjxJReNBf7z0bJ+wgkbBI5M9SqFKGCFM4wghTKBgorBgEEAYI3AwMB
 # MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIItoe6vwElTQaz4bDKA9zq9VZe1RNguj9zoTlnWQ9s8tAghVQ7xIDuJP
-# GhgPMjAyNjExMjUxNTM2NDhaMAMCAQECEFFHImAAuLS1IIV8dJeXaR+gghGnMIIE
+# BAIBBQAEIK6tba0xv1+EjlUmmeZJyPY7idgXiD6hGXyRxKgwlvVLAggPE4TyWC5e
+# dRgPMjAyNjExMjcwNTI2NDNaMAMCAQECECFAMWoGtql22tt6gbgZaU2gghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -2306,13 +2452,13 @@ exit $exitCode
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzY0OFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIL/P
-# PHmdxlq7hni7gTmSCZ/bqGaP/fX1wnBMoK5XkKC5MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjY0M1owKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIJib
+# elvCd6lxb6R2ZAIWk3M6BO9+t+ibYSU9Vd/ECeKNMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEA6ztMwK+1tWhFta3UsUc7jaPMF7ljTgrthfhzHXxV+fQCIGGo
-# n44KmWgeY5awHe7fYCBbV7+XhknSiMThtJhohupA
+# zj0EAwIERzBFAiEAzKj499N7XWtD4YMZVKTy/WoacMXEl7e8xBAtEQGNTKECIGEi
+# JlcUJTo/9jb+Kbs8PzXmwDVs5TdA7gLTR4dXX3v7
 # SIG # End signature block

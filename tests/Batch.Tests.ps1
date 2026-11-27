@@ -190,14 +190,14 @@ Describe 'The arguments of a mailbox' {
         ($sel -join ' ') | Should -Not -Match '-Mailbox '
     }
     It 'gives the period of the batch to the export of every mailbox, as it was written' {
-        $a = Get-MbtBatchChildArgument -Row (New-Row 'adele@contoso.com') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31T18:30' } } -Job $script:Job -BatchId 'W'
-        ($a -join ' ') | Should -Match ' -ArrivedFrom 2026-03-01 -ArrivedTo 2026-03-31T18:30 '
-        $open = Get-MbtBatchChildArgument -Row (New-Row 'adele@contoso.com') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '' } } -Job $script:Job -BatchId 'W'
-        ($open -join ' ') | Should -Match ' -ArrivedFrom 2026-03-01 '
-        ($open -join ' ') | Should -Not -Match 'ArrivedTo'
+        $a = Get-MbtBatchChildArgument -Row (New-Row 'adele@contoso.com') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31T18:30' } } -Job $script:Job -BatchId 'W'
+        ($a -join ' ') | Should -Match ' -ReceivedFrom 2026-03-01 -ReceivedTo 2026-03-31T18:30 '
+        $open = Get-MbtBatchChildArgument -Row (New-Row 'adele@contoso.com') -Option @{ AppOnly = $true; SignInUser = ''; Pass = @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '' } } -Job $script:Job -BatchId 'W'
+        ($open -join ' ') | Should -Match ' -ReceivedFrom 2026-03-01 '
+        ($open -join ' ') | Should -Not -Match 'ReceivedTo'
         $declared = (Get-Command $script:Entry).Parameters.Keys
-        $declared | Should -Contain 'ArrivedFrom'
-        $declared | Should -Contain 'ArrivedTo'
+        $declared | Should -Contain 'ReceivedFrom'
+        $declared | Should -Contain 'ReceivedTo'
     }
     It 'every parameter it uses exists in the entry script' {
         $declared = (Get-Command $script:Entry).Parameters.Keys
@@ -515,21 +515,37 @@ Describe 'The command line of a batch' {
     It 'a batch keeps the period it was started with: the same period is accepted, another one is refused before anything starts, a date that cannot be read stops the command' {
         $w3 = New-Work 'cli-period'
         $p = $script:Common.Clone(); $p.WorkFolder = $w3; $p.LogFolder = (Join-Path $w3 'logs')
-        $option = @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' } }
+        $option = @{ AppOnly = $true; SignInUser = ''; Pass = @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' } }
         $b = New-TestBatch $w3 'Per1' @('ok-1@contoso.com', 'ok-2@contoso.com') -Option $option
         foreach ($row in $b.rows) { $row.state = 'complete'; $row.job = ''; $row.done = 5 }
         Save-MbtBatch -Batch $b -Folder (Join-Path $w3 'batches\Per1')
-        $same = Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedFrom = '2026-03-01T00:00:00'; ArrivedTo = '2026-03-31T23:59:59.9999999' })
+        $same = Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ReceivedFrom = '2026-03-01T00:00:00'; ReceivedTo = '2026-03-31T23:59:59.9999999' })
         $global:CliExit | Should -Be 0
         $same | Should -Match '2 mailboxes: 2 complete, 0 to do'
-        $refused = Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedTo = '2026-06-30' })
+        $refused = Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ReceivedTo = '2026-06-30' })
         $global:CliExit | Should -Be 1
         $refused | Should -Match 'was started with the period'
         $refused | Should -Match 'Continuing it would mix two periods in the stores of the batch'
         $refused | Should -Match 'nothing was started'
-        { Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedFrom = '2026-04-01'; ArrivedTo = '2026-03-01' }) } | Should -Throw '*starts after it ends*'
-        { Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ArrivedFrom = '1/2/2026' }) } | Should -Throw '*not a date this tool reads*'
-        (Get-Content -LiteralPath (Join-Path $w3 'batches\Per1\batch.json') -Raw) | Should -Match '"ArrivedFrom": "2026-03-01'
+        { Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ReceivedFrom = '2026-04-01'; ReceivedTo = '2026-03-01' }) } | Should -Throw '*starts after it ends*'
+        { Invoke-Cli ($p + @{ ResumeBatch = 'Per1'; ReceivedFrom = '1/2/2026' }) } | Should -Throw '*not a date this tool reads*'
+        (Get-Content -LiteralPath (Join-Path $w3 'batches\Per1\batch.json') -Raw) | Should -Match '"ReceivedFrom": "2026-03-01'
+    }
+    It 'continues a batch that stored its period under the older names, and takes either name for the same period' {
+        $w4 = New-Work 'cli-period-old'
+        $p = $script:Common.Clone(); $p.WorkFolder = $w4; $p.LogFolder = (Join-Path $w4 'logs')
+        $option = @{ AppOnly = $true; SignInUser = ''; Pass = @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' } }
+        $b = New-TestBatch $w4 'Per2' @('ok-1@contoso.com') -Option $option
+        foreach ($row in $b.rows) { $row.state = 'complete'; $row.job = ''; $row.done = 5 }
+        Save-MbtBatch -Batch $b -Folder (Join-Path $w4 'batches\Per2')
+        $same = Invoke-Cli ($p + @{ ResumeBatch = 'Per2'; ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
+        $global:CliExit | Should -Be 0
+        $same | Should -Match '1 mailbox: 1 complete, 0 to do'
+        $alias = Invoke-Cli ($p + @{ ResumeBatch = 'Per2'; arrivedfrom = '2026-03-01'; ARRIVEDTO = '2026-03-31' })
+        $global:CliExit | Should -Be 0
+        $refused = Invoke-Cli ($p + @{ ResumeBatch = 'Per2'; arrivedto = '2026-07-31' })
+        $global:CliExit | Should -Be 1
+        $refused | Should -Match 'Continuing it would mix two periods'
     }
     It 'says what is wrong with the batch name, a batch that does not exist, a CSV that is not the one of the batch, and options that belong to one mailbox' {
         $csv = New-Csv 'cli-name.csv' "UserPrincipalName`r`nadele@contoso.com`r`n"
@@ -664,7 +680,7 @@ Describe 'A batch of real exports: the entry script run against the fake service
             $session = Set-MbtSession -Graph $global:MbtEntryClient
             $session.Token = [pscustomobject]@{
                 Account = 'adele.vance@contoso.com'; Name = 'Adele Vance'; TenantId = '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; AppId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
-                Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport', 'Mail.Read'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
             }
             return $session
         }
@@ -680,7 +696,7 @@ Describe 'A batch of real exports: the entry script run against the fake service
         $work = New-Work 'real-period'
         $csv = New-Csv 'real-period.csv' "UserPrincipalName,Location`r`nadele.vance@contoso.com,Primary`r`nalex.wilber@contoso.com,Primary`r`n"
         $read = Read-MbtBatchCsv -Path $csv -StoreBase (Join-Path $work 'stores') -SignedInUser 'adele.vance@contoso.com'
-        $option = @{ AppOnly = $false; SignInUser = 'adele.vance@contoso.com'; Pass = @{ Concurrency = 2; IntervalSeconds = 60; ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' } }
+        $option = @{ AppOnly = $false; SignInUser = 'adele.vance@contoso.com'; Pass = @{ Concurrency = 2; IntervalSeconds = 60; ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' } }
         $batch = New-MbtBatch -Id 'Period' -Csv $csv -Row $read.Rows -Option $option -Parallel 1
         $r = Invoke-MbtBatch -WorkFolder $work -Batch $batch -EntryScript $script:Entry -Option $option -Launcher $script:Launcher -PollMilliseconds 50 -StartGapMilliseconds 0 6>&1 | Where-Object { $_ -isnot [string] -and $_ -isnot [System.Management.Automation.InformationRecord] }
         $r.ExitCode | Should -Be 0 -Because (@($r.Batch.rows.message) -join ' | ')
@@ -690,7 +706,7 @@ Describe 'A batch of real exports: the entry script run against the fake service
             $row.outsidePeriod | Should -Be 2
             $dir = Join-Path $work "jobs\$($row.job)"
             $status = Get-Content -LiteralPath (Join-Path $dir 'status.json') -Raw | ConvertFrom-Json
-            $status.period.text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+            $status.period.text | Should -Be 'received between 2026-03-01 and 2026-03-31'
             $status.counts.outsidePeriod | Should -Be 2
             $status.counts.kept | Should -Be 3
         }

@@ -38,7 +38,8 @@ function ConvertTo-MbtGuiMessageRow {
     $r.Id = [string]$Item.Id; $r.Tag = $Item
     $r.SizeBytes = [long]$Item.Size; $r.SizeText = Format-MbtGuiBytes $Item.Size
     $d = if ($Item.Received) { $Item.Received } elseif ($Item.Created) { $Item.Created } else { $null }
-    $r.DateText = if ($d) { ([datetimeoffset]$d).UtcDateTime.ToString('yyyy-MM-dd HH:mm') } else { '' }
+    $r.DateText = if ($d) { Format-MbtGuiLocalTime $d } else { '' }
+    if ($d) { $r.When = [datetimeoffset]$d }
     if ($HeadersOnly -or -not $Item.HasDetails) {
         $r.From = '(sender not available)'; $r.Subject = '(subject not available before export)'; $r.SubjectNa = $true
     } else {
@@ -237,13 +238,18 @@ function New-MbtGuiRealEngine {
 
     # -Shared: the address of a shared mailbox or of another user's mailbox (resolved to its physical id, one location: the primary mailbox of it);
     # -AuxIds: auxiliary archives already known (ids or guids), as the -AuxArchiveMailboxId of the entry script
-    $e.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds)
-        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, $LocationsFile, $Shared, $AuxIds) -OnError $OnError -Script {
-            param($upn, $file, $shared, $auxIds)
-            if ($shared) {
+    # -ArchiveId / -PrimaryId: the mailbox ids typed for this mailbox (Where to look, Setup): they replace the ones of the configuration
+    # OnDone gets the locations and, second, what is known about the archive (State Known, None or Unknown; $null for another mailbox read with a delegated sign-in, which is read by its primary mailbox only)
+    $e.Locations = { param($Mailbox, $LocationsFile, $OnDone, $OnError, $Shared, $AuxIds, $ArchiveId, $PrimaryId)
+        Start-MbtGuiWork -Worker $worker -Arguments @($Mailbox, $LocationsFile, $Shared, $AuxIds, $ArchiveId, $PrimaryId) -OnError $OnError -Script {
+            param($upn, $file, $shared, $auxIds, $archiveId, $primaryId)
+            # a delegated sign-in reads the Primary of another mailbox only: the service lets it read its own archive and no other
+            if ($shared -and -not (Test-MbtAppOnly)) {
                 $id = Resolve-MbtMailboxAddress -Address $shared -TenantId (Get-MbtSession).TenantId
-                return @(New-MbtBrowseLocation -Kind Primary -MailboxId $id -Source "address $shared")
+                return [pscustomobject]@{ Locations = @(New-MbtBrowseLocation -Kind Primary -MailboxId $id -Source "address $shared"); Archive = $null }
             }
+            # the application looks up every place of the address, as for a mailbox of its own
+            if ($shared) { $upn = $shared }
             $p = @{ UserPrincipalName = $upn }
             if ($file) { $p.LocationsFile = $file }
             if ($auxIds) { $p.AuxArchiveMailboxId = @($auxIds) }
@@ -251,21 +257,32 @@ function New-MbtGuiRealEngine {
             $configured = Get-MbtConfiguredMailboxId -Configuration (Import-MbtConfiguration) -UserPrincipalName $upn
             if ($configured.Primary) { $p.PrimaryMailboxId = $configured.Primary }
             if ($configured.Archive) { $p.ArchiveMailboxId = $configured.Archive }
-            $found = @(Get-MbtBrowseLocation @p)
+            if ($primaryId) { $p.PrimaryMailboxId = $primaryId }
+            if ($archiveId) { $p.ArchiveMailboxId = $archiveId }
+            $archive = $null
+            $found = @(Get-MbtBrowseLocation @p -ArchiveStatus ([ref]$archive))
             # Graph gives no mailbox id without User.Read.All: the primary mailbox is then found through the import-export API (its folder listing names the mailbox)
             if (-not @($found | Where-Object Kind -EQ 'Primary')) {
                 try { $found = @(New-MbtBrowseLocation -Kind Primary -MailboxId (Resolve-MbtMailboxAddress -Address $upn -TenantId (Get-MbtSession).TenantId) -Source 'address') + $found } catch { Write-Verbose "primary by address: $_" }
             }
-            $found
+            [pscustomobject]@{ Locations = $found; Archive = $archive }
         } -OnDone {
-            param($locs)
+            param($result)
+            $answer = @($result)[0]
+            $locs = $answer.Locations
             $aux = 0
             $out = foreach ($l in @($locs)) {
-                $label = switch ($l.Kind) { 'Primary' { $(if ($Shared) { "Shared mailbox $Shared" } else { 'Primary mailbox' }) } 'Archive' { 'Archive' } default { $aux++; "Auxiliary archive $aux" } }
+                $label = switch ($l.Kind) { 'Primary' { $(if ($Shared) { "Shared mailbox $Shared" } else { 'Primary mailbox' }) } 'Archive' { $(if ($Shared) { "Archive of $Shared" } else { 'Archive' }) } default { $aux++; "Archive (more of it)" } }
                 [pscustomobject]@{ Kind = [string]$l.Kind; Label = $label; Hint = $(if ($l.Kind -eq 'AuxArchive') { 'Counts appear as you open folders. Size not given by Microsoft.' } else { 'Counts appear as you open folders.' }); Root = [string]$l.MailboxId; MailboxId = [string]$l.MailboxId; Loc = $l; Filling = ($l.Kind -eq 'AuxArchive') }
             }
-            & $OnDone @($out)
+            & $OnDone @($out) $answer.Archive
         }.GetNewClosure()
+    }.GetNewClosure()
+
+    # The mailbox id typed by the operator (a bare guid or MBX:<guid>@<tenant>, in any case): @{ Ok; Id; Problem }
+    $e.ParseMailboxId = { param($Text, $TenantId)
+        try { [pscustomobject]@{ Ok = $true; Id = (ConvertTo-MbtMailboxId -Value ([string]$Text) -TenantId ([string]$TenantId)); Problem = '' } }
+        catch { [pscustomobject]@{ Ok = $false; Id = ''; Problem = 'This is not a mailbox id. Type the guid, or MBX:<guid>@<tenant>.' } }
     }.GetNewClosure()
 
     # -IncludeRecoverable: the box "Include deleted items (Recoverable Items)" of the From page; the folders are read as the user opens them, so only Children needs it
@@ -327,7 +344,7 @@ function New-MbtGuiRealEngine {
             $att = @($p.Attachments | ForEach-Object { "$($_.Name)   $(Format-MbtGuiBytes $_.Size)" }) -join "`n"
             & $OnDone ([pscustomobject]@{
                     Subject = [string]$h.Subject; From = [string]$h.FromName; Address = [string]$h.FromAddress; To = (@($p.To | ForEach-Object { $_.ToString() }) -join '; ')
-                    Received = $(if ($h.Received) { ([datetimeoffset]$h.Received).UtcDateTime.ToString('yyyy-MM-dd HH:mm') + ' UTC' } else { '' }); Location = $label
+                    Received = (Format-MbtGuiLocalTime $h.Received); Location = $label
                     Details = ('{0} - {1}' -f $h.ItemClass, (Format-MbtGuiBytes $h.Size)); Attachment = $att; Body = $(if ($p.BodyText) { [string]$p.BodyText } else { [string]$p.BodyPreview }); Available = $true })
         }.GetNewClosure()
     }.GetNewClosure()
@@ -536,7 +553,7 @@ function Read-MbtGuiSourceItems {
             $r = @($res)[0]
             $rows = foreach ($i in $r.Items) {
                 $row = [MailboxTransferGui.MessageRow]::new(); $row.Id = [string]$i.Key; $row.Subject = if ($i.Subject) { [string]$i.Subject } else { '(no subject)' }; $row.From = ''
-                $row.SizeBytes = [long]$i.Size; $row.SizeText = Format-MbtGuiBytes $i.Size; $row.DateText = if ($i.Received) { ([datetime]$i.Received).ToString('yyyy-MM-dd HH:mm') } else { '' }
+                $row.SizeBytes = [long]$i.Size; $row.SizeText = Format-MbtGuiBytes $i.Size; $row.DateText = Format-MbtGuiLocalTime $i.Received
                 $row.Tag = @{ Key = [long]$i.Key; StorePath = $Node.Tag.StorePath }
                 $row
             }
@@ -582,7 +599,7 @@ function Read-MbtGuiSourcePreview {
         } -OnDone {
             param($res)
             $p = @($res)[0]
-            & $OnDone ([pscustomobject]@{ Subject = [string]$p.Subject; From = [string]$p.From; Address = ''; To = [string]$p.To; Received = $(if ($p.Received) { ([datetime]$p.Received).ToString('yyyy-MM-dd HH:mm') + ' UTC' } else { '' }); Location = $label; Details = [string]$p.Class; Attachment = [string]$p.Names; Body = [string]$p.Body; Available = $true })
+            & $OnDone ([pscustomobject]@{ Subject = [string]$p.Subject; From = [string]$p.From; Address = ''; To = [string]$p.To; Received = (Format-MbtGuiLocalTime $p.Received); Location = $label; Details = [string]$p.Class; Attachment = [string]$p.Names; Body = [string]$p.Body; Available = $true })
         }.GetNewClosure()
         return
     }
@@ -608,7 +625,7 @@ function ConvertTo-MbtGuiPstPreview {
     foreach ($n in @($p.Notes)) { $body += "`n`n($n)" }
     if (-not $body.Trim()) { $body = '(this message has no text)' }
     $to = @(@($p.To) + @($p.Cc | ForEach-Object { "Cc: $_" })) -join '; '
-    $when = if ($p.ReceivedUtc) { ([datetime]$p.ReceivedUtc).ToString('yyyy-MM-dd HH:mm') + ' UTC' } else { '' }
+    $when = Format-MbtGuiLocalTime $p.ReceivedUtc
     [pscustomobject]@{ Subject = $(if ($p.Subject) { [string]$p.Subject } else { '(no subject)' }); From = [string]$p.FromName; Address = [string]$p.FromAddress; To = $to; Received = $when; Location = $Location
         Details = ('{0}{1}' -f $p.MessageClass, $(if ($p.SizeBytes -ge 0) { ' - ' + (Format-MbtGuiBytes $p.SizeBytes) } else { '' })); Attachment = $att; Body = $body; Available = $true }
 }
@@ -661,10 +678,10 @@ function Get-MbtGuiFindingLevel {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCdHiT2VJEFj81J
-# sShlHmTQm76Y+RTG6XPX17RtDNRxe6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAuZzuV/JdI3BmL
+# FWtgtomQrRHU43aJFqeahnb0f33MWqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -736,28 +753,28 @@ function Get-MbtGuiFindingLevel {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDv+AuKf4LH
-# yPMIKqBYPMLmLRnyoUUApohLOlKxMX+w0zANBgkqhkiG9w0BAQEFAASCAgCcfbFx
-# J55uv/jnGZ2XNPZpn8njXN4hLOSWwCqO2jPDS2HWG2a3OxTV5o2O6phsWjl1p8Q5
-# 1KWZ9WeLT52SzrZ8k8lkmdryx325OX7HxjJrPzDEpfDLFZRa7Dov4Nj61m2VYWOs
-# v/qZGuv/AlzAL3D3OnmsCSeX0Snm+OwMNKIcLlgA9Flq+bOqYliprzdsy4uAg3ID
-# GB82/rUhonIQEjHdZfUnAWox2sXjv867aHHi7u0apK8/11jcTb2++LviCmVDevtM
-# pDxI0hJiaK0hrrM5hK2q3TD8pEGqW4L/Y3di8sTspIa5oxvIZ/9M8U4ir8IBS0Gk
-# g96DmJp8rJEN5CWNlbIiOx/+H82aNhlTxpaWqB0t7eYlv5TiBdN4/tdYT3gdM51b
-# LtiVNYD3IEhbONGrjHmHliiChvAkxjVqHLFc7XyPIC9H9To1YMkXjaGnVkfanVMM
-# CHZHmIwlme6f0AtX9k39zGn7e1yjdqLgLrhOevCjdEtNcoCOVBkAYj/O3rEshMsO
-# Yha3JAeP9R5B8iILKbpNZvNcNAojF3UfH8p8EjRfweKeQEKJm1DiCnPwW5HqIE0M
-# bcY5x3YoI2UgYaIF2PksGoJsrBXSlxH2h2U3Eb5Oxd/YSyFEZSVb6I8NVBldR6bR
-# jDZgvbm80YaxcaV37pHB3zIKH+pGj2xfb07kdKGCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDlghimEDs2
+# r4S7x0GU83aP9v9dr8NvHrG4nmFuYE18YjANBgkqhkiG9w0BAQEFAASCAgAFauUR
+# su+AhDa4A1tMDfAYE4uvghYNqrhpE+TM+YxsiPyQpTqcEBw3ZhN2PWyesqN4VC58
+# W02aruZcleKFTLBrwZ8gisuDouhqLZ6cCoSad81uTPoo6wYdEWcQ4uiA0IFfMcyb
+# a2hXkMo7tW9d0dPfGWQFdVDvKbOIFNCH3iCBQLokKwA6MJO7dVG5q5VCIoCZn38x
+# 4TNLvQLTPBKWa/iYUdFkhQH/mtN2yiDQeC+aUPGfJ+I8OmxGUp8pPcEziD1mIKkY
+# 1Cpi4b4M29K/dXOq4yFAnyEirej8jLAbTqCAW+17XPy8ciY0d/G76LDathdlSO8b
+# 5GkGTteugY3mTGmBrc6Maa/yvyzj3yt3zDHc1fQGGNyD/AZJEx1i7xqrtSt5uir1
+# +x7rjHufCSMJFVjvsry07VqAiPv4pZEMq5BD+HQSjFpfEKMYK2UU7YUh9nR8j6WJ
+# RnLjHzWk1QzfZ81Hw4kr1t0qu3l89Z+Xzl5Cz464D5cFVCZyv15jM7KVA2f/PqGM
+# YTrRMQP9xFTSLFNBreLFkU198TR+sC3hWFbgzoXs0g29r231WI+nieh2REJqkjOR
+# ZUT862SvTH/77U4lvYkFYfmwM2m2GSb18DRWg+rkMUqqGTFTqe7p7fqK6FveNrwo
+# D3/+b/l+cqVmWZDQZfGgEzct5GUD+C4nuCIJdqGCFM0wghTJBgorBgEEAYI3AwMB
+# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIEmamJMp0PWbr+6N7qtRfqw5tp0iXLHEigmVqYNu1NInAghOiRnZ78xx
-# yxgPMjAyNjExMjUxNTM3MDZaMAMCAQECEBF9Uy8rjPI5L9RsWMmvmZGgghGnMIIE
+# BAIBBQAEIDPyTv2FtjvRnIIHyZK+LrQ+sdLiLiaJ115bq08RCVi1AggBmhCvha4R
+# QxgPMjAyNjExMjcwNTI3MzlaMAMCAQECEDFlD47CNg+aHbku5mx6eRSgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -852,17 +869,17 @@ function Get-MbtGuiFindingLevel {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcwNlowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIBrX
-# t2gMS6VUpU2rQY54LewNJqT0Ntm8TG9bzS431IF0MIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjczOVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIP3r
+# PheuajVXyE926rvzpx5INPU5fMWluhX8Xz6Go4vmMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiAhYCExw64aNH+DC7HFfl+U0fUsN3mUCxSvb9EoYsxcWgIhAKgi
-# I579l8FSeved9EUE3P2CIkJRfn7jkPn0A2f5iyfk
+# zj0EAwIERjBEAiAlQaGRlu8xaEPlev0VgixqFTgYbS1rEpaNBIdTnF6vKwIgL1Ek
+# A530VU5p6fcPWWKvjVxruClQ7T9BcZAThd++PLQ=
 # SIG # End signature block

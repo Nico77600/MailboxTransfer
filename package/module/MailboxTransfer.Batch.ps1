@@ -29,7 +29,7 @@ $script:MbtBatchLocations = @('Primary', 'Archive', 'Both')
 $script:MbtBatchRowStates = @('pending', 'running', 'complete', 'partial', 'failed')
 $script:MbtBatchImportModes = @('Import', 'ImportPst', 'ImportEml')
 $script:MbtBatchImportColumns = @('Mailbox', 'Source', 'Location', 'TargetRoot', 'SourceMailbox', 'Notes')
-$script:MbtBatchCopyColumns = @('SourceAddress', 'SourceLocation', 'TargetAddress', 'TargetLocation', 'TargetRoot', 'SelectionFile', 'Notes')
+$script:MbtBatchCopyColumns = @('SourceAddress', 'SourceLocation', 'TargetAddress', 'TargetLocation', 'TargetLayout', 'TargetRoot', 'TargetArchiveRoot', 'SelectionFile', 'Notes')
 
 #region Names and folders -----------------------------------------------------------------------
 
@@ -483,10 +483,12 @@ function Read-MbtCopyBatchCsv {
         Reads the CSV file of a batch of copies and checks all of it: the problems of every row are returned together, so that one correction of the file is enough.
     .DESCRIPTION
         One line for each copy: the mailbox location it reads and the mailbox location it writes into. Columns (the names do not depend on upper or lower case; the delimiter is a comma or a semicolon; UTF-8 with
-        or without BOM): SourceAddress (the mailbox read, required), SourceLocation (Primary or Archive; empty: -DefaultSourceLocation), TargetAddress (the mailbox written into, required), TargetLocation (Primary or
-        Archive; empty: -DefaultTargetLocation), TargetRoot (the folder everything is created below; empty: the global one; empty everywhere: the folder names of the source), SelectionFile (optional: what to copy,
-        written by the browse view or the console, of one mailbox location; relative to the folder of the CSV file), Notes (ignored). Any other column is a problem.
-        Returns Rows (Number, Line, SourceAddress, SourceLocation, TargetAddress, TargetLocation, TargetRoot, SelectionFile, Store), Problems (text), Delimiter. Checked: a missing or wrong address, a wrong Location,
+        or without BOM): SourceAddress (the mailbox read, required), SourceLocation (Primary, Archive or All, the Primary and the Archive together; empty: -DefaultSourceLocation), TargetAddress (the mailbox written into,
+        required), TargetLocation (Primary or Archive; empty: -DefaultTargetLocation; empty for a line that copies both places), TargetLayout (Mirror, Primary or Archive, for a line that copies both places: where the two
+        parts go; empty: -DefaultTargetLayout, else Mirror), TargetRoot (the folder everything is created below; empty: the global one; empty everywhere: the folder names of the source), TargetArchiveRoot (the folder the
+        Archive part of a line that copies both places is created below; empty: -DefaultTargetArchiveRoot, else TargetRoot), SelectionFile (optional: what to copy, written by the browse view or the console, of one mailbox
+        location or of the Primary and the Archive; relative to the folder of the CSV file), Notes (ignored). Any other column is a problem. A file of an earlier version, without the new columns, is read as before.
+        Returns Rows (Number, Line, SourceAddress, SourceLocation, TargetAddress, TargetLocation, TargetLayout, TargetRoot, TargetArchiveRoot, SelectionFile, Store), Problems (text), Delimiter. Checked: a missing or wrong address, a wrong Location,
         a SelectionFile that is missing or of several mailbox locations, a source that is the target (the same address and Location), the same copy twice (the same source, target, Locations and selection), and, with a
         delegated sign-in, a target that is not the signed-in account (the service refuses a delegated write into another mailbox) and an archive read from a mailbox that is not the signed-in account's. Lines that
         write into the same target location, or read the same source location, are fine: they run one after the other.
@@ -498,9 +500,10 @@ function Read-MbtCopyBatchCsv {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [ValidateSet('Primary', 'Archive')][string]$DefaultSourceLocation = 'Primary',
+        [ValidateSet('Primary', 'Archive', 'All')][string]$DefaultSourceLocation = 'Primary',
         [ValidateSet('Primary', 'Archive')][string]$DefaultTargetLocation = 'Primary',
-        [string]$DefaultTargetRoot, [string]$StoreBase, [hashtable]$Choice = @{}, [string]$SignedInUser, [switch]$AppOnly
+        [ValidateSet('', 'Mirror', 'Primary', 'Archive')][string]$DefaultTargetLayout = '',
+        [string]$DefaultTargetRoot, [string]$DefaultTargetArchiveRoot, [string]$StoreBase, [hashtable]$Choice = @{}, [string]$SignedInUser, [switch]$AppOnly
     )
     Set-StrictMode -Version Latest
     $problems = [Collections.Generic.List[string]]::new()
@@ -557,14 +560,20 @@ function Read-MbtCopyBatchCsv {
         $sourceLocation = $DefaultSourceLocation
         $given = & $cell $record 'sourcelocation'
         if ($given) {
-            $match = @('Primary', 'Archive' | Where-Object { $_ -ieq $given })
-            if ($match.Count) { $sourceLocation = $match[0] } else { $problems.Add("line ${line}: SourceLocation '$given' is not Primary or Archive (a copy reads one mailbox location: use a second line for the other)."); $sourceLocation = '' }
+            $match = @('Primary', 'Archive', 'All' | Where-Object { $_ -ieq $given })
+            if ($match.Count) { $sourceLocation = $match[0] } else { $problems.Add("line ${line}: SourceLocation '$given' is not Primary, Archive or All (the Primary and the Archive together)."); $sourceLocation = '' }
         }
         $targetLocation = $DefaultTargetLocation
-        $given = & $cell $record 'targetlocation'
-        if ($given) {
-            $match = @('Primary', 'Archive' | Where-Object { $_ -ieq $given })
-            if ($match.Count) { $targetLocation = $match[0] } else { $problems.Add("line ${line}: TargetLocation '$given' is not Primary or Archive (a copy goes into one mailbox location)."); $targetLocation = '' }
+        $givenTarget = & $cell $record 'targetlocation'
+        if ($givenTarget) {
+            $match = @('Primary', 'Archive' | Where-Object { $_ -ieq $givenTarget })
+            if ($match.Count) { $targetLocation = $match[0] } else { $problems.Add("line ${line}: TargetLocation '$givenTarget' is not Primary or Archive (a copy goes into one mailbox location; for both places use TargetLayout)."); $targetLocation = '' }
+        }
+        $layout = ''
+        $givenLayout = & $cell $record 'targetlayout'
+        if ($givenLayout) {
+            $match = @('Mirror', 'Primary', 'Archive' | Where-Object { $_ -ieq $givenLayout })
+            if ($match.Count) { $layout = $match[0] } else { $problems.Add("line ${line}: TargetLayout '$givenLayout' is not Mirror, Primary or Archive."); $layout = '' }
         }
 
         $selection = & $cell $record 'selectionfile'
@@ -576,17 +585,18 @@ function Read-MbtCopyBatchCsv {
                 $selection = [IO.Path]::GetFullPath($selection)
                 try {
                     $sets = @(Read-MbtBrowseSelectionSet -Path $selection)
-                    if ($sets.Count -ne 1) { $problems.Add("line ${line}: the SelectionFile names $($sets.Count) mailbox locations: a copy takes one (Primary or Archive). Make one file for each location, on its own line."); $selection = '' }
-                    elseif ([string]$sets[0].Kind -notin 'Primary', 'Archive') { $problems.Add("line ${line}: the SelectionFile is of the $($sets[0].Kind) mailbox: a copy reads the Primary or the Archive."); $selection = '' }
+                    $setKinds = @($sets | ForEach-Object { [string]$_.Kind } | Sort-Object -Unique)
+                    if ($sets.Count -gt 2 -or ($sets.Count -eq 2 -and ($setKinds -join ',') -ne 'Archive,Primary')) { $problems.Add("line ${line}: the SelectionFile names $($sets.Count) mailbox locations ($($setKinds -join ', ')): a copy takes the Primary, the Archive, or both. Make one file for each place, on its own line."); $selection = '' }
+                    elseif ($sets.Count -eq 1 -and [string]$sets[0].Kind -notin 'Primary', 'Archive') { $problems.Add("line ${line}: the SelectionFile is of the $($sets[0].Kind) mailbox: a copy reads the Primary or the Archive."); $selection = '' }
                     else {
-                        $selectionKind = [string]$sets[0].Kind
-                        if ($given = & $cell $record 'sourcelocation') { if ($given -ine $selectionKind) { $problems.Add("line ${line}: SourceLocation $given does not match the SelectionFile, which is of the $selectionKind mailbox: leave SourceLocation empty."); $selection = '' } }
+                        $selectionKind = if ($sets.Count -eq 2) { 'All' } else { [string]$sets[0].Kind }
+                        if ($given = & $cell $record 'sourcelocation') { if ($given -ine $selectionKind) { $problems.Add("line ${line}: SourceLocation $given does not match the SelectionFile, which is of the $(if ($selectionKind -eq 'All') { 'Primary and the Archive' } else { "$selectionKind" }) mailbox: leave SourceLocation empty."); $selection = '' } }
                         $sourceLocation = $selectionKind
                     }
                 } catch { $problems.Add("line ${line}: the SelectionFile cannot be read: $($_.Exception.Message)"); $selection = '' }
             }
         }
-        if ($source -and $sourceLocation -eq 'Archive' -and $SignedInUser -and -not $AppOnly -and $source -ine $SignedInUser) {
+        if ($source -and $sourceLocation -in 'Archive', 'All' -and $SignedInUser -and -not $AppOnly -and $source -ine $SignedInUser) {
             $problems.Add("line ${line}: $source is not the signed-in account ($SignedInUser). With a delegated sign-in only its primary mailbox can be read: use SourceLocation Primary, or sign in as the application (-AppOnly).")
         }
 
@@ -595,16 +605,42 @@ function Read-MbtCopyBatchCsv {
         $root = ConvertTo-MbtBatchTargetRoot $rootText
         if ($rootText -and -not $root) { $problems.Add("line ${line}: TargetRoot '$rootText' is not a folder path.") }
         elseif ($root -and @($root -split '/' | Where-Object { -not $_.Trim() }).Count) { $problems.Add("line ${line}: TargetRoot '$rootText' has an empty folder name in it.") }
+        $archiveRootText = & $cell $record 'targetarchiveroot'
+        if (-not $archiveRootText) { $archiveRootText = $DefaultTargetArchiveRoot }
+        $archiveRoot = ConvertTo-MbtBatchTargetRoot $archiveRootText
+        if ($archiveRootText -and -not $archiveRoot) { $problems.Add("line ${line}: TargetArchiveRoot '$archiveRootText' is not a folder path.") }
+        elseif ($archiveRoot -and @($archiveRoot -split '/' | Where-Object { -not $_.Trim() }).Count) { $problems.Add("line ${line}: TargetArchiveRoot '$archiveRootText' has an empty folder name in it.") }
 
-        if ($source -and $target -and $sourceLocation -and $targetLocation -and $source -ieq $target -and $sourceLocation -eq $targetLocation) {
-            $problems.Add("line ${line}: the source and the target are the same mailbox location (the $sourceLocation mailbox of $source): a copy writes into another location.")
+        # a line that copies both places has a layout, not a target location; a line that copies one place has no layout and no archive folder
+        $both = ($sourceLocation -eq 'All')
+        if ($both) {
+            if ($givenTarget) { $problems.Add("line ${line}: TargetLocation '$givenTarget' is for a line that copies one place: for the Primary and the Archive together leave it empty and use TargetLayout (Mirror, Primary or Archive).") }
+            if (-not $layout) { $layout = if ($DefaultTargetLayout) { $DefaultTargetLayout } else { 'Mirror' } }
+            if (-not $archiveRoot) { $archiveRoot = $root }
+            $targetLocation = switch ($layout) { 'Mirror' { 'Primary + Archive' } default { $layout } }
+        }
+        else {
+            if ($givenLayout) { $problems.Add("line ${line}: TargetLayout is for a line that copies both places (SourceLocation All): a copy of one place goes into the TargetLocation.") }
+            if (& $cell $record 'targetarchiveroot') { $problems.Add("line ${line}: TargetArchiveRoot is for a line that copies both places (SourceLocation All): a copy of one place goes below TargetRoot.") }
+            $layout = ''; $archiveRoot = ''
+        }
+
+        if ($source -and $target -and $sourceLocation -and $targetLocation -and $source -ieq $target) {
+            $partPairs = [Collections.Generic.List[object]]::new()
+            if ($both) {
+                $partPairs.Add(@('Primary', $(if ($layout -eq 'Archive') { 'Archive' } else { 'Primary' })))
+                $partPairs.Add(@('Archive', $(if ($layout -eq 'Primary') { 'Primary' } else { 'Archive' })))
+            } else { $partPairs.Add(@($sourceLocation, $targetLocation)) }
+            foreach ($pair in $partPairs) {
+                if ($pair[0] -eq $pair[1]) { $problems.Add("line ${line}: the source and the target are the same mailbox location (the $($pair[0]) mailbox of $source): a copy writes into another location."); break }
+            }
         }
         if ($problems.Count -gt $before) { continue }
 
-        $twice = (@($source, $sourceLocation, $target, $targetLocation, $selection) | ForEach-Object { $_.ToLowerInvariant() }) -join '|'
+        $twice = (@($source, $sourceLocation, $target, $targetLocation, $selection, $layout) | ForEach-Object { $_.ToLowerInvariant() }) -join '|'
         if ($seen.ContainsKey($twice)) { $problems.Add("line ${line}: $source ($sourceLocation) is already copied into $target ($targetLocation) on line $($seen[$twice]) (the same source, target, Locations and SelectionFile; upper and lower case are the same)."); continue }
         $seen[$twice] = $line
-        $rows.Add([pscustomobject]@{ Number = $number; Line = $line; SourceAddress = $source; SourceLocation = $sourceLocation; TargetAddress = $target; TargetLocation = $targetLocation; TargetRoot = $root; SelectionFile = $selection; Store = '' })
+        $rows.Add([pscustomobject]@{ Number = $number; Line = $line; SourceAddress = $source; SourceLocation = $sourceLocation; TargetAddress = $target; TargetLocation = $targetLocation; TargetLayout = $layout; TargetRoot = $root; TargetArchiveRoot = $archiveRoot; SelectionFile = $selection; Store = '' })
     }
     if (-not $rows.Count -and -not $problems.Count) { $problems.Add('The CSV file has no copy: the first line names the columns, then one copy on each line.') }
 
@@ -622,10 +658,11 @@ function Read-MbtCopyBatchCsv {
 function Compare-MbtCopyBatchRow {
     <# The differences between the rows a batch of copies was made with and the rows of the CSV file given (the same sources, targets, locations, folders and selections), as sentences; none when they agree. #>
     param([Parameter(Mandatory)]$Batch, [Parameter(Mandatory)][object[]]$Row)
-    $name = { param($source, $sourceLocation, $target, $targetLocation, $root, $selection) "$source ($sourceLocation) into $target ($targetLocation)" + $(if ($root) { " folder $root" }) + $(if ($selection) { ", selection $([IO.Path]::GetFileName($selection))" }) }
-    $key = { param($source, $sourceLocation, $target, $targetLocation, $root, $selection) (@($source, $sourceLocation, $target, $targetLocation, $root, $selection) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() }) -join '|' }
-    $have = @{}; foreach ($r in @($Batch.rows)) { $have[(& $key $r.sourceUpn $r.sourceLocation $r.upn $r.location $r.targetRoot $r.selection)] = (& $name $r.sourceUpn $r.sourceLocation $r.upn $r.location $r.targetRoot $r.selection) }
-    $now = @{}; foreach ($r in $Row) { $now[(& $key $r.SourceAddress $r.SourceLocation $r.TargetAddress $r.TargetLocation $r.TargetRoot $r.SelectionFile)] = (& $name $r.SourceAddress $r.SourceLocation $r.TargetAddress $r.TargetLocation $r.TargetRoot $r.SelectionFile) }
+    $name = { param($source, $sourceLocation, $target, $targetLocation, $root, $selection, $archiveRoot) "$source ($sourceLocation) into $target ($targetLocation)" + $(if ($root) { " folder $root" }) + $(if ($archiveRoot) { ", archive folder $archiveRoot" }) + $(if ($selection) { ", selection $([IO.Path]::GetFileName($selection))" }) }
+    $key = { param($source, $sourceLocation, $target, $targetLocation, $root, $selection, $archiveRoot) (@($source, $sourceLocation, $target, $targetLocation, $root, $selection, $archiveRoot) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() }) -join '|' }
+    $field = { param($row, [string]$name) if ($row -is [System.Collections.IDictionary]) { if ($row.Contains($name)) { [string]$row[$name] } else { '' } } elseif ($row.PSObject.Properties[$name]) { [string]$row.$name } else { '' } }
+    $have = @{}; foreach ($r in @($Batch.rows)) { $archiveRoot = & $field $r 'archiveRoot'; $have[(& $key $r.sourceUpn $r.sourceLocation $r.upn $r.location $r.targetRoot $r.selection $archiveRoot)] = (& $name $r.sourceUpn $r.sourceLocation $r.upn $r.location $r.targetRoot $r.selection $archiveRoot) }
+    $now = @{}; foreach ($r in $Row) { $archiveRoot = & $field $r 'TargetArchiveRoot'; $now[(& $key $r.SourceAddress $r.SourceLocation $r.TargetAddress $r.TargetLocation $r.TargetRoot $r.SelectionFile $archiveRoot)] = (& $name $r.SourceAddress $r.SourceLocation $r.TargetAddress $r.TargetLocation $r.TargetRoot $r.SelectionFile $archiveRoot) }
     $out = [Collections.Generic.List[string]]::new()
     foreach ($k in $now.Keys) { if (-not $have.ContainsKey($k)) { $out.Add("$($now[$k]) is in the CSV file and not in the batch") } }
     foreach ($k in $have.Keys) { if (-not $now.ContainsKey($k)) { $out.Add("$($have[$k]) is in the batch and not in the CSV file") } }
@@ -707,7 +744,7 @@ function New-MbtBatch {
             if ($Mode -eq 'Copy') {
                 [ordered]@{
                     n = [int]$r.Number; line = [int]$r.Line; upn = [string]$r.TargetAddress; location = [string]$r.TargetLocation; sourceUpn = [string]$r.SourceAddress; sourceLocation = [string]$r.SourceLocation
-                    selection = [string]$r.SelectionFile; targetRoot = [string]$r.TargetRoot; store = [string]$r.Store; output = ''
+                    selection = [string]$r.SelectionFile; targetRoot = [string]$r.TargetRoot; layout = $(if ($r.PSObject.Properties['TargetLayout']) { [string]$r.TargetLayout } else { '' }); archiveRoot = $(if ($r.PSObject.Properties['TargetArchiveRoot']) { [string]$r.TargetArchiveRoot } else { '' }); store = [string]$r.Store; output = ''
                     state = 'pending'; job = ''; attempts = 0; exit = $null; reason = ''; message = ''; done = $null; failedItems = $null; bytes = $null; outsidePeriod = $null; unknown = $null; refused = $null; exported = $null; started = ''; finished = ''
                 }
                 continue
@@ -812,7 +849,11 @@ function Get-MbtBatchRowLock {
     #>
     param([Parameter(Mandatory)]$Row)
     if ($Row -is [System.Collections.IDictionary] -and $Row.Contains('sourceUpn') -and [string]$Row['sourceUpn']) {
-        return @(('target:' + ([string]$Row['upn']).ToLowerInvariant() + '|' + ([string]$Row['location']).ToLowerInvariant()), ('source:' + ([string]$Row['sourceUpn']).ToLowerInvariant() + '|' + ([string]$Row['sourceLocation']).ToLowerInvariant()))
+        # a line that copies both places holds both source places and the target places its layout writes into
+        $sourcePlaces = if ([string]$Row['sourceLocation'] -eq 'All') { @('primary', 'archive') } else { @(([string]$Row['sourceLocation']).ToLowerInvariant()) }
+        $layout = if ($Row.Contains('layout')) { [string]$Row['layout'] } else { '' }
+        $targetPlaces = if ([string]$Row['sourceLocation'] -ne 'All') { @(([string]$Row['location']).ToLowerInvariant()) } elseif ($layout -eq 'Primary') { @('primary') } elseif ($layout -eq 'Archive') { @('archive') } else { @('primary', 'archive') }
+        return @(@($targetPlaces | ForEach-Object { 'target:' + ([string]$Row['upn']).ToLowerInvariant() + '|' + $_ }) + @($sourcePlaces | ForEach-Object { 'source:' + ([string]$Row['sourceUpn']).ToLowerInvariant() + '|' + $_ }))
     }
     if (-not ($Row -is [System.Collections.IDictionary]) -or -not $Row.Contains('source') -or -not [string]$Row['source']) { return @() }
     return @(('target:' + ([string]$Row['upn']).ToLowerInvariant() + '|' + ([string]$Row['location']).ToLowerInvariant()), ('source:' + ([string]$Row['source']).ToLowerInvariant()))
@@ -894,10 +935,13 @@ function Get-MbtCopyChildArgument {
     if ($Option.AppOnly -or -not $signer) { $a.AddRange([string[]]@('-UserPrincipalName', [string]$Row.sourceUpn, '-TargetMailboxId', [string]$Row.upn)) }
     elseif ($other -and -not [string]$Row.selection) { $a.AddRange([string[]]@('-UserPrincipalName', $signer, '-MailboxId', [string]$Row.sourceUpn)) }
     else { $a.AddRange([string[]]@('-UserPrincipalName', $signer)) }
+    $both = ([string]$Row.sourceLocation -eq 'All')
     if ([string]$Row.selection) { $a.AddRange([string[]]@('-SelectionFile', [string]$Row.selection)) }
     else { $a.AddRange([string[]]@('-Mailbox', [string]$Row.sourceLocation)) }
-    $a.AddRange([string[]]@('-TargetMailbox', [string]$Row.location))
+    if ($both) { $a.AddRange([string[]]@('-TargetLayout', $(if ($Row.Contains('layout') -and [string]$Row.layout) { [string]$Row.layout } else { 'Mirror' }))) }
+    else { $a.AddRange([string[]]@('-TargetMailbox', [string]$Row.location)) }
     if ([string]$Row.targetRoot) { $a.AddRange([string[]]@('-TargetRoot', [string]$Row.targetRoot)) }
+    if ($both -and $Row.Contains('archiveRoot') -and [string]$Row.archiveRoot) { $a.AddRange([string[]]@('-TargetArchiveRoot', [string]$Row.archiveRoot)) }
     $a.AddRange([string[]]@('-StorePath', [string]$Row.store, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp')))
     foreach ($name in @($Option.Pass.Keys | Sort-Object)) {
         $value = $Option.Pass[$name]
@@ -940,9 +984,10 @@ function Write-MbtBatchJobRequest {
             Title = ('Copy {0} {1} {2} {3} ({4})' -f [char]0x00B7, $Row.sourceUpn, [char]0x2192, $Row.upn, $Row.location); Created = [DateTime]::UtcNow.ToString('o'); JobId = $Job.Id; JobName = $Job.Id; Batch = $BatchId
             StorePath = [string]$Row.store; SelectionFiles = @(if ([string]$Row.selection) { [string]$Row.selection }); Commands = @(, $Argument)
             Task = 'mailcopy'; Mailbox = $(if ($app) { [string]$Row.sourceUpn } else { $signer }); Shared = $(if (-not $app -and [string]$Row.sourceUpn -ine $signer) { [string]$Row.sourceUpn } else { '' }); McTarget = $(if ($app) { [string]$Row.upn } else { '' })
-            TgtLoc = [string]$Row.location; TgtMode = $(if ([string]$Row.targetRoot) { 'new' } else { 'same' }); TgtName = [string]$Row.targetRoot
+            TgtLoc = $(if ([string]$Row.sourceLocation -eq 'All') { $(if ($Row.Contains('layout') -and [string]$Row.layout -eq 'Archive') { 'Archive' } else { 'Primary' }) } else { [string]$Row.location }); TgtMode = $(if ([string]$Row.targetRoot) { 'new' } else { 'same' }); TgtName = [string]$Row.targetRoot
             Conc = [int](& $get 'Concurrency' 4); Tries = [int](& $get 'MaxAttempts' 3); Awake = $false
         }
+        if ([string]$Row.sourceLocation -eq 'All') { $request.McFromKind = 'All'; $request.McLayout = $(if ($Row.Contains('layout') -and [string]$Row.layout) { [string]$Row.layout } else { 'Mirror' }); $request.TgtArchiveName = $(if ($Row.Contains('archiveRoot')) { [string]$Row.archiveRoot } else { '' }) }
         if ($pass.Contains('RetryWaitSeconds')) { $request.Retry = [int][math]::Round([double]$pass.RetryWaitSeconds) }
         [IO.File]::WriteAllText([IO.Path]::Combine($Job.Folder, 'request.json'), ($request | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
         return
@@ -1396,10 +1441,10 @@ function Write-MbtBatchSummary {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC4HBZZRa3PUM0Q
-# pQ5T0I9nlL8wKO38ORqb9M0XuPQdMaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDJytpfKAeC3Ux9
+# 65/M76853OFpuAOG0apKXH7X1GUg96CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -1471,28 +1516,28 @@ function Write-MbtBatchSummary {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAixKqfP2fz
-# 4NyiApsrB+iFftUocVKjCf4JuDOrKEpsQDANBgkqhkiG9w0BAQEFAASCAgBhOh54
-# 7TgDcfI3dp90Zm3+TL4OTHE0/+IuOGU94iW94Ygr0/UT0iVUFr6UCQcz8cPsNOgY
-# W+jmPZEMJTQkC4ZAFiWRVtCcON+DXLoBwkO6feVTmKsrwlaG852RCh03AwwkMiPB
-# jqzmRBt3wSomQeXoQBRbi43AFRb71K8tGDUjlGFGhoY1bAxpRkfehf2JJA0ZX5OD
-# lqHRz23ludrJTNEI+Vx5w+VKhxmnzQXSPYRR4ecF9yXx8kfhuia70fegc+ocxang
-# /Oypw1iFMo8sGoauHA20cEDYIKsuTYH+TaokOvwLisV9dDZYQ/DG27j+hGtMBxwX
-# 5EUhnzgrg8YuAelVaypzUQrmLpsRZAhdgAjoq763R2VV/aTk+T3wDjkwdTeKPejf
-# jCKHtc/hneS47xQS+F7ObvqO8mAjCPvvqP4QBmKRqCdOXQbUgoVu7ph9dbhgIF+h
-# JaUk8Yw+qATEzq5lBQ291b22l52x7FCDWuZIUYu5VfCk/UKjLTQyy/zWc5xFqSpp
-# aJKyhAyrGy2Q+p+Sv8uBdLsbOW9hfB6phoJkagB0O8E/MOsbtXG4d6KdTXt1d6k9
-# Gw8T6J0vceQl1AOXVgRl2pgIMaud7OkUH3xH9t1J3OM8aVKgdrip1V1pLpY+uLwm
-# SgTwuQJHitWcrR5815D9A6unooYjT8yxt/s0vaGCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBfrt/KeV4b
+# ANiQPOScf4KoP3QnHPKSZ/p/z/XVAjYtnzANBgkqhkiG9w0BAQEFAASCAgBjv8RP
+# agATS1YDHjbBDbAqrZ8S1wyyVJCRsV9CucfyTOjjvX8imOWgs/dGkbIQFI+exNo2
+# G2ga0r6cHFXPsKcl8+dPhNIXySts1Eb0r0M3FQ94lw1juobYuRMZDgrfGXWf7Aup
+# irpLS566OXEqaNZ0dsLxczA6dDRlAerXVx4xPJP0CMZyMmd90iE3Q67Dr2KeDiek
+# NbjQn3opedWsgJzE2+937KFLeEgdehBC0OQCTnaeu65M/k+pMK8XgvR8PqCPhtJX
+# Kc1Pj6MDkY8uNcJcQBBXhfnFkS8xvHdP1FoH0gCDY3/1KSvZtZBaPoBNysWpxif9
+# u+RMZrLGbo63dmknvrPt+gkL1MdDuh49L8+iK0BkQ7Rjp1thTmKAi1fqDMLJ6pDB
+# LF6D42SHlk3nwBCDU3bGix6XONqfss5Xo4KKu4yGwSHLH2b43DEO6DbInwVH1kJ1
+# EbucMI8DVe707WefMlzqoWC/BBNmY8ClX+qy+JMF88mrxkckhxCwcAxmpQF7rYdc
+# Eo+D5LFimODPC/+Y964I0FpjtoWPBc6+Z9HkZZeVtJSPR5DVD3k/Rb8OPKZqX+4m
+# 33kDjFCbBkh5t/TY8Kjt4V7prb+RrpuOG8Y++cYyr8TVb0koGFL5nQIQnGoqa3xm
+# 0kuI2A4CW91EpvWN0h/tT5ykpuATwY2+3naTTaGCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIK5PfWGoLirEteB4FlVGJ6gKDv9D/BAVgwezIBS18x+JAghfJy1vuu5Z
-# lBgPMjAyNjExMjUxNjMxNDFaMAMCAQECEBVHIlpNEvAhlm2pj9Pa3NigghGnMIIE
+# BAIBBQAEIDXCqoZMpo5l4lSDEcEtaX6xGUzx0/0PhHuCBW/88/j7AghK4dBruGwi
+# lhgPMjAyNjExMjcwNTI3MDhaMAMCAQECEFtfIa6UR4zQaZVE/+x0o76gghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -1587,17 +1632,17 @@ function Write-MbtBatchSummary {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE2MzE0MVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIDFX
-# lJ5WPPgn9SxtIAJfMQ2LSs3pPbviKBIt03760riTMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjcwOFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIFVo
+# Gr+sL+H0tYO8ykO8gWWcGSKLBw/GdpiOlRV119gPMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiEAxXpfWFBZwc9betzNB/fUTKN+hkBL++xOYpzr5Pzd8YECIH3u
-# Z4JVQ/5wMJzc/A1eslsLaeclqAmjFAtiQVzbSkUI
+# zj0EAwIESDBGAiEAtKSJnsIqKB796krAnRT55J4wHYrnbdTehd1uD8x4IccCIQDW
+# raK4Q8YSFXfALUMUVGVIyqTYKn9ca1LxMpqC5JWlaA==
 # SIG # End signature block

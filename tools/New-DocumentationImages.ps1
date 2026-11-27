@@ -91,6 +91,9 @@ $screens = [ordered]@{
     StartJobs = 'console-jobs'; ResumeImport = 'console-resume-import'; ResumeCopy = 'console-resume-copy'; ResumeExport = 'console-resume-export'; RunExportResumed = 'console-run-export-resumed'
     JobDelete = 'console-delete-job'; JobDeleteUnfinished = 'console-delete-job-unfinished'
     RunCopyMailboxReading = 'console-run-copy-reading'; RunCopyMailbox = 'console-run-copy'; DoneCopyMailbox = 'console-done-copy-complete'; DoneCopyMailboxPartial = 'console-done-copy-partial'
+    SetupExpert = 'console-setup-expert'; StartApplication = 'console-task-application'; StartJobsMe = 'console-jobs-me'; ExportFromEverything = 'console-from-everything'; ExportFromOtherMailboxApp = 'console-from-other-mailbox-app'; ExportFromOtherMailboxArchiveUnknown = 'console-from-other-mailbox-archive-unknown'; ExportFromOtherMailboxDelegated = 'console-from-other-mailbox-me'; ExportPlanEverything = 'console-verify-export-everything'; ImportToMe = 'console-import-to-me'
+    CopyMailboxFromBoth = 'console-copy-from-both'; CopyMailboxToBoth = 'console-copy-to-both'; CopyMailboxToBothNoArchive = 'console-copy-to-both-noarchive'; CopyMailboxToBothArchiveUnknown = 'console-copy-to-both-archive-unknown'
+    CopyMailboxPlanBoth = 'console-verify-copy-both'; RunCopyMailboxBoth = 'console-run-copy-both'; DoneCopyMailboxBoth = 'console-done-copy-both-complete'
 }
 # Numbered callouts (centre x, y on the 1480 x 940 picture). The numbers are explained in the caption of the picture in the guide.
 $callouts = @{
@@ -99,8 +102,8 @@ $callouts = @{
     TaskWhat = @(@(1, 50, 116), @(2, 16, 214), @(3, 16, 396), @(4, 866, 396))
     ExportFromSignedOut = @(@(1, 16, 190), @(2, 30, 263), @(3, 30, 415))
     ExportFromCode = @(@(1, 16, 190), @(2, 16, 330))
-    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 224), @(4, 1194, 224), @(5, 16, 617), @(6, 440, 838))
-    ExportFromPeriodOpen = @(@(1, 440, 762), @(2, 1080, 799), @(3, 440, 835))
+    ExportFrom = @(@(1, 16, 190), @(2, 16, 432), @(3, 460, 270), @(4, 1194, 270), @(5, 16, 617), @(6, 440, 838), @(7, 446, 234))
+    ExportFromPeriodOpen = @(@(1, 440, 730), @(2, 1075, 767), @(3, 440, 835))
     ExportPlanPeriod = @(@(1, 16, 190), @(2, 30, 561), @(3, 566, 449), @(4, 30, 776), @(5, 1252, 913))
     ExportTo = @(@(1, 16, 190), @(2, 460, 190), @(3, 1252, 913))
     ExportPlan = @(@(1, 16, 190), @(2, 16, 386), @(3, 562, 182), @(4, 16, 643), @(5, 1252, 913))
@@ -108,12 +111,12 @@ $callouts = @{
     RunImportDecision = @(@(1, 16, 330), @(2, 30, 381), @(3, 16, 913))
     RepairFromDamaged = @(@(1, 16, 239), @(2, 460, 239), @(3, 1252, 913))
     ImportFrom = @(@(1, 16, 215), @(2, 434, 215))
-    ImportTo = @(@(1, 16, 226), @(2, 452, 340), @(3, 452, 450))
+    ImportTo = @(@(1, 16, 226), @(2, 452, 332), @(3, 452, 454))
     RepairTo = @(,@(1, 16, 226))
     ImportPlan = @(@(1, 16, 190), @(2, 566, 262), @(3, 566, 446), @(4, 1090, 913))
     DoneExportComplete = @(@(1, 16, 190), @(2, 16, 424), @(3, 16, 556))
-    CopyMailboxFrom = @(@(1, 16, 200), @(2, 16, 515), @(3, 450, 198), @(4, 440, 838))
-    CopyMailboxTo = @(@(1, 16, 239), @(2, 442, 282), @(3, 442, 331), @(4, 442, 450))
+    CopyMailboxFrom = @(@(1, 16, 200), @(2, 16, 515), @(3, 450, 198), @(4, 440, 838), @(5, 446, 234))
+    CopyMailboxTo = @(@(1, 16, 239), @(2, 442, 274), @(3, 442, 358), @(4, 442, 472))
     CopyMailboxPlan = @(@(1, 16, 200), @(2, 16, 439), @(3, 566, 240), @(4, 566, 481), @(5, 1090, 913))
     DoneRepair = @(,@(1, 16, 178))
 }

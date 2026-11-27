@@ -264,9 +264,9 @@ Describe 'The period of an export' {
         $all = Get-MbtGuiPeriod (New-PeriodState)
         $all.Active | Should -BeFalse; $all.Chosen | Should -BeFalse; $all.Problem | Should -BeNullOrEmpty; $all.Text | Should -Be 'all dates'
         $both = Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })
-        $both.Active | Should -BeTrue; $both.Text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'; $both.From | Should -Be '2026-03-01'; $both.To | Should -Be '2026-03-31'
-        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })).Text | Should -Be 'arrived from 2026-03-01'
-        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' })).Text | Should -Be 'arrived until 2026-03-31'
+        $both.Active | Should -BeTrue; $both.Text | Should -Be 'received between 2026-03-01 and 2026-03-31'; $both.From | Should -Be '2026-03-01'; $both.To | Should -Be '2026-03-31'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })).Text | Should -Be 'received from 2026-03-01'
+        (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' })).Text | Should -Be 'received until 2026-03-31'
         (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'BETWEEN'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'the case of a value does not matter'
         (Get-MbtGuiPeriod (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-31'; ArrTo = '2026-03-31' })).Active | Should -BeTrue -Because 'one day is a period'
     }
@@ -280,31 +280,46 @@ Describe 'The period of an export' {
         (Get-MbtGuiPeriod (New-PeriodState @{ Task = 'import'; Period = 'between'; ArrFrom = '2026-03-01' })).Active | Should -BeFalse
         (Get-MbtGuiPeriod @{ Task = 'export' }).Active | Should -BeFalse
     }
-    It 'puts -ArrivedFrom and -ArrivedTo in the command, as ISO days, and nothing for every date, an open side or a wrong period' {
+    It 'puts -ReceivedFrom and -ReceivedTo in the command, as ISO days, and nothing for every date, an open side or a wrong period' {
         $line = { param($s) $c = @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)); ConvertTo-MbtGuiCommandLine -Command $c -S $s }
-        (& $line (New-PeriodState)) | Should -Not -Match 'Arrived'
-        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })) | Should -Match '-SelectionFile \S+ -ArrivedFrom 2026-03-01 -ArrivedTo 2026-03-31 -StorePath '
+        (& $line (New-PeriodState)) | Should -Not -Match 'Received'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' })) | Should -Match '-SelectionFile \S+ -ReceivedFrom 2026-03-01 -ReceivedTo 2026-03-31 -StorePath '
         $open = & $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' })
-        $open | Should -Match '-ArrivedFrom 2026-03-01 -StorePath'; $open | Should -Not -Match 'ArrivedTo'
-        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })) | Should -Not -Match 'Arrived' -Because 'the page does not let a wrong period go on'
+        $open | Should -Match '-ReceivedFrom 2026-03-01 -StorePath'; $open | Should -Not -Match 'ReceivedTo'
+        (& $line (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-04-01'; ArrTo = '2026-03-01' })) | Should -Not -Match 'Received' -Because 'the page does not let a wrong period go on'
     }
     It 'the same period is the same command under a French culture' {
         $was = [Globalization.CultureInfo]::CurrentCulture
         try {
             [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
             $s = New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-09'; ArrTo = '2026-03-31' }
-            (ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)) -S $s) | Should -Match '-ArrivedFrom 2026-03-09 -ArrivedTo 2026-03-31'
+            (ConvertTo-MbtGuiCommandLine -Command @(Get-MbtGuiCommand -Task export -S $s -Job (New-PeriodJob)) -S $s) | Should -Match '-ReceivedFrom 2026-03-09 -ReceivedTo 2026-03-31'
         } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
     }
     It 'every parameter of the period exists in the entry script' {
         $declared = (Get-Command (Join-Path $script:Package 'Invoke-MailboxTransfer.ps1')).Parameters.Keys
-        $declared | Should -Contain 'ArrivedFrom'; $declared | Should -Contain 'ArrivedTo'
+        $declared | Should -Contain 'ReceivedFrom'; $declared | Should -Contain 'ReceivedTo'
+    }
+    It 'shows a date of a message in the local time zone, as yyyy-MM-dd HH:mm whatever the culture, and nothing for no date' {
+        $was = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+            $utc = [datetimeoffset]::new(2026, 10, 31, 23, 30, 0, [TimeSpan]::Zero)
+            $expected = $utc.LocalDateTime.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+            Format-MbtGuiLocalTime $utc | Should -Be $expected
+            Format-MbtGuiLocalTime '2026-10-31T23:30:00Z' | Should -Be $expected
+            Format-MbtGuiLocalTime ([datetime]::new(2026, 10, 31, 23, 30, 0, [DateTimeKind]::Utc)) | Should -Be $expected
+            Format-MbtGuiLocalTime ([datetime]::new(2026, 10, 31, 23, 30, 0, [DateTimeKind]::Unspecified)) | Should -Be $expected -Because 'a date with no zone is UTC'
+            Format-MbtGuiLocalTime $null | Should -Be ''
+            Format-MbtGuiLocalTime '' | Should -Be ''
+            Format-MbtGuiLocalTime 'not a date' | Should -Be ''
+        } finally { [Globalization.CultureInfo]::CurrentCulture = $was }
     }
     It 'gives an export with a period a store of its own, named after it' {
         Get-MbtGuiPeriodStoreSuffix (New-PeriodState) | Should -Be ''
-        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-2026-03-01_2026-03-31'
-        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' }) | Should -Be '-arrived-from-2026-03-01'
-        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' }) | Should -Be '-arrived-until-2026-03-31'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01'; ArrTo = '2026-03-31' }) | Should -Be '-received-2026-03-01_2026-03-31'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrFrom = '2026-03-01' }) | Should -Be '-received-from-2026-03-01'
+        Get-MbtGuiPeriodStoreSuffix (New-PeriodState @{ Period = 'between'; ArrTo = '2026-03-31' }) | Should -Be '-received-until-2026-03-31'
     }
     It 'writes the numbers of a plan as "at most" for a period, and as they are otherwise' {
         $t = [pscustomobject]@{ Items = 1208; Folders = 12; Bytes = [long](2GB); UnknownSize = 0 }
@@ -323,8 +338,8 @@ Describe 'The period of an export' {
             $null = & (Get-Process -Id $PID).Path -NoProfile -File $demo -EventsFile $events -Speed 1000 -Mode Export @Extra
             return @(Get-Content -LiteralPath $events | ForEach-Object { $_ | ConvertFrom-Json })
         }
-        $with = & $run @('-ArrivedFrom', '2026-01-01', '-ArrivedTo', '2026-03-31')
-        ($with | Where-Object e -EQ 'plan').period.text | Should -Be 'arrived between 2026-01-01 and 2026-03-31'
+        $with = & $run @('-ReceivedFrom', '2026-01-01', '-ReceivedTo', '2026-03-31')
+        ($with | Where-Object e -EQ 'plan').period.text | Should -Be 'received between 2026-01-01 and 2026-03-31'
         ($with | Where-Object { $_.e -eq 'step' -and $_.id -eq 'list' -and $_.state -eq 'done' }).msg | Should -Match 'outside the period left out'
         $result = $with | Where-Object e -EQ 'result'
         $result.counts.outsidePeriod | Should -Be 14; $result.counts.withoutDate | Should -Be 1; $result.counts.kept | Should -BeGreaterThan 0
@@ -1010,10 +1025,10 @@ Describe 'Copy to another mailbox: one command for both parts, the period, the s
     It 'a period is given to the copy as to an export, and the store has its own name for it' {
         $s = $script:Cs.Clone(); $s.Period = 'between'; $s.ArrFrom = '2026-01-01'; $s.ArrTo = '2026-03-31'
         $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Cj)[0].Arguments
-        $a[($a.IndexOf('-ArrivedFrom') + 1)] | Should -Be '2026-01-01'
-        $a[($a.IndexOf('-ArrivedTo') + 1)] | Should -Be '2026-03-31'
+        $a[($a.IndexOf('-ReceivedFrom') + 1)] | Should -Be '2026-01-01'
+        $a[($a.IndexOf('-ReceivedTo') + 1)] | Should -Be '2026-03-31'
         (Get-MbtGuiPeriod $s).Active | Should -BeTrue
-        (Get-MbtGuiPeriodStoreSuffix $s) | Should -Be '-arrived-2026-01-01_2026-03-31'
+        (Get-MbtGuiPeriodStoreSuffix $s) | Should -Be '-received-2026-01-01_2026-03-31'
         $other = $script:Cs.Clone(); $other.Task = 'import'; $other.Period = 'between'; $other.ArrFrom = '2026-01-01'
         (Get-MbtGuiPeriod $other).Active | Should -BeFalse -Because 'only an export and a copy read a live mailbox'
     }
@@ -1087,5 +1102,146 @@ Describe 'Continue a job: the list, the Resume view, the first step of a resumed
         $r.Steps[0].Title | Should -Be 'Resume: reading what is already done'
         (Get-MbtGuiPreparingText $r) | Should -BeLike '**Preparing.**'
         $r.Planned | Should -BeTrue
+    }
+}
+
+Describe 'Everything, the places of a copy and the ids of Setup: what the commands say' {
+    BeforeAll {
+        $script:Entry2 = Join-Path $script:Package 'Invoke-MailboxTransfer.ps1'
+        $script:Es = @{ Task = 'export'; Mailbox = 'adele@contoso.com'; Shared = ''; AuthMode = 'user'; SelMode = 'all'; ImSelMode = 'all'; EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:p' }, @{ Kind = 'Archive'; Id = 'MBX:a' }); RecoverableItems = $false
+            Dest = 'store'; SplitGB = 50; CheckEach = $true; SepAux = $false; OutFolder = 'D:\Out'; OutName = 'x.pst'; McTarget = ''; McFromKind = ''; McLayout = 'Mirror'; TgtLoc = 'Primary'; TgtMode = 'new'; TgtName = 'Copy A'; TgtMode2 = 'new'; TgtName2 = 'Copy B'; McArchive = @{}
+            ArchiveIds = @{}; PrimaryIdValue = ''; ArchiveIdValue = ''; Mapping = ''; ImSrc = 'store'; ImPath = 'D:\Store'; ImShared = ''; Conc = 4; Tries = 3; Reconcile = 5; Awake = $false
+            Changed = @{}; Period = 'all'; ArrFrom = ''; ArrTo = ''; TenantId = ''; ClientId = ''; AppTenant = ''; AppClient = ''; AppThumb = '' }
+        $script:Ej = @{ Id = 'export-1'; Folder = 'D:\J'; EventsPath = 'D:\J\events.jsonl'; StopPath = 'D:\J\stop.request'; StorePath = 'D:\Store'; SelectionFiles = @(); JobName = 'import-1' }
+    }
+    It 'Everything is the whole of the places ticked, no selection file: -Mailbox All for the Primary and the Archive, one place alone for one' {
+        $a = (Get-MbtGuiCommand -Task export -S $script:Es -Job $script:Ej)[0].Arguments
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a | Should -Not -Contain '-SelectionFile'
+        $a | Should -Not -Contain '-IncludeRecoverableItems'
+        $s = $script:Es.Clone(); $s.EvPlaces = @(@{ Kind = 'Archive'; Id = 'MBX:a' })
+        $b = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-Mailbox') + 1)] | Should -Be 'Archive'
+        $s.EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:p' }, @{ Kind = 'AuxArchive'; Id = 'MBX:x' })
+        $c = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $c[($c.IndexOf('-Mailbox') + 1)] | Should -Be 'Primary' -Because 'an auxiliary archive follows the Archive: it is no place of its own'
+    }
+    It 'Everything with the box of the deleted items takes them, and a shared mailbox is given by its address' {
+        $s = $script:Es.Clone(); $s.RecoverableItems = $true; $s.Shared = 'projects@contoso.com'; $s.EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:s' })
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $a | Should -Contain '-IncludeRecoverableItems'
+        $a[($a.IndexOf('-MailboxId') + 1)] | Should -Be 'projects@contoso.com'
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'Primary'
+    }
+    It 'another mailbox: the application names it as the mailbox it works on and reads every place; a delegated sign-in reads its Primary by the address' {
+        $s = $script:Es.Clone(); $s.Shared = 'projects@contoso.com'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $a[($a.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'projects@contoso.com'
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a | Should -Not -Contain '-MailboxId'
+        $d = $script:Es.Clone(); $d.Shared = 'projects@contoso.com'; $d.EvPlaces = @(@{ Kind = 'Primary'; Id = 'MBX:s' })
+        $b = (Get-MbtGuiCommand -Task export -S $d -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-UserPrincipalName') + 1)] | Should -Be 'adele@contoso.com'
+        $b[($b.IndexOf('-MailboxId') + 1)] | Should -Be 'projects@contoso.com'
+        $b[($b.IndexOf('-Mailbox') + 1)] | Should -Be 'Primary'
+    }
+    It 'Only what I tick sends the selection file, as before; a state that does not say is the old way' {
+        $s = $script:Es.Clone(); $s.SelMode = 'ticks'
+        $job = $script:Ej.Clone(); $job.SelectionFiles = @('D:\J\selection-1.json')
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $job)[0].Arguments
+        $a[($a.IndexOf('-SelectionFile') + 1)] | Should -Be 'D:\J\selection-1.json'
+        $a | Should -Not -Contain '-Mailbox'
+        $old = $s.Clone(); $old.Remove('SelMode')
+        (Get-MbtGuiCommand -Task export -S $old -Job $job)[0].Arguments | Should -Contain '-SelectionFile'
+    }
+    It 'an import takes everything unless Only what I tick is chosen: the selection file goes only then' {
+        $s = $script:Es.Clone(); $s.Task = 'import'
+        $job = $script:Ej.Clone(); $job.SelectionFiles = @('D:\J\selection-1.json')
+        (Get-MbtGuiCommand -Task import -S $s -Job $job)[0].Arguments | Should -Not -Contain '-SelectionFile'
+        $s.ImSelMode = 'ticks'
+        (Get-MbtGuiCommand -Task import -S $s -Job $job)[0].Arguments | Should -Contain '-SelectionFile'
+    }
+    It 'the ids of Setup are the ids of the configuration: -PrimaryMailboxId and -ArchiveMailboxId for the account that signs in, the archive id of Where to look first, nothing for the application or for another mailbox' {
+        $s = $script:Es.Clone(); $s.PrimaryIdValue = 'MBX:11111111-2222-3333-4444-555555555555@contoso.onmicrosoft.com'; $s.ArchiveIdValue = 'MBX:11111111-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com'
+        $a = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $a[($a.IndexOf('-PrimaryMailboxId') + 1)] | Should -Be $s.PrimaryIdValue
+        $a[($a.IndexOf('-ArchiveMailboxId') + 1)] | Should -Be $s.ArchiveIdValue
+        $s.ArchiveIds = @{ 'adele@contoso.com' = 'MBX:99999999-2222-3333-4444-555555555555@contoso.onmicrosoft.com' }
+        $b = (Get-MbtGuiCommand -Task export -S $s -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-ArchiveMailboxId') + 1)] | Should -Be 'MBX:99999999-2222-3333-4444-555555555555@contoso.onmicrosoft.com'
+        $app = $s.Clone(); $app.AuthMode = 'app'; $app.AppThumb = ('AB' * 20); $app.AppTenant = 't'; $app.AppClient = 'c'
+        (Get-MbtGuiCommand -Task export -S $app -Job $script:Ej)[0].Arguments | Should -Not -Contain '-PrimaryMailboxId'
+        $shared = $s.Clone(); $shared.Shared = 'projects@contoso.com'
+        (Get-MbtGuiCommand -Task export -S $shared -Job $script:Ej)[0].Arguments | Should -Not -Contain '-PrimaryMailboxId'
+        $imp = $s.Clone(); $imp.Task = 'import'
+        (Get-MbtGuiCommand -Task import -S $imp -Job $script:Ej)[0].Arguments | Should -Contain '-ArchiveMailboxId'
+        $none = $script:Es.Clone()
+        (Get-MbtGuiCommand -Task export -S $none -Job $script:Ej)[0].Arguments | Should -Not -Contain '-PrimaryMailboxId'
+    }
+    It 'a copy of both places is ONE command with the layout and a folder for each part; "the same folder names" of the Archive part is an empty folder' {
+        $s = $script:Es.Clone(); $s.Task = 'mailcopy'; $s.McFromKind = 'All'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = 'adele.vance@contoso.com'; $s.Mailbox = 'alex@contoso.com'
+        $c = @(Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)
+        $c.Count | Should -Be 1
+        $a = $c[0].Arguments
+        $a[($a.IndexOf('-Mailbox') + 1)] | Should -Be 'All'
+        $a[($a.IndexOf('-TargetLayout') + 1)] | Should -Be 'Mirror'
+        $a[($a.IndexOf('-TargetRoot') + 1)] | Should -Be 'Copy A'
+        $a[($a.IndexOf('-TargetArchiveRoot') + 1)] | Should -Be 'Copy B'
+        $a[($a.IndexOf('-TargetMailboxId') + 1)] | Should -Be 'adele.vance@contoso.com'
+        $a | Should -Not -Contain '-TargetMailbox'
+        $a | Should -Not -Contain '-SelectionFile'
+        $s.TgtMode2 = 'same'
+        $b = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments
+        $b[($b.IndexOf('-TargetArchiveRoot') + 1)] | Should -Be ''
+        $s.TgtMode = 'same'
+        (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments | Should -Not -Contain '-TargetArchiveRoot'
+        $s.McLayout = 'Archive'; $s.TgtMode = 'new'; $s.TgtMode2 = 'new'
+        $d = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments
+        $d[($d.IndexOf('-TargetLayout') + 1)] | Should -Be 'Archive'
+    }
+    It 'the id of the archive of the target is given when it was typed; the selection file of ticks in both places goes as it is' {
+        $s = $script:Es.Clone(); $s.Task = 'mailcopy'; $s.SelMode = 'ticks'; $s.McFromKind = 'All'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = ' Adele.Vance@contoso.com '
+        $s.McArchive = @{ 'adele.vance@contoso.com' = 'MBX:99999999-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com' }
+        $job = $script:Ej.Clone(); $job.SelectionFiles = @('D:\J\selection-1.json')
+        $a = (Get-MbtGuiCommand -Task mailcopy -S $s -Job $job)[0].Arguments
+        $a[($a.IndexOf('-TargetArchiveMailboxId') + 1)] | Should -Be 'MBX:99999999-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com'
+        $a[($a.IndexOf('-SelectionFile') + 1)] | Should -Be 'D:\J\selection-1.json'
+        $one = $s.Clone(); $one.McFromKind = 'Primary'; $one.TgtLoc = 'Primary'
+        (Get-MbtGuiCommand -Task mailcopy -S $one -Job $job)[0].Arguments | Should -Not -Contain '-TargetArchiveMailboxId' -Because 'the Primary of the target needs no archive id'
+        $one.TgtLoc = 'Archive'
+        (Get-MbtGuiCommand -Task mailcopy -S $one -Job $job)[0].Arguments | Should -Contain '-TargetArchiveMailboxId'
+    }
+    It 'every parameter of these commands is a parameter of the entry script' {
+        $declared = (Get-Command $script:Entry2).Parameters.Keys
+        $s = $script:Es.Clone(); $s.Task = 'mailcopy'; $s.McFromKind = 'All'; $s.AuthMode = 'app'; $s.AppThumb = ('AB' * 20); $s.AppTenant = 't'; $s.AppClient = 'c'; $s.McTarget = 'adele@contoso.com'; $s.Mailbox = 'alex@contoso.com'; $s.TgtMode2 = 'new'; $s.RecoverableItems = $true
+        $s.McArchive = @{ 'adele@contoso.com' = 'MBX:99999999-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com' }
+        foreach ($t in (Get-MbtGuiCommand -Task mailcopy -S $s -Job $script:Ej)[0].Arguments) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because $t } }
+        $u = $script:Es.Clone(); $u.PrimaryIdValue = 'MBX:11111111-2222-3333-4444-555555555555@contoso.onmicrosoft.com'; $u.ArchiveIdValue = 'MBX:11111111-2222-3333-4444-5555555555aa@contoso.onmicrosoft.com'
+        foreach ($t in (Get-MbtGuiCommand -Task export -S $u -Job $script:Ej)[0].Arguments) { if ($t -match '^-([A-Za-z]+)$') { $declared | Should -Contain $Matches[1] -Because $t } }
+    }
+}
+
+Describe 'The tick boxes while Everything is chosen' {
+    BeforeAll {
+        . (Join-Path $script:Package 'module\MailboxTransfer.Gui.Browse.ps1')
+        function New-TickBrowser([string]$ModeKey) { @{ ModeKey = $ModeKey; C = [pscustomobject]@{ FolderTree = [pscustomobject]@{ Tag = $null }; MessageList = [pscustomobject]@{ Tag = $null }; PickAll = [pscustomobject]@{ IsEnabled = $true; Opacity = 1.0 } } } }
+    }
+    BeforeEach { $script:GuiBeforeTicks = if (Test-Path variable:script:Gui) { $script:Gui } else { $null } }
+    AfterEach { if ($null -ne $script:GuiBeforeTicks) { $script:Gui = $script:GuiBeforeTicks } else { Remove-Variable -Name Gui -Scope Script -ErrorAction SilentlyContinue } }
+    It 'greys the boxes of the tree and of the message list in Everything, and gives them back in Only what I tick' {
+        $script:Gui = @{ S = @{ SelMode = 'all' } }
+        $b = New-TickBrowser 'SelMode'
+        Set-MbtGuiTicksEnabled $b
+        $b.C.FolderTree.Tag | Should -Be 'noticks'; $b.C.MessageList.Tag | Should -Be 'noticks'; $b.C.PickAll.IsEnabled | Should -BeFalse
+        $script:Gui.S.SelMode = 'ticks'
+        Set-MbtGuiTicksEnabled $b
+        $b.C.FolderTree.Tag | Should -BeNullOrEmpty; $b.C.MessageList.Tag | Should -BeNullOrEmpty; $b.C.PickAll.IsEnabled | Should -BeTrue
+    }
+    It 'takes the choice of the import browser from its own key, and leaves a browser without the choice alone' {
+        $script:Gui = @{ S = @{ SelMode = 'ticks'; ImSelMode = 'all' } }
+        $i = New-TickBrowser 'ImSelMode'; Set-MbtGuiTicksEnabled $i
+        $i.C.FolderTree.Tag | Should -Be 'noticks'
+        $o = New-TickBrowser ''; Set-MbtGuiTicksEnabled $o
+        $o.C.FolderTree.Tag | Should -BeNullOrEmpty; $o.C.PickAll.IsEnabled | Should -BeTrue
     }
 }

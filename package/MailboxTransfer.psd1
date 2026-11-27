@@ -8,7 +8,7 @@
 #
 @{
     RootModule        = 'MailboxTransfer.psm1'
-    ModuleVersion     = '1.3.0'
+    ModuleVersion     = '1.4.0'
     GUID              = 'e3b6a1f4-5d0c-4a8e-9b2f-7c41d8a05e63'
     Author            = 'Nicolas Fabert'
     Description       = 'Mailbox Transfer: exports Exchange Online mailboxes (primary and archive) to local storage and imports them into another mailbox with the Microsoft Graph mailbox import and export API. Phase 0: feasibility (folder tree, exportItems, FastTransfer reader, importItem).'
@@ -22,7 +22,7 @@
         'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath'
         'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem'
         'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
-        'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
+        'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Get-MbtReceivedDateAvailability', 'Get-MbtPeriodDateNote', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
         'Get-MbtCopyChoiceKey', 'Get-MbtCopyStorePath', 'Get-MbtCopyJobName', 'Set-MbtCopyStoreKey', 'Get-MbtCopyEstimate', 'Format-MbtCopyDuration', 'Show-MbtCopyPlan'
         'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
         'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
@@ -42,10 +42,10 @@
 }
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBf1mOAqCHHJRqm
-# dwC8rmJot02nSR+81xMTbMHEYo/zzqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDQU5IFRoU5RrWV
+# /VpcLrb9rHRqM8JcaTLARw4/RwOBn6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -117,28 +117,28 @@
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA1QQ/8Dsxm
-# h7Gx6Rxk7m4f/xycvGExnqsr/fCIk3c43DANBgkqhkiG9w0BAQEFAASCAgBFwY9f
-# WfhPD54gllOLQTmctU8ceWIZ6uDuQoXVRypGzDwC7WAA8wCbOTbbrFfHcOb8CGfe
-# NGiIXxjms0GfsWo9/kUjd5MlfySWlhoQpQSbLFj1aWEq5sk4IIMd3UJGB+YP7zw4
-# oGFuueq8DSMmT5A/pgq5ANMuab4yFe60aC53Hjb+KtihIurnQdG2UQrtUdiKXb8S
-# yq3PkOZIK8O1832CsL5BKmcSqJMq//rz8sU2w1+iqa/oMtsgA+eL4BUDv9xhAN7M
-# OA/VVgz7nlL77T4LCmHgWqBLFas9pC+Q6dW5zWtpgNmDZTgZixbhiVXQZeerNj1/
-# +oqV4Zyoolm3gbVQHmCEWuHjiQG57ITXdvp0CG6wjs8z0JShByRBEMir/theb+sx
-# hxi7RjRBMUJJEEvFugg6OPOT8HEkserKHYydRqHISDJCslM0qM0L5PXhzPzo6zUv
-# +y5eoXznIaNqSBYEATkQtnguweFHvMWxGKaYUG3S7kRiabu+Qqnny3DG+dJXV+iI
-# 0gT9WLgtAeFb42iXaynnehz8joP0DiGlPqqK2bL6SgA/TRV0wYXIu5uL4YgDHvrN
-# tGLkzviAkF/OdXUBXm4+cJ97ia3gX3MHQiQ/80U/PceAhi9BFIBm/zQsFVUAUint
-# YyQiMCLJPwKukuM5KkipYURTinxTfy5Mxuk3AKGCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAY3KK1eGBE
+# JCY9B5rFAyuUvT3G96sw8f9fWjXMPyhaDjANBgkqhkiG9w0BAQEFAASCAgBfgwdr
+# LUuNeywPjoS5/Xs+Rxey6JSI+ip+wtFVmt4vDibgl+O4gQW8PYm58NEzITAz7UO6
+# xuElvjkC8PYcRwzNseE22nVyGE5L8U/eNtUOcehmC2vwBwxCfwY2qkZEzgwQuKAt
+# 02T3ieqkQcV2FN9Hq/X4INy7qezW2HwehO0DdBEt7T1nEQXXTqmkVLms0x0/Vw/w
+# KwT8+p0jYRYqsD1JcH3opcTFA+WGWPzTK7TYZ3fk3BI5Uq6wIE9FfgIGlNNzm9iC
+# 04Z6MrwbS1wSzOzh9LfxlZ3I8ApNy092TUX8d3e9+cbUVt01v9nQYADyLjaGa+8K
+# bDkxnXSzXgSwe5nx/V8kXLIW3AHOtDwWVB5q27oPLBbyN2m05HrEWvEvZdpvhppr
+# AH4tlANAClwQG+ax1XlH9micTLXVyLcx9VhBI1slsEhyOndsP4u5/c1276L+fIkV
+# ABYu0pjeKqBGw8C5iwwM86pjwxFrx1jGkVIwxVK/7xrYVl4dBiYgRaLKpzJ90+BQ
+# wXIiRFMEsgektonEbaKS1HQnbdTHzRqNU2Ssc5xKWv/w98TalMo1/5rTxKFHHKX3
+# 6LPjc6TvABQQBCKjjSkQKDxtlhDSozbM0+FXva53H5QPVC7C6FEeUk60PqPN8upq
+# gHzmdeezP7Y0PWhfVNnxswc0FYTVQCaqciz6mqGCFM8wghTLBgorBgEEAYI3AwMB
+# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIOaWaB4iTdh+QA8J1bXpmf2tabd/M+RvzUx33nWWFRnsAghpmaJ9jMdr
-# vBgPMjAyNjExMjUxNTM2NTRaMAMCAQECECfXtm9E5qagdJ40FHpLnZOgghGnMIIE
+# BAIBBQAEIMtOgGLKwaMkzTvBMW60o5XKYfdekpD08/xje8qh3jROAggLfNHKVDPA
+# XBgPMjAyNjExMjcwNTI2NTFaMAMCAQECECW/YvchRsbddD32oVt33+egghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -233,17 +233,17 @@
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzY1NFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHw7
-# q4MgtxXuH2m61/U6hTwXCu7cyGIM3wMhJqfe/UdzMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjY1MVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICMv
+# ZMhxMznzQZ0dvUnzsutRVyu93gwDBeYz2U7B4Gn9MIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiB+3ugT4DhNEj/ToX3lqAJGR6gQOxFIvYY2pziP1WzlUwIgJKE9
-# SfvzQax3vUxrTEcDsTwegkBpIawYJiCNwiA5Y8Q=
+# zj0EAwIESDBGAiEAs3NwdGFVwPq0qcwG335e2QhvHvXkAZORkWkdPrhSdZ4CIQDv
+# 5a+1IArAkxvMtF83LaS9ft6Z5DwQCTVvPDcsFqtjHw==
 # SIG # End signature block

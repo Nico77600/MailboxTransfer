@@ -5,6 +5,7 @@
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
@@ -19,7 +20,12 @@
       <ContentControl x:Name="BrowseBadge" Grid.Column="2" IsTabStop="False"/>
     </Grid>
 
-    <Grid Grid.Row="1">
+    <StackPanel x:Name="ModeRow" Grid.Row="1" Margin="0,0,0,10" Visibility="Collapsed">
+      <StackPanel x:Name="ModeOptions" Orientation="Horizontal"/>
+      <ContentControl x:Name="ModeNote" IsTabStop="False" Margin="0,6,0,0"/>
+    </StackPanel>
+
+    <Grid Grid.Row="2">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="300" MinWidth="200"/>
         <ColumnDefinition Width="6"/>
@@ -73,17 +79,29 @@
           </ListView.ItemContainerStyle>
           <ListView.ItemTemplate>
             <DataTemplate>
-              <Grid>
+              <Grid x:Name="RowGrid">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="118"/>
                 </Grid.ColumnDefinitions>
-                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Visibility="{Binding CheckVisibility}" MinWidth="0" Padding="0" Margin="0,0,8,0" VerticalAlignment="Center" AutomationProperties.Name="Select message"/>
+                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Visibility="{Binding CheckVisibility}" MinWidth="0" Padding="0" Margin="0,0,8,0" VerticalAlignment="Center" AutomationProperties.Name="Select message">
+                  <CheckBox.Style>
+                    <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListView}}" Value="noticks">
+                          <Setter Property="IsEnabled" Value="False"/>
+                  <Setter Property="Opacity" Value="0.35"/>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </CheckBox.Style>
+                </CheckBox>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding From}" ToolTip="{Binding From}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                     <TextBlock Text="{Binding AttachmentGlyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" Margin="6,3,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                   </StackPanel>
                   <TextBlock x:Name="Subj" Text="{Binding Subject}" ToolTip="{Binding Subject}" FontSize="12" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource MbtBrandText}"/>
+                  <TextBlock x:Name="OutsideNote" Text="outside the period" ToolTip="The date shown is outside the period of the export: the message is left out, unless you tick it one by one." FontSize="11" FontStyle="Italic" Visibility="Collapsed" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                 </StackPanel>
                 <TextBlock Grid.Column="2" Text="{Binding SizeText}" FontSize="12" TextAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                 <TextBlock Grid.Column="3" Text="{Binding DateText}" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
@@ -91,6 +109,10 @@
               <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding SubjectNa}" Value="True">
                   <Setter TargetName="Subj" Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding OutsidePeriod}" Value="True">
+                  <Setter TargetName="RowGrid" Property="Opacity" Value="0.5"/>
+                  <Setter TargetName="OutsideNote" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
               </DataTemplate.Triggers>
             </DataTemplate>
@@ -122,7 +144,7 @@
       </Border>
     </Grid>
 
-    <Border x:Name="Tray" Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" Margin="0,10,0,0" Padding="0,10,0,0">
+    <Border x:Name="Tray" Grid.Row="3" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" Margin="0,10,0,0" Padding="0,10,0,0">
       <StackPanel>
         <StackPanel x:Name="TrayPanel" Orientation="Horizontal"/>
         <StackPanel x:Name="PeriodRow" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed"/>

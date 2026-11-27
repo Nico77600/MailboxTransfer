@@ -165,6 +165,7 @@ function Write-MbtJobStep {
         [long]$Done = -1, [long]$Total = -1, [long]$Bytes = -1, [long]$BytesTotal = -1, [string]$Msg
     )
     if (-not $script:EventLog) { return }
+    $Id = Get-MbtJobStepKey $Id
     # the step that reads what an earlier run did ends when the next step begins
     if ($Id -ne 'resume' -and $State -eq 'running' -and $script:JobInfo.Steps.ContainsKey('resume') -and $script:JobInfo.Steps['resume'] -eq 'running') {
         $script:JobInfo.Steps['resume'] = 'done'
@@ -603,9 +604,10 @@ function Get-MbtCapability {
 function Set-MbtJobPhase {
     <# A job that does two jobs in one process (a copy: the export, then the import) says which one it is in: the progress of the engine then follows that half, its steps and its counters. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][ValidateSet('export', 'import')][string]$Phase)
+    param([Parameter(Mandatory)][ValidateSet('export', 'import')][string]$Phase, [ValidateRange(1, 9)][int]$Part = 1)
     if (-not $script:JobInfo) { return }
     $script:JobInfo.Phase = $Phase
+    $script:JobInfo.Part = $Part
     $p = $script:JobProgress
     $p.Step = ''; $p.Detail = ''; $p.ThrottleSeen = 0; $p.WindowsSeen = 0
 }
@@ -616,10 +618,24 @@ function Get-MbtJobPhase {
     return [string]$script:JobInfo.Task
 }
 
+function Get-MbtJobStepKey {
+    <# The id of a step as the events of this job write it: the steps of the import of the second part of a copy of two places (the Archive after the Primary) are check-2, folders-2, send-2, reconcile-2 and final-2. #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Id)
+    $part = if ($script:JobInfo -and $script:JobInfo.ContainsKey('Part')) { [int]$script:JobInfo.Part } else { 1 }
+    if ($part -gt 1 -and $script:JobInfo.Phase -eq 'import' -and $Id -in 'check', 'folders', 'send', 'reconcile', 'final') { return "$Id-$part" }
+    return $Id
+}
+
+function Get-MbtJobStepBase {
+    <# The step without its part: send-2 is send. #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Id)
+    return ($Id -replace '-\d$', '')
+}
+
 function Get-MbtJobStepOrder {
     switch (Get-MbtJobPhase) {
         'export' { @('tree', 'list', 'download', 'verify', 'pst', 'pstcheck') }
-        'import' { @('check', 'folders', 'send', 'reconcile', 'final') }
+        'import' { @('check', 'folders', 'send', 'reconcile', 'final' | ForEach-Object { Get-MbtJobStepKey $_ }) }
         default { @() }
     }
 }
@@ -642,10 +658,11 @@ function Update-MbtJobProgress {
         '^check$' { 'check' } '^folders$|^plan$' { 'folders' } '^import$' { 'send' } '^reconcile$' { 'reconcile' }
         default { '' }
     }
+    if ($current) { $current = Get-MbtJobStepKey $current }
     if ($current -and $order -contains $current -and $current -ne $p.Step) {
         $i = [array]::IndexOf($order, $current)
         # the steps before the current one are done (a reconcile pass is a side step of the send step)
-        if ($current -ne 'reconcile' -and $i -gt 0) {
+        if ((Get-MbtJobStepBase $current) -ne 'reconcile' -and $i -gt 0) {
             foreach ($s in @($order[0..($i - 1)])) {
                 if ($script:JobInfo.Steps[$s] -in 'waiting', 'running') {
                     # the listing is over: with a period it says how many items were left out (all the locations of the run together)
@@ -663,10 +680,10 @@ function Update-MbtJobProgress {
         $p.Detail = $detail
         Write-MbtJobStep -Id $p.Step -State running -Msg $detail
     }
-    $counting = if ($export) { 'download' } else { 'send' }
+    $counting = if ($export) { 'download' } else { Get-MbtJobStepKey 'send' }
     # the folders that changed since the last poll (the Run page lists them)
     try { if ($Job.Metrics -and $Job.Metrics.Folders) { [void][MailboxTransfer.FolderEventPump]::Write($script:EventLog, $Job.Metrics.Folders, $counting) } } catch { }
-    if ($p.Step -eq $counting -or ($p.Step -eq 'reconcile' -and -not $export)) {
+    if ($p.Step -eq $counting -or ((Get-MbtJobStepBase $p.Step) -eq 'reconcile' -and -not $export)) {
         Write-MbtJobStep -Id $counting -State running -Done $snap.Items -Total $snap.TotalItems -Bytes $snap.Bytes -BytesTotal $snap.TotalBytes
     }
     # throttling answers (429 / 503) since the last poll
@@ -695,7 +712,7 @@ function Update-MbtJobProgress {
         $done = if ($Job.Cancelled -or $Job.Error) { $null } else { 'done' }
         # the job ended well: every step of the job is done, also the ones that went by between two polls
         foreach ($s in $order) {
-            if ($done -and $s -in 'tree', 'list', 'download', 'check', 'folders', 'send', 'reconcile' -and $script:JobInfo.Steps[$s] -ne 'done') {
+            if ($done -and (Get-MbtJobStepBase $s) -in 'tree', 'list', 'download', 'check', 'folders', 'send', 'reconcile' -and $script:JobInfo.Steps[$s] -ne 'done') {
                 if ($s -eq $counting) { Write-MbtJobStep -Id $s -State done -Done $snap.Items -Total $snap.TotalItems -Bytes $snap.Bytes -BytesTotal $snap.TotalBytes } else { Write-MbtJobStep -Id $s -State done }
             }
         }
@@ -714,7 +731,7 @@ function Get-MbtJobPeriodResult {
 }
 
 function Get-MbtPeriodListNote {
-    <# "25 items outside the period left out" (the items of the earlier locations of the run included), or $null when the job has no period or has not counted yet. #>
+    <# "25 items outside the period left out; on the received date" (the items of the earlier locations of the run included), or $null when the job has no period or has not counted yet. #>
     param($Job)
     $result = Get-MbtJobPeriodResult -Job $Job
     if (-not $result) { return $null }
@@ -722,6 +739,14 @@ function Get-MbtPeriodListNote {
     $outside = $before + [long]$result.ItemsOutsidePeriod
     $text = '{0} {1} outside the period left out' -f $outside.ToString('N0', [Globalization.CultureInfo]::InvariantCulture), $(if ($outside -eq 1) { 'item' } else { 'items' })
     if ([long]$result.ItemsWithoutDate -gt 0) { $text += '; {0} without a date kept' -f ([long]$result.ItemsWithoutDate).ToString('N0', [Globalization.CultureInfo]::InvariantCulture) }
+    if ($result.PSObject.Properties['PeriodDate'] -and $result.PeriodDate) {
+        $folders = @($result.FoldersOnArrivalDate).Count
+        $text += switch ([string]$result.PeriodDate) {
+            'received' { '; on the received date' }
+            'arrival' { '; on the arrival date, not the received date' }
+            default { "; on the received date, $folders $(if ($folders -eq 1) { 'folder' } else { 'folders' }) on the arrival date" }
+        }
+    }
     return $text
 }
 
@@ -813,10 +838,10 @@ function Write-MbtPstExportEvent {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBA6TaB4OgHpyF7
-# aV3BEnLNiTj/cT5Fti8sSNWbnzK75KCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBkJkYhXPfaemHa
+# DUXUzfopNUN2hS3j/affKvd/SLUynKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -888,28 +913,28 @@ function Write-MbtPstExportEvent {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAtofhOSbq1
-# RcZppmhLzuNC2V8vWvJIlqyYjVf3dubteTANBgkqhkiG9w0BAQEFAASCAgAsFvRe
-# PPmkv1q5d8mT+zHRXVbZNQXnh/tI6T1A9ahLWe/U2yFEi19Iycid7Q0SBL8LYA4B
-# zY0qjxcSeG3Fd5BpoVp5L09G6kGN87RNt8md9eURtuEZeI7rGHr4VgD+tfxgps3E
-# auHO0SYW2eHA+YjAXFHvPAfMJ9SNEo2EdvOQ1TBJpdI17zLEF0DfJ7FqUySBcV5p
-# 2AcyVYQT8LkxkM8/fDoV4iakok3jmBbBfjh9CrKoymOLRN1dHPIClcIr5svpUclA
-# bi4HAKhah+jjPlhtc4/M9VwNfKLdNypsGD5fqyhi4Z9ZMpvs8imQ3r7Yli6RhFYp
-# EcUG2k8623VwgeestMDbKdSeSoz4huDjnsjj1oWGZOnGbuc4F0AJeT7cC6COL1xX
-# 9yTDNGLVlqF1lZZeF69odaHmnW5gxG9JTC+HH55+wrs4Pj42gAaUjm/98Tg3Xs93
-# kZD6qr2HbVhiNKoJGxb3oS42re/I7HNsewtbmEB3/M1IULz6hE/E09hdayuYTM2J
-# mIlprmoqTqG1oBiuWPg6y8JkP3OdFYecwJyiQOI3gy8Q7U4mzDQg35j8Le2MC3Ju
-# THwIWmTzwuGUIprO7Xi8lD4DOa+souFlOuBPRvFVJeN7B+/LpAJS6Jur99maiunA
-# Kbal30rYvWbbxDY6/2lIGU9WL9JVT5i7px2viaGCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA1awuBBuuD
+# 7EReEVPUjpr+LlS7swVoCYvaUdGS6njDkDANBgkqhkiG9w0BAQEFAASCAgBNkJfo
+# 1EEdIH8zjnAc69IoRgtRE0NV3O+1dDb5ao/MilFaeiofaWrCAtSX3EFm/oYSKuSY
+# +/54K4nWznKmG/Fwuzaz9VVL2BMcYlN/JN1cKrBvsnJORjcfgjFs5LQ+ke/5G6Es
+# y+jQ1CT3KvrqgMfn7tr5oIIPJhavFDaKHYL8Yi5BdberpecJaTszhD3LmAuoIGSt
+# gMb1SSMjE9Tag2E4WfqyxV1mXudMKZUx93/RrjjTU0X65SrzHUnx1tlgFxpAJV1K
+# s/WaQKe0pBCJHHyi6rPdKyQjuiwR41FSujXlJBnOj2S8kIJRgQiBdfIT5o6yssXN
+# suXO/cUmDl75uYkhFvTGPWl3772DBW8VrvP2JXxKuywGES3DVAPBKWrhhNxiHzZ+
+# hsdGng23TbP5lNuBWoCX/aG8dBxutQ3Xf3j+89uOZ3JYn/Vx8/cGSBIwrSYZr6Lv
+# PK1vUqlBETC6y3i7suZCsu/AtNNkVQHxsA70xqjmiLQ+1+9eKQo3PSYNGI8lg6ub
+# WLfdV2K3wm7VXgwgzqkYsjRDRmpsdOoTF5p1gsNqqGYZGSYkO2g/NsnPfDa6k4Ap
+# CT9pGrE2qdSWYBUhCZ8uBWUBj13bzujij+ZPg6LJ5LgBNiwaRKo3EaetaH3vGUOr
+# 6RxK9p+bXu9PdJSC/HCPhfLHgQq16ZsdM4V42qGCFM0wghTJBgorBgEEAYI3AwMB
+# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIHVhQ2vCqINW2AKnbBE1fq2U3LA9hljbQHkHg0Lbvfh6Agh/i/8RCo2h
-# EBgPMjAyNjExMjUxNTM3MDBaMAMCAQECEGnC4nPUC9v8L9EEfF+fuzGgghGnMIIE
+# BAIBBQAEIOo2LqS9mDGPfaB01W8aOOGvdlvm+G3O7fcVDHWPnUy5Agh0gV8vEFrR
+# kRgPMjAyNjExMjcwNTI3MTVaMAMCAQECEAXAezzL49FhEeOX5h8idLqgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -1004,17 +1029,17 @@ function Write-MbtPstExportEvent {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzcwMFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIGwy
-# VCvuW/1xFTMN2wOK3SSas6nLlbe0ql7D/Pi7eJ3wMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjcxNVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIEnk
+# h9jScEbcC8IQJk/szaO1iRJtpBeHHo3xLG+AH1tyMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiBmjOgiDZHLnY5j0q2mX2de6zxyYwxNNnIPgaCBYroYFgIhAJVb
-# sy6YEtgBzZ3J3Z3T/iRlR7HNEqzauyVfpQrqrB3n
+# zj0EAwIERjBEAiBwUxGIIdDvSICDLjq1syQ+mMH7oLd/jaZAX+d4tZ0rCQIgEU3P
+# Xf97Ovx/bAM8h33mdHJzdOCfbV/AvTt38pVQcC8=
 # SIG # End signature block

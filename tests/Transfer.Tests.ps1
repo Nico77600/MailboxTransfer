@@ -346,9 +346,9 @@ Describe 'Export engine: period of arrival' {
         $a = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-03-31', $script:Zone)
         $b = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01T00:00:00', '2026-03-31T23:59:59.9999999', $script:Zone)
         $b.Key | Should -Be $a.Key
-        $a.Describe($script:Zone) | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
-        ([MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '', $script:Zone)).Describe($script:Zone) | Should -Be 'arrived from 2026-03-01'
-        ([MailboxTransfer.ArrivalPeriod]::Parse('', '2026-03-31', $script:Zone)).Describe($script:Zone) | Should -Be 'arrived until 2026-03-31'
+        $a.Describe($script:Zone) | Should -Be 'received between 2026-03-01 and 2026-03-31'
+        ([MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '', $script:Zone)).Describe($script:Zone) | Should -Be 'received from 2026-03-01'
+        ([MailboxTransfer.ArrivalPeriod]::Parse('', '2026-03-31', $script:Zone)).Describe($script:Zone) | Should -Be 'received until 2026-03-31'
         [MailboxTransfer.ArrivalPeriod]::FromKey($a.Key).Key | Should -Be $a.Key
         [MailboxTransfer.ArrivalPeriod]::FromKey('') | Should -BeNullOrEmpty
     }
@@ -479,13 +479,26 @@ Describe 'Export engine: period of arrival' {
             function Get-PeriodEntryOption([string]$Name) {
                 return @{ Mode = 'Export'; StorePath = (Join-Path $script:Tmp "pcli-$Name\store"); TempPath = (Join-Path $script:Tmp "pcli-$Name\tmp"); PrimaryMailboxId = $script:Src; Concurrency = 2 }
             }
+            # The same mailbox as New-DatedService, and a Mail API that knows the messages with received dates of their own (away from the edges of March): IA, IC, IE, IN, P2 were received in March.
+            function New-DatedMailService {
+                $svc = New-DatedService
+                $mail = [MailboxTransfer.Tests.FakeMailApi]::new($svc)
+                $mail.AddMailbox($script:Src)
+                $null = $mail.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+                $null = $mail.AddFolder($script:Src, 'F-PROJ', 'Projects', 'F-INBOX')
+                $received = [ordered]@{ IA = '2026-03-05T12:00:00Z'; IB = '2026-02-20T12:00:00Z'; IC = '2026-03-15T12:00:00Z'; ID = '2026-04-10T12:00:00Z'; IE = '2026-03-20T12:00:00Z'; IN = '2026-03-25T12:00:00Z' }
+                foreach ($k in $received.Keys) { $null = $mail.AddMessage($script:Src, 'F-INBOX', $k, "Inbox $k", (Get-Utc $received[$k])) }
+                $null = $mail.AddMessage($script:Src, 'F-PROJ', 'P1', 'Project old', (Get-Utc '2025-01-01T08:00:00Z'))
+                $null = $mail.AddMessage($script:Src, 'F-PROJ', 'P2', 'Project March', (Get-Utc '2026-03-10T08:00:00Z'))
+                return $mail
+            }
         }
         BeforeEach {
             Mock Connect-MbtGraph {
                 $session = Set-MbtSession -Graph $global:MbtEntryClient
                 $session.Token = [pscustomobject]@{
                     Account = 'adele.vance@contoso.com'; Name = 'Adele Vance'; TenantId = '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; AppId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
-                    Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                    Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport', 'Mail.Read'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
                 }
                 return $session
             }
@@ -495,11 +508,11 @@ Describe 'Export engine: period of arrival' {
         It 'exports the items of a period given as ISO dates under a French culture, and says how many were left out' {
             $svc = New-DatedService
             $o = Get-PeriodEntryOption 'dates'
-            $text = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' })
+            $text = Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
             $global:MbtEntryExit | Should -Be 0
-            $text | Should -Match 'Period\s+arrived between 2026-03-01 and 2026-03-31'
+            $text | Should -Match 'Period\s+received between 2026-03-01 and 2026-03-31'
             $text | Should -Match 'export finished: 5 items exported'
-            $text | Should -Match 'period \(arrived between 2026-03-01 and 2026-03-31\): 5 item\(s\) kept, 3 outside the period left out \(not an error\)'
+            $text | Should -Match 'period \(received between 2026-03-01 and 2026-03-31\): 5 item\(s\) kept, 3 outside the period left out \(not an error\)'
             $text | Should -Match '1 item\(s\) without a date were kept'
             $text | Should -Match 'outside the period \(skipped, not an error\)'
             $store = Open-MbtExportStore -Path $o.StorePath -ReadOnly
@@ -509,8 +522,8 @@ Describe 'Export engine: period of arrival' {
         It 'takes a date and a time as it is, with both bounds included' {
             $svc = New-DatedService
             $o = Get-PeriodEntryOption 'datetime'
-            $text = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-15T12:00:00Z'; ArrivedTo = '2026-03-15T12:00:00Z' })
-            $text | Should -Match 'period \(arrived between .*\): 2 item\(s\) kept, 6 outside the period left out'
+            $text = Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-03-15T12:00:00Z'; ReceivedTo = '2026-03-15T12:00:00Z' })
+            $text | Should -Match 'period \(received between .*\): 2 item\(s\) kept, 6 outside the period left out'
             $store = Open-MbtExportStore -Path $o.StorePath -ReadOnly
             try { Get-RecordedItem $store | Should -Be @('IC', 'IN') } finally { $store.Dispose() }
         }
@@ -518,30 +531,30 @@ Describe 'Export engine: period of arrival' {
         It 'refuses a start after the end, and a date it cannot read, before anything is signed in or written' {
             $svc = New-DatedService
             $o = Get-PeriodEntryOption 'refused'
-            { Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-04-01'; ArrivedTo = '2026-03-01' }) } | Should -Throw '*starts after it ends*'
-            { Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '31/03/2026' }) } | Should -Throw '*is not a date this tool reads*'
-            { Invoke-PeriodEntry $svc ($o + @{ ArrivedTo = 'yesterday' }) } | Should -Throw '*yyyy-MM-dd*'
+            { Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-04-01'; ReceivedTo = '2026-03-01' }) } | Should -Throw '*starts after it ends*'
+            { Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '31/03/2026' }) } | Should -Throw '*is not a date this tool reads*'
+            { Invoke-PeriodEntry $svc ($o + @{ ReceivedTo = 'yesterday' }) } | Should -Throw '*yyyy-MM-dd*'
             Should -Invoke Connect-MbtGraph -Times 0 -Exactly
             (Test-Path -LiteralPath (Join-Path $o.StorePath 'catalog.db')) | Should -BeFalse
         }
 
         It 'refuses the period for an import, for ExportPst and for ExportEml from a store' {
             $svc = New-DatedService
-            { Invoke-PeriodEntry $svc @{ Mode = 'Import'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); ArrivedFrom = '2026-03-01' } } | Should -Throw '*belong to the export modes*'
-            { Invoke-PeriodEntry $svc @{ Mode = 'ImportPst'; PstPath = 'x.pst'; TargetRoot = 'R'; ArrivedTo = '2026-03-01' } } | Should -Throw '*belong to the export modes*'
-            { Invoke-PeriodEntry $svc @{ Mode = 'ExportPst'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); OutputPst = (Join-Path $script:Tmp 'x.pst'); ArrivedFrom = '2026-03-01' } } | Should -Throw '*only converts what a store or a PST already holds*'
-            { Invoke-PeriodEntry $svc @{ Mode = 'ExportEml'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); EmlPath = (Join-Path $script:Tmp 'eml'); ArrivedFrom = '2026-03-01' } } | Should -Throw '*live mailbox*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'Import'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); ReceivedFrom = '2026-03-01' } } | Should -Throw '*belong to the export modes*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'ImportPst'; PstPath = 'x.pst'; TargetRoot = 'R'; ReceivedTo = '2026-03-01' } } | Should -Throw '*belong to the export modes*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'ExportPst'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); OutputPst = (Join-Path $script:Tmp 'x.pst'); ReceivedFrom = '2026-03-01' } } | Should -Throw '*only converts what a store or a PST already holds*'
+            { Invoke-PeriodEntry $svc @{ Mode = 'ExportEml'; StorePath = (Join-Path $script:Tmp 'pcli-imp'); EmlPath = (Join-Path $script:Tmp 'eml'); ReceivedFrom = '2026-03-01' } } | Should -Throw '*live mailbox*'
             Should -Invoke Connect-MbtGraph -Times 0 -Exactly
         }
 
         It 'continues with the same period written another way and refuses another one' {
             $svc = New-DatedService
             $o = Get-PeriodEntryOption 'resume'
-            $null = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' })
-            $same = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01T00:00:00'; ArrivedTo = '2026-03-31T23:59:59.9999999' })
+            $null = Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
+            $same = Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-03-01T00:00:00'; ReceivedTo = '2026-03-31T23:59:59.9999999' })
             $global:MbtEntryExit | Should -Be 0
             $same | Should -Match '3 outside the period left out'
-            { Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-05-31' }) } | Should -Throw '*Continuing it would mix two periods*'
+            { Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-05-31' }) } | Should -Throw '*Continuing it would mix two periods*'
             { Invoke-PeriodEntry $svc $o } | Should -Throw "*this run asks 'all dates'*"
         }
 
@@ -550,10 +563,10 @@ Describe 'Export engine: period of arrival' {
             $o = Get-PeriodEntryOption 'events'
             $job = Join-Path $script:Tmp 'pcli-events\job'
             $events = Join-Path $job 'events.jsonl'
-            $null = Invoke-PeriodEntry $svc ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31'; EventsFile = $events; JobId = 'export-p1' })
+            $null = Invoke-PeriodEntry $svc ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31'; EventsFile = $events; JobId = 'export-p1' })
             $lines = @(Get-Content -LiteralPath $events | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
             $plan = $lines | Where-Object { $_.e -eq 'plan' } | Select-Object -First 1
-            $plan.period.text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+            $plan.period.text | Should -Be 'received between 2026-03-01 and 2026-03-31'
             (Get-Content -LiteralPath $events -Raw) | Should -Match '"period":\{"from":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z","to":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z","text":'
             $result = $lines | Where-Object { $_.e -eq 'result' } | Select-Object -Last 1
             $result.exit | Should -Be 0
@@ -561,13 +574,324 @@ Describe 'Export engine: period of arrival' {
             $result.counts.outsidePeriod | Should -Be 3
             $result.counts.withoutDate | Should -Be 1
             $status = Get-Content -LiteralPath (Join-Path $job 'status.json') -Raw | ConvertFrom-Json
-            $status.period.text | Should -Be 'arrived between 2026-03-01 and 2026-03-31'
+            $status.period.text | Should -Be 'received between 2026-03-01 and 2026-03-31'
             $status.counts.outsidePeriod | Should -Be 3
             $status.state | Should -Be 'complete'
             $html = Get-Content -LiteralPath (Join-Path $job 'report.html') -Raw
-            $html | Should -Match 'arrived between 2026-03-01 and 2026-03-31'
+            $html | Should -Match 'received between 2026-03-01 and 2026-03-31'
             $html | Should -Match 'Outside the period'
         }
+
+        It 'filters on the received date of the messages and says so, and takes -ArrivedFrom / -ArrivedTo as other names, whatever the case of the names' {
+            $mail = New-DatedMailService
+            $o = Get-PeriodEntryOption 'received'
+            $text = Invoke-PeriodEntry $mail ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
+            $global:MbtEntryExit | Should -Be 0
+            $text | Should -Match 'period \(received between 2026-03-01 and 2026-03-31\): 5 item\(s\) kept, 3 outside the period left out \(not an error\)'
+            $text | Should -Match 'period date: received date of the messages'
+            $text | Should -Match 'Date used: received date of the messages'
+            $store = Open-MbtExportStore -Path $o.StorePath -ReadOnly
+            try { Get-RecordedItem $store | Should -Be @('IA', 'IC', 'IE', 'IN', 'P2') } finally { $store.Dispose() }
+            foreach ($names in @(@{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-03-31' }, @{ receivedfrom = '2026-03-01'; RECEIVEDTO = '2026-03-31' }, @{ arrivedFROM = '2026-03-01'; ArrIvedTo = '2026-03-31' })) {
+                $alias = Get-PeriodEntryOption ('received-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+                $again = Invoke-PeriodEntry (New-DatedMailService) ($alias + $names)
+                $global:MbtEntryExit | Should -Be 0
+                $again | Should -Match 'period \(received between 2026-03-01 and 2026-03-31\): 5 item\(s\) kept, 3 outside'
+                $store = Open-MbtExportStore -Path $alias.StorePath -ReadOnly
+                try { Get-RecordedItem $store | Should -Be @('IA', 'IC', 'IE', 'IN', 'P2') } finally { $store.Dispose() }
+            }
+        }
+
+        It 'continues with the other name of the same period' {
+            $o = Get-PeriodEntryOption 'received-resume'
+            $null = Invoke-PeriodEntry (New-DatedMailService) ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
+            $same = Invoke-PeriodEntry (New-DatedMailService) ($o + @{ ArrivedFrom = '2026-03-01T00:00:00'; ArrivedTo = '2026-03-31T23:59:59.9999999' })
+            $global:MbtEntryExit | Should -Be 0
+            $same | Should -Match '3 outside the period left out'
+            { Invoke-PeriodEntry (New-DatedMailService) ($o + @{ ArrivedFrom = '2026-03-01'; ArrivedTo = '2026-05-31' }) } | Should -Throw '*Continuing it would mix two periods*'
+        }
+
+        It 'writes the date the period used in the events, in status.json and in the report' {
+            $mail = New-DatedMailService
+            $o = Get-PeriodEntryOption 'received-events'
+            $job = Join-Path $script:Tmp 'pcli-received-events\job'
+            $events = Join-Path $job 'events.jsonl'
+            $null = Invoke-PeriodEntry $mail ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31'; EventsFile = $events; JobId = 'export-r1' })
+            $lines = @(Get-Content -LiteralPath $events | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+            $result = $lines | Where-Object { $_.e -eq 'result' } | Select-Object -Last 1
+            $result.counts.periodDate | Should -Be 'received'
+            $result.counts.periodNote | Should -Be 'received date of the messages'
+            $status = Get-Content -LiteralPath (Join-Path $job 'status.json') -Raw | ConvertFrom-Json
+            $status.counts.periodNote | Should -Be 'received date of the messages'
+            $html = Get-Content -LiteralPath (Join-Path $job 'report.html') -Raw
+            $html | Should -Match 'Items received between 2026-03-01 and 2026-03-31'
+            $html | Should -Match 'Date used'
+        }
+
+        It 'uses the arrival date, and says why, when the token has no Mail.Read, without asking the Mail API' {
+            Mock Disconnect-MbtGraph { }
+            Mock Connect-MbtGraph {
+                $session = Set-MbtSession -Graph $global:MbtEntryClient
+                $session.Token = [pscustomobject]@{
+                    Account = 'adele.vance@contoso.com'; Name = 'Adele Vance'; TenantId = '1a2b3c01-5e7f-4a1b-9c2d-3e4f5a6b7c8d'; AppId = '1a2b3c02-5e7f-4a1b-9c2d-3e4f5a6b7c8d'
+                    Audience = 'https://graph.microsoft.com'; Scopes = @('MailboxFolder.ReadWrite', 'MailboxItem.Read', 'MailboxItem.ImportExport'); ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                }
+                return $session
+            }
+            $mail = New-DatedMailService
+            $o = Get-PeriodEntryOption 'received-nomail'
+            $text = Invoke-PeriodEntry $mail ($o + @{ ReceivedFrom = '2026-03-01'; ReceivedTo = '2026-03-31' })
+            $global:MbtEntryExit | Should -Be 0
+            $text | Should -Match 'Mail.Read or Mail.ReadBasic \(without it the period filters on the arrival date'
+            $text | Should -Match 'period date: arrival date in the mailbox .*neither Mail.Read nor Mail.ReadBasic'
+            $text | Should -Match 'Date used: arrival date in the mailbox'
+            $mail.RequestsOf('/mailFolders/') | Should -Be 0
+            $store = Open-MbtExportStore -Path $o.StorePath -ReadOnly
+            try { (Get-RecordedItem $store).Count | Should -Be 5 } finally { $store.Dispose() }
+        }
+    }
+}
+
+Describe 'Export engine: period of received date' {
+    BeforeAll {
+        $script:Zone = [TimeZoneInfo]::CreateCustomTimeZone('Test+02', [TimeSpan]::FromHours(2), 'Test+02', 'Test+02')
+        function Get-Utc([string]$Text) { [datetime]::Parse($Text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+        # The listing of the import-export API gives the date the item arrived in the mailbox, the Mail API the date the message was received: they differ on purpose.
+        # RA arrived after the period, was received inside it; RB the other way round; RC inside both; RD outside both. CA is a calendar item (no received date): the arrival date decides.
+        function New-ReceivedService {
+            param([switch]$Calendar = $true)
+            $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+            $null = $svc.AddMailbox($script:Src)
+            $null = $svc.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+            $null = $svc.AddFolder($script:Src, 'F-PROJ', 'Projects', 'F-INBOX')
+            $mail = [MailboxTransfer.Tests.FakeMailApi]::new($svc)
+            $mail.AddMailbox($script:Src)
+            $null = $mail.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+            $null = $mail.AddFolder($script:Src, 'F-PROJ', 'Projects', 'F-INBOX')
+            $rows = @(
+                @('F-INBOX', 'RA', '2026-04-02T09:00:00Z', '2026-03-05T12:00:00Z'), @('F-INBOX', 'RB', '2026-03-10T09:00:00Z', '2026-02-20T12:00:00Z'),
+                @('F-INBOX', 'RC', '2026-03-15T09:00:00Z', '2026-03-15T08:00:00Z'), @('F-INBOX', 'RD', '2026-05-01T09:00:00Z', '2026-05-01T09:00:00Z'),
+                @('F-PROJ', 'P1', '2026-03-20T09:00:00Z', '2025-01-01T09:00:00Z'), @('F-PROJ', 'P2', '2025-01-01T09:00:00Z', '2026-03-02T09:00:00Z'))
+            foreach ($r in $rows) {
+                $null = $svc.AddItem($script:Src, $r[0], $r[1], (New-Message "Message $($r[1])"), "ck-$($r[1])", (Get-Utc $r[2]))
+                $null = $mail.AddMessage($script:Src, $r[0], $r[1], "Message $($r[1])", (Get-Utc $r[3]))
+            }
+            if ($Calendar) {
+                $a = $svc.AddItem($script:Src, 'F-INBOX', 'CA', (New-Message 'Meeting'), 'ck-CA', (Get-Utc '2026-03-12T09:00:00Z')); $a.ItemClass = 'IPM.Appointment'
+                $b = $svc.AddItem($script:Src, 'F-INBOX', 'CB', (New-Message 'Meeting later'), 'ck-CB', (Get-Utc '2026-06-01T09:00:00Z')); $b.ItemClass = 'IPM.Appointment'
+            }
+            return $mail
+        }
+        function Get-RecordedIds($Store) {
+            $ids = foreach ($f in $Store.GetFolders($script:Src)) { foreach ($i in $Store.GetFolderItemRefs($f.Key)) { $i.ItemId } }
+            return @($ids | Sort-Object)
+        }
+        function New-ReceivedOptions([string]$From, [string]$To, [string]$Unavailable) {
+            $p = [MailboxTransfer.ArrivalPeriod]::Parse($From, $To, $script:Zone)
+            return { param($o) $o.Period = $p; if ($Unavailable) { $o.ReceivedDateUnavailable = $Unavailable } }.GetNewClosure()
+        }
+    }
+
+    It 'keeps the messages received inside the period, whatever their arrival date, and the other items by their arrival date' {
+        $mail = New-ReceivedService
+        $store = New-TestStoreAt 'recv-ids'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            $r.Result.Completed | Should -BeTrue
+            Get-RecordedIds $store | Should -Be @('CA', 'P2', 'RA', 'RC')
+            $r.Result.Inventoried | Should -Be 4
+            $r.Result.ItemsOutsidePeriod | Should -Be 4
+            $r.Result.ItemsOnArrivalDate | Should -Be 2
+            $r.Result.PeriodDate | Should -Be 'received'
+            $r.Result.FoldersOnArrivalDate.Count | Should -Be 0
+            $r.Result.PeriodDateText | Should -Match '^received date of the messages; 2 item\(s\) that are not messages \(calendar items, contacts, tasks, notes\)'
+            ($r.Messages -join "`n") | Should -Match 'date used: received date of the messages'
+        } finally { $store.Dispose() }
+    }
+
+    It 'asks the Mail API for the ids of each folder, server side, with the bounds of the period as UTC instants' {
+        $mail = New-ReceivedService
+        $store = New-TestStoreAt 'recv-filter'
+        try {
+            $null = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            $asked = @($mail.Requests() | Where-Object { $_ -match '/messages\?' })
+            $asked.Count | Should -Be 2
+            foreach ($url in $asked) {
+                $url | Should -Match 'filter=receivedDateTime%20ge%202026-02-28T22:00:00\.000Z%20and%20receivedDateTime%20le%202026-03-31T21:59:59\.999Z'
+                $url | Should -Match 'select=id,receivedDateTime'
+            }
+            $mail.RequestsOf('/mailFolders/F-INBOX/messages') | Should -Be 1
+            $mail.RequestsOf('/mailFolders/F-PROJ/messages') | Should -Be 1
+        } finally { $store.Dispose() }
+    }
+
+    It 'leaves a bound open when the period has one bound only' {
+        $mail = New-ReceivedService
+        $store = New-TestStoreAt 'recv-open'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-10' '')
+            Get-RecordedIds $store | Should -Be @('CA', 'CB', 'RC', 'RD')
+            @($mail.Requests() | Where-Object { $_ -match 'filter=receivedDateTime%20ge%202026-03-09T22:00:00\.000Z(&|$)' }).Count | Should -Be 2
+        } finally { $store.Dispose() }
+    }
+
+    It 'compares the ids as they are: the case of an id matters' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $null = $svc.AddMailbox($script:Src)
+        $null = $svc.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+        $mail = [MailboxTransfer.Tests.FakeMailApi]::new($svc)
+        $mail.AddMailbox($script:Src)
+        $null = $mail.AddFolder($script:Src, 'F-INBOX', 'Inbox')
+        $null = $svc.AddItem($script:Src, 'F-INBOX', 'AbCd', (New-Message 'upper'), 'ck1', (Get-Utc '2026-03-10T09:00:00Z'))
+        $null = $svc.AddItem($script:Src, 'F-INBOX', 'xyz', (New-Message 'same'), 'ck2', (Get-Utc '2026-03-10T09:00:00Z'))
+        $null = $mail.AddMessage($script:Src, 'F-INBOX', 'abcd', 'lower', (Get-Utc '2026-03-10T09:00:00Z'))
+        $null = $mail.AddMessage($script:Src, 'F-INBOX', 'xyz', 'same', (Get-Utc '2026-03-10T09:00:00Z'))
+        $store = New-TestStoreAt 'recv-case'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            Get-RecordedIds $store | Should -Be @('xyz')
+            $r.Result.ItemsOutsidePeriod | Should -Be 1
+        } finally { $store.Dispose() }
+    }
+
+    It 'filters a folder on the arrival date when the Mail API refuses it, and says which folder and why' {
+        $mail = New-ReceivedService
+        $null = $mail.MessagesForbidden.Add("$($script:Src)|F-PROJ")
+        $store = New-TestStoreAt 'recv-fallback'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            Get-RecordedIds $store | Should -Be @('CA', 'P1', 'RA', 'RC')
+            $r.Result.PeriodDate | Should -Be 'mixed'
+            $r.Result.FoldersOnArrivalDate.Count | Should -Be 1
+            $r.Result.FoldersOnArrivalDate[0] | Should -Match "^'Inbox/Projects' \(the Mail API answered HTTP 403 ErrorAccessDenied\)$"
+            $r.Result.PeriodDateText | Should -Match '1 folder\(s\) filtered on the arrival date: ''Inbox/Projects'' \(the Mail API answered HTTP 403'
+            ($r.Messages -join "`n") | Should -Match "folder 'Inbox/Projects' is filtered on the arrival date"
+            $r.Result.NeedsAnotherRun | Should -BeFalse
+        } finally { $store.Dispose() }
+    }
+
+    It 'falls back on the arrival date when the Mail API cannot read the folder (content being moved)' {
+        $mail = New-ReceivedService
+        $null = $mail.MessagesNotReady.Add("$($script:Src)|F-INBOX")
+        $store = New-TestStoreAt 'recv-notready'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            $r.Result.PeriodDate | Should -Be 'mixed'
+            $r.Result.FoldersOnArrivalDate[0] | Should -Match "^'Inbox' \(the Mail API answered HTTP 500"
+            (Get-RecordedIds $store) | Should -Contain 'RB'
+            (Get-RecordedIds $store) | Should -Contain 'P2'
+        } finally { $store.Dispose() }
+    }
+
+    It 'uses the arrival date everywhere, without asking the Mail API, when the session cannot read mail, and says why' {
+        $mail = New-ReceivedService
+        $store = New-TestStoreAt 'recv-nomail'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31' 'the token has no Mail.Read')
+            Get-RecordedIds $store | Should -Be @('CA', 'P1', 'RB', 'RC')
+            $r.Result.PeriodDate | Should -Be 'arrival'
+            $r.Result.ReceivedDateUnavailable | Should -Be 'the token has no Mail.Read'
+            $r.Result.PeriodDateText | Should -Be 'arrival date in the mailbox (the date the item arrived in this mailbox, not the received date): the token has no Mail.Read'
+            @($mail.Requests() | Where-Object { $_ -match '/mailFolders/' }).Count | Should -Be 0
+        } finally { $store.Dispose() }
+    }
+
+    It 'does not ask the Mail API again after three refusals of the mailbox in a row' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $null = $svc.AddMailbox($script:Src)
+        $mail = [MailboxTransfer.Tests.FakeMailApi]::new($svc)
+        $mail.AddMailbox($script:Src)
+        foreach ($n in 1..6) {
+            $null = $svc.AddFolder($script:Src, "F-$n", "Folder $n")
+            $null = $mail.AddFolder($script:Src, "F-$n", "Folder $n")
+            $null = $svc.AddItem($script:Src, "F-$n", "M$n", (New-Message "Message $n"), "ck$n", (Get-Utc '2026-03-10T09:00:00Z'))
+            $null = $mail.AddMessage($script:Src, "F-$n", "M$n", "Message $n", (Get-Utc '2026-03-10T09:00:00Z'))
+        }
+        $null = $mail.Forbidden.Add($script:Src)
+        $store = New-TestStoreAt 'recv-trip'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Concurrency 1 -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            @($mail.Requests() | Where-Object { $_ -match '/mailFolders/' }).Count | Should -Be 3
+            $r.Result.PeriodDate | Should -Be 'arrival'
+            $r.Result.FoldersOnArrivalDate.Count | Should -Be 6
+            (Get-RecordedIds $store).Count | Should -Be 6
+            ($r.Messages -join "`n") | Should -Match 'refused 3 folders in a row'
+        } finally { $store.Dispose() }
+    }
+
+    It 'does not ask the Mail API for a folder that holds no messages (calendar, contacts): its items keep the arrival date' {
+        $svc = [MailboxTransfer.Tests.FakeMailboxService]::new()
+        $null = $svc.AddMailbox($script:Src)
+        $null = $svc.AddFolder($script:Src, 'F-CAL', 'Calendar', 'ROOT', 'IPF.Appointment')
+        $mail = [MailboxTransfer.Tests.FakeMailApi]::new($svc)
+        $mail.AddMailbox($script:Src)
+        foreach ($k in 'in', 'out') {
+            $x = $svc.AddItem($script:Src, 'F-CAL', "E-$k", (New-Message "Event $k"), "ck-$k", (Get-Utc $(if ($k -eq 'in') { '2026-03-10T09:00:00Z' } else { '2026-09-10T09:00:00Z' }))); $x.ItemClass = 'IPM.Appointment'
+        }
+        $store = New-TestStoreAt 'recv-calendar'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            Get-RecordedIds $store | Should -Be @('E-in')
+            @($mail.Requests() | Where-Object { $_ -match '/mailFolders/' }).Count | Should -Be 0
+            $r.Result.ItemsOnArrivalDate | Should -Be 2
+            $r.Result.FoldersOnArrivalDate.Count | Should -Be 0
+        } finally { $store.Dispose() }
+    }
+
+    It 'says the same thing when it continues without listing again' {
+        $mail = New-ReceivedService
+        $null = $mail.MessagesForbidden.Add("$($script:Src)|F-PROJ")
+        $store = New-TestStoreAt 'recv-skip'
+        try {
+            $first = Invoke-ExportJob -Service $mail -Store $store -Options (New-ReceivedOptions '2026-03-01' '2026-03-31')
+            $again = Invoke-ExportJob -Service $mail -Store $store -Options { param($o) $o.SkipInventory = $true; $o.Period = [MailboxTransfer.ArrivalPeriod]::Parse('2026-03-01', '2026-03-31', $script:Zone) }
+            $again.Result.PeriodDate | Should -Be 'mixed'
+            $again.Result.PeriodDateText | Should -Be $first.Result.PeriodDateText
+            $again.Result.ItemsOnArrivalDate | Should -Be $first.Result.ItemsOnArrivalDate
+        } finally { $store.Dispose() }
+    }
+
+    It 'has no period words for an export without a period' {
+        $mail = New-ReceivedService
+        $store = New-TestStoreAt 'recv-none'
+        try {
+            $r = Invoke-ExportJob -Service $mail -Store $store
+            $r.Result.PeriodDate | Should -BeNullOrEmpty
+            $r.Result.PeriodDateText | Should -Be ''
+            @($mail.Requests() | Where-Object { $_ -match '/mailFolders/' }).Count | Should -Be 0
+        } finally { $store.Dispose() }
+    }
+
+    It 'words the date of the period for the plan, the report and the events' {
+        [MailboxTransfer.PeriodNote]::Describe('', '', $null, 0) | Should -Be ''
+        [MailboxTransfer.PeriodNote]::Describe('received', '', $null, 0) | Should -Be 'received date of the messages'
+        [MailboxTransfer.PeriodNote]::Describe('arrival', 'no Mail.Read', $null, 0) | Should -Be 'arrival date in the mailbox (the date the item arrived in this mailbox, not the received date): no Mail.Read'
+        $many = [string[]]@(1..7 | ForEach-Object { "'Folder $_' (HTTP 403)" })
+        $text = [MailboxTransfer.PeriodNote]::Describe('mixed', '', $many, 0)
+        $text | Should -Match '^received date of the messages; 7 folder\(s\) filtered on the arrival date: '
+        $text | Should -Match "'Folder 5' \(HTTP 403\); and 2 more$"
+        $text | Should -Not -Match 'Folder 6'
+    }
+}
+
+Describe 'Export engine: Get-MbtReceivedDateAvailability' {
+    It 'is available with Mail.Read, Mail.ReadWrite or Mail.ReadBasic, and with no session or no token' {
+        foreach ($scope in 'Mail.Read', 'Mail.ReadWrite', 'Mail.ReadBasic') {
+            (Get-MbtReceivedDateAvailability -Session ([pscustomobject]@{ Token = [pscustomobject]@{ Scopes = @('MailboxItem.Read', $scope) } })).Available | Should -BeTrue
+        }
+        (Get-MbtReceivedDateAvailability -Session $null).Available | Should -BeTrue
+        (Get-MbtReceivedDateAvailability -Session ([pscustomobject]@{ Token = $null })).Available | Should -BeTrue
+    }
+    It 'is not available when a delegated token holds no mail permission, and says what to grant' {
+        $a = Get-MbtReceivedDateAvailability -Session ([pscustomobject]@{ Token = [pscustomobject]@{ Scopes = @('MailboxFolder.Read', 'MailboxItem.ImportExport') } })
+        $a.Available | Should -BeFalse
+        $a.Reason | Should -Match 'neither Mail.Read nor Mail.ReadBasic'
+    }
+    It 'looks at the roles of an application, and leaves the decision to the Mail API when it has none (Exchange RBAC for Applications)' {
+        $app = { param($roles) [pscustomobject]@{ AppOnly = $true; Token = [pscustomobject]@{ Scopes = @(); Roles = $roles } } }
+        (Get-MbtReceivedDateAvailability -Session (& $app @())).Available | Should -BeTrue
+        (Get-MbtReceivedDateAvailability -Session (& $app @('MailboxItem.ImportExport.All'))).Available | Should -BeFalse
+        (Get-MbtReceivedDateAvailability -Session (& $app @('Mail.Read'))).Available | Should -BeTrue
     }
 }
 
@@ -1992,6 +2316,52 @@ Aggregated          33333333-aaaa-bbbb-cccc-333333333333
         $before = $svc.Log.Count
         $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph
         $svc.Log.Count | Should -Be $before
+    }
+    It 'says whether the archive is known, absent (Graph answered and names none) or unknown (Graph could not be read)' {
+        $svc = New-SourceService
+        $null = Set-MbtSession -Graph (New-FakeClient -Service $svc)
+        $upn = 'adele@contoso.test'
+        $status = $null
+        # refused on both: the archive may exist
+        @(Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status)).Count | Should -Be 0
+        $status.State | Should -Be 'Unknown'
+        $status.Detail | Should -Match 'HTTP 403'
+        # beta answers with the primary only: the mailbox has no archive
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '"}'
+        $locs = @(Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status))
+        @($locs | ForEach-Object Kind) | Should -Be @('Primary')
+        $status.State | Should -Be 'None'
+        # beta answers with an archive
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '","inPlaceArchiveMailboxId":"' + (Get-LocId $script:LocM) + '"}'
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Known'
+        # beta refused, v1.0 answers: v1.0 cannot say anything about the archive
+        $svc.ExchangeSettingsBetaJson = $null
+        $svc.ExchangeSettingsV1Json = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '"}'
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Unknown'
+        # Graph not asked: unknown, and the archive id given by the operator makes it known
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Unknown'
+        $status.Detail | Should -Match 'not asked'
+        $null = Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph -ArchiveMailboxId $script:LocM.ToUpperInvariant() -ArchiveStatus ([ref]$status)
+        $status.State | Should -Be 'Known'
+        # without -ArchiveStatus the output is the same
+        @(Get-MbtMailboxLocation -UserPrincipalName $upn -TenantId $script:LocTenant -SkipGraph -ArchiveMailboxId $script:LocM).Count | Should -Be 1
+    }
+    It 'Resolve-MbtMailboxId says the same: no archive, or an archive that could not be looked up (User.Read.All, -ArchiveMailboxId, -LocationsFile)' {
+        $svc = New-SourceService
+        $session = Set-MbtSession -Graph (New-FakeClient -Service $svc)
+        $upn = 'adele@contoso.test'
+        $ask = { Resolve-MbtMailboxId -Mailbox Archive -TenantId $script:LocTenant -UserPrincipalName $upn }
+        $ask | Should -Throw '*could not be looked up*delegated permission User.Read.All*-ArchiveMailboxId*-LocationsFile*'
+        $session.AppOnly = $true
+        $ask | Should -Throw '*could not be looked up*application permission User.Read.All*'
+        $session.AppOnly = $false
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '"}'
+        $ask | Should -Throw '*adele@contoso.test has no archive mailbox*-Mailbox Primary*'
+        $svc.ExchangeSettingsBetaJson = '{"primaryMailboxId":"' + (Get-LocId $script:LocP) + '","inPlaceArchiveMailboxId":"' + (Get-LocId $script:LocM) + '"}'
+        (& $ask) | Should -Be (Get-LocId $script:LocM)
     }
     It 'Resolve-MbtMailboxId: an explicit id wins; the kind is taken from the store or the file; an unknown auxiliary archive is explained' {
         $store = New-TestStoreAt 'loc2'

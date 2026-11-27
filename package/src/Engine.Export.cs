@@ -40,9 +40,10 @@ using System.Threading.Tasks;
 namespace MailboxTransfer
 {
     /// <summary>
-    /// The period of an export: the items whose date of arrival in the mailbox (createdDateTime of the import-export listing) is between From and To, both included.
-    /// A bound left out is open. For mail migrated or imported into the mailbox this is the date of that import, not the original date of the message.
-    /// A date written without a time is a whole day of the local time zone (From: its first instant, To: its last one); a date and a time is used as it is.
+    /// The period of an export: the messages whose RECEIVED date (receivedDateTime of the Mail API, the date the operator sees in a mail client) is between From and To, both included.
+    /// Items that have no received date (calendar items, contacts, tasks, notes) and the folders the Mail API cannot read keep the arrival date (createdDateTime of the import-export
+    /// listing: the date the item arrived in THIS mailbox; in an archive the date it was moved there, for imported mail the date of the import).
+    /// A bound left out is open. A date written without a time is a whole day of the local time zone (From: its first instant, To: its last one); a date and a time is used as it is.
     /// </summary>
     public sealed class ArrivalPeriod
     {
@@ -158,13 +159,13 @@ namespace MailboxTransfer
             return t.ToString(t.Second == 0 && t.Ticks % TimeSpan.TicksPerSecond == 0 ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd HH:mm:ss", ci);
         }
 
-        /// <summary>In words, as the operator wrote it: "all dates", "arrived between 2026-03-01 and 2026-03-31", "arrived from 2026-03-01", "arrived until 2026-03-31" (local time zone unless <paramref name="zone"/> is given).</summary>
+        /// <summary>In words, as the operator wrote it: "all dates", "received between 2026-03-01 and 2026-03-31", "received from 2026-03-01", "received until 2026-03-31" (local time zone unless <paramref name="zone"/> is given).</summary>
         public string Describe(TimeZoneInfo zone = null)
         {
             zone = zone ?? TimeZoneInfo.Local;
             if (IsEmpty) return "all dates";
-            if (From.HasValue && To.HasValue) return "arrived between " + Format(From.Value, false, zone) + " and " + Format(To.Value, true, zone);
-            return From.HasValue ? "arrived from " + Format(From.Value, false, zone) : "arrived until " + Format(To.Value, true, zone);
+            if (From.HasValue && To.HasValue) return "received between " + Format(From.Value, false, zone) + " and " + Format(To.Value, true, zone);
+            return From.HasValue ? "received from " + Format(From.Value, false, zone) : "received until " + Format(To.Value, true, zone);
         }
 
         public override string ToString() { return Describe(); }
@@ -174,6 +175,36 @@ namespace MailboxTransfer
 
         /// <summary>A period with no bound is no period.</summary>
         public static ArrivalPeriod OrNull(ArrivalPeriod p) { return p == null || p.IsEmpty ? null : p; }
+    }
+
+    /// <summary>The words that say which date a period used: for the plan, the verification, the report and the events.</summary>
+    public static class PeriodNote
+    {
+        /// <summary>
+        /// "received date of the messages", with what used the arrival date instead. date: received, arrival or mixed (see ExportResult.PeriodDate); empty: no period, no words.
+        /// </summary>
+        public static string Describe(string date, string unavailable, IList<string> arrivalFolders, long onArrival)
+        {
+            if (string.IsNullOrEmpty(date)) return "";
+            int folders = arrivalFolders == null ? 0 : arrivalFolders.Count;
+            string text;
+            if (date == "arrival")
+            {
+                text = "arrival date in the mailbox (the date the item arrived in this mailbox, not the received date)";
+                if (!string.IsNullOrEmpty(unavailable)) text += ": " + unavailable;
+            }
+            else
+            {
+                text = "received date of the messages";
+                if (onArrival > 0)
+                    text += "; " + onArrival.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " item(s) that are not messages (calendar items, contacts, tasks, notes) have no received date: their arrival date decided";
+            }
+            if (folders > 0)
+            {
+                text += (date == "arrival" && string.IsNullOrEmpty(unavailable) ? ": " : "; ") + folders + " folder(s) filtered on the arrival date: " + string.Join("; ", arrivalFolders.Take(5)) + (folders > 5 ? "; and " + (folders - 5) + " more" : "");
+            }
+            return text;
+        }
     }
 
     public sealed class ExportOptions
@@ -216,8 +247,13 @@ namespace MailboxTransfer
         public bool WholeFolderTree;
         /// <summary>Names of the folders of Recoverable Items to export (see RecoverableItems.KnownFolders); null or empty: the default set.</summary>
         public string[] RecoverableItemsFolders;
-        /// <summary>Only the items that arrived in the mailbox inside this period are listed for export; null or empty: every date. Items named one by one in a plan are always taken.</summary>
+        /// <summary>Only the items received inside this period are listed for export (the arrival date for what has no received date, see <see cref="ArrivalPeriod"/>); null or empty: every date. Items named one by one in a plan are always taken.</summary>
         public ArrivalPeriod Period;
+        /// <summary>
+        /// Why the Mail API cannot be asked for the received date (the session has no Mail.Read or Mail.ReadBasic): every folder is then filtered on the arrival date and the run says so.
+        /// Null or empty: the Mail API is asked, folder by folder; a folder it refuses is filtered on the arrival date.
+        /// </summary>
+        public string ReceivedDateUnavailable;
     }
 
     public sealed class ExportResult
@@ -225,8 +261,18 @@ namespace MailboxTransfer
         public long Exported, Failed, Bytes, Inventoried, PendingAtStart, RequeuedFailed;
         /// <summary>The period of the run (null: every date). With a period, Inventoried is the number of items kept: the ones inside it, the ones without a date and the ones named one by one.</summary>
         public ArrivalPeriod Period;
-        /// <summary>Items listed that arrived outside the period: not recorded, not exported (skipped, not a failure).</summary>
+        /// <summary>Items listed outside the period: not recorded, not exported (skipped, not a failure).</summary>
         public long ItemsOutsidePeriod;
+        /// <summary>With a period: "received" (the Mail API gave the received date of every folder), "arrival" (the arrival date everywhere) or "mixed" (the arrival date for the folders of <see cref="FoldersOnArrivalDate"/>); null without a period.</summary>
+        public string PeriodDate;
+        /// <summary>Why no folder used the received date (no Mail.Read, an auxiliary archive); null when it was used at least for one folder.</summary>
+        public string ReceivedDateUnavailable;
+        /// <summary>Folders the Mail API refused or could not read, filtered on the arrival date instead, one sentence each ("path: why").</summary>
+        public List<string> FoldersOnArrivalDate = new List<string>();
+        /// <summary>Items without a received date (calendar items, contacts, tasks, notes), in the folders filtered on the received date, that the arrival date decided.</summary>
+        public long ItemsOnArrivalDate;
+        /// <summary>The date the period used, in a sentence for the operator ("received date of the messages", "arrival date in the mailbox..."); empty without a period.</summary>
+        public string PeriodDateText { get { return PeriodNote.Describe(PeriodDate, ReceivedDateUnavailable, FoldersOnArrivalDate, ItemsOnArrivalDate); } }
         /// <summary>Items listed with no date of arrival: kept, whatever the period.</summary>
         public long ItemsWithoutDate;
         /// <summary>Folders read: the tree of the mailbox, or with <see cref="FolderTreeNarrow"/> the folders of the selection, the ones below them and the ones above them.</summary>
@@ -564,14 +610,84 @@ namespace MailboxTransfer
                 throw new InvalidOperationException("The export of this mailbox (" + _o.MailboxId + ") in this store was started with the period '" + Describe(was) + "', this run asks '" + Describe(asked) +
                     "'. Continuing it would mix two periods in one store. Give the same period, or another -StorePath.");
             if (was == null) _store.SetExportOption(name, asked, true);
-            if (_o.Period != null) Log("period: only the items that " + _o.Period.Describe() + " in the mailbox are listed (items named one by one are always taken; an item with no date is kept)");
+            if (_o.Period != null)
+            {
+                _receivedUnavailable = !string.IsNullOrWhiteSpace(_o.ReceivedDateUnavailable) ? _o.ReceivedDateUnavailable.Trim()
+                    : _kind == StoreMailboxKind.AuxArchive ? "the Mail API does not reach an auxiliary archive" : null;
+                Log("period: only the items " + _o.Period.Describe() + " are listed (items named one by one are always taken; an item with no date is kept); date used: " +
+                    (_receivedUnavailable == null ? "the received date of the messages, from the Mail API, folder by folder (the arrival date for what has no received date)" : "the arrival date in the mailbox (" + _receivedUnavailable + ")"));
+            }
             if (_o.SkipInventory)
             {
                 string[] known = (_store.GetExportOption(CountsOptionName(_o.MailboxId)) ?? "").Split(';');
                 long kept, outside, undated;
                 if (known.Length == 3 && long.TryParse(known[0], out kept) && long.TryParse(known[1], out outside) && long.TryParse(known[2], out undated))
                 { _result.ItemsOutsidePeriod = outside; _result.ItemsWithoutDate = undated; }
+                if (_o.Period != null) ReadPeriodDate(_store.GetExportOption(DateOptionName(_o.MailboxId)));
             }
+        }
+
+        string _receivedUnavailable;
+        // the Mail API refused the mailbox this many times in a row (401 / 403): the next folders are not asked
+        const int MailRefusalTrip = 3;
+        int _mailRefusals, _receivedFolders;
+        volatile string _receivedStopped;
+        long _onArrival;
+        MailboxBrowser _mail;
+        static string DateOptionName(string mailboxId) { return "periodDate|" + (mailboxId ?? "").ToLowerInvariant(); }
+
+        /// <summary>The date a period used, kept in the store: a run that does not list again (SkipInventory) says it as the run that listed.</summary>
+        void ReadPeriodDate(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            string[] lines = value.Split('\n');
+            string[] head = lines[0].Split('|');
+            long onArrival;
+            if (head.Length != 3 || !long.TryParse(head[1], out onArrival)) return;
+            _result.PeriodDate = head[0]; _result.ItemsOnArrivalDate = onArrival;
+            _result.ReceivedDateUnavailable = head[2].Length == 0 ? null : head[2];
+            _result.FoldersOnArrivalDate = lines.Skip(1).Where(l => l.Length > 0).ToList();
+        }
+
+        bool IsMailFolder(FolderInfo f) { return string.IsNullOrEmpty(f.Type) || f.Type.StartsWith("IPF.Note", StringComparison.OrdinalIgnoreCase); }
+
+        /// <summary>
+        /// The ids of the messages of a folder received inside the period, from the Mail API (the ids are the ones of the import-export listing). Null: this folder is filtered on the
+        /// arrival date; <paramref name="byDesign"/> is true for a folder that holds no messages (calendar, contacts, tasks, notes), false when the received date could not be read
+        /// (no permission, a folder the Mail API refuses): that is recorded and told.
+        /// </summary>
+        HashSet<string> ReceivedIdsOf(FolderInfo f, CancellationToken ct, out bool byDesign)
+        {
+            byDesign = false;
+            if (_o.Period == null || _receivedUnavailable != null) return null;
+            if (!IsMailFolder(f)) { byDesign = true; return null; }
+            string stopped = _receivedStopped;
+            if (stopped != null) { NoteArrivalFolder(f, stopped); return null; }
+            try
+            {
+                if (_mail == null) _mail = new MailboxBrowser(_api);
+                HashSet<string> ids = _mail.GetReceivedIds(_o.MailboxId, f.Id, _o.Period, ct);
+                Interlocked.Exchange(ref _mailRefusals, 0);
+                Interlocked.Increment(ref _receivedFolders);
+                return ids;
+            }
+            catch (GraphException ex)
+            {
+                string why = "the Mail API answered HTTP " + ex.StatusCode + (string.IsNullOrEmpty(ex.ErrorCode) ? "" : " " + ex.ErrorCode);
+                if ((ex.StatusCode == 401 || ex.StatusCode == 403) && Interlocked.Increment(ref _mailRefusals) >= MailRefusalTrip)
+                {
+                    _receivedStopped = why + " for the folders before";
+                    Log("the Mail API refused " + MailRefusalTrip + " folders in a row (HTTP " + ex.StatusCode + "): the next folders are filtered on the arrival date without asking it again");
+                }
+                NoteArrivalFolder(f, why);
+                return null;
+            }
+        }
+
+        void NoteArrivalFolder(FolderInfo f, string why)
+        {
+            lock (_result.FoldersOnArrivalDate) _result.FoldersOnArrivalDate.Add("'" + f.Path + "' (" + why + ")");
+            Log("folder '" + f.Path + "' is filtered on the arrival date: " + why);
         }
 
         static string Describe(string key)
@@ -634,6 +750,8 @@ namespace MailboxTransfer
                             var batch = new List<StoreItemEntry>();
                             Dictionary<string, List<StoreItem>> recorded = null;
                             bool inAux = false;
+                            bool onArrivalByDesign;
+                            HashSet<string> received = ReceivedIdsOf(f, ct, out onArrivalByDesign);
                             try
                             {
                                 bool once = _o.NotReadyTrip > 0 && Volatile.Read(ref _notReadyStreak) >= _o.NotReadyTrip;
@@ -642,8 +760,16 @@ namespace MailboxTransfer
                                     if (!ItemWanted(f.Id, i.Id)) continue;
                                     if (_o.Period != null && !ItemPicked(f.Id, i.Id))
                                     {
-                                        if (!i.Created.HasValue) Interlocked.Increment(ref _withoutDate);
-                                        else if (!_o.Period.Contains(i.Created.Value)) { Interlocked.Increment(ref _outsidePeriod); continue; }
+                                        if (received != null && MapiToMime.IsMailClass(i.Type))
+                                        {
+                                            if (!received.Contains(i.Id)) { Interlocked.Increment(ref _outsidePeriod); continue; }
+                                        }
+                                        else
+                                        {
+                                            if (received != null || onArrivalByDesign) Interlocked.Increment(ref _onArrival);
+                                            if (!i.Created.HasValue) Interlocked.Increment(ref _withoutDate);
+                                            else if (!_o.Period.Contains(i.Created.Value)) { Interlocked.Increment(ref _outsidePeriod); continue; }
+                                        }
                                     }
                                     string real = string.IsNullOrEmpty(i.MailboxId) ? _o.MailboxId : i.MailboxId;
                                     if (!MailboxApi.SameMailbox(real, _o.MailboxId))
@@ -703,8 +829,13 @@ namespace MailboxTransfer
             _result.ItemsWithoutDate = Interlocked.Read(ref _withoutDate);
             if (_o.Period != null)
             {
-                Log("inventory: " + _result.ItemsOutsidePeriod + " item(s) outside the period (" + _o.Period.Describe() + ") were left out" + (_result.ItemsWithoutDate > 0 ? "; " + _result.ItemsWithoutDate + " item(s) without a date were kept" : ""));
+                int onArrivalFolders = _result.FoldersOnArrivalDate.Count;
+                _result.ReceivedDateUnavailable = _receivedUnavailable;
+                _result.ItemsOnArrivalDate = Interlocked.Read(ref _onArrival);
+                _result.PeriodDate = _receivedUnavailable != null || (_receivedFolders == 0 && onArrivalFolders > 0) ? "arrival" : onArrivalFolders > 0 ? "mixed" : "received";
+                Log("inventory: " + _result.ItemsOutsidePeriod + " item(s) outside the period (" + _o.Period.Describe() + ") were left out" + (_result.ItemsWithoutDate > 0 ? "; " + _result.ItemsWithoutDate + " item(s) without a date were kept" : "") + "; date used: " + _result.PeriodDateText);
                 _store.SetExportOption(CountsOptionName(_o.MailboxId), listed + ";" + _result.ItemsOutsidePeriod + ";" + _result.ItemsWithoutDate);
+                _store.SetExportOption(DateOptionName(_o.MailboxId), _result.PeriodDate + "|" + _result.ItemsOnArrivalDate + "|" + (_result.ReceivedDateUnavailable ?? "") + "\n" + string.Join("\n", _result.FoldersOnArrivalDate.Select(x => x.Replace('\n', ' '))));
             }
             Log("inventory: " + listed + " items listed in " + folders.Count(f => f.TotalItemCount > 0) + " folders" +
                 (_foldersNotListed > 0 ? ", " + _foldersNotListed + " folders could not be listed" : "") +

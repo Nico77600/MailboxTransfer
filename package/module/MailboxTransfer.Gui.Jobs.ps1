@@ -138,7 +138,7 @@ function Write-MbtGuiFolderFiles {
 function Get-MbtGuiPeriod {
     <#
         The period the operator asked for an export, from the state: Chosen (the second choice is on), Active (and it is valid: it holds a date and the first date is not after the last),
-        From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("arrived between 2026-03-01 and 2026-03-31", "all dates").
+        From and To (yyyy-MM-dd, empty: no limit), Problem (in plain words, or $null) and Text ("received between 2026-03-01 and 2026-03-31", "all dates").
     #>
     param([hashtable]$S)
     $chosen = ((Get-MbtGuiProp $S 'Task' '') -in 'export', 'mailcopy') -and ((Get-MbtGuiProp $S 'Period' 'all') -ieq 'between')
@@ -148,7 +148,7 @@ function Get-MbtGuiPeriod {
         if (-not $from -and -not $to) { $problem = 'Pick at least one date, or choose All dates.' }
         elseif ($from -and $to -and [string]::CompareOrdinal($from, $to) -gt 0) { $problem = 'The first date is after the last date. Swap them, or pick other dates.' }
     }
-    $text = if (-not $chosen -or $problem) { 'all dates' } elseif ($from -and $to) { "arrived between $from and $to" } elseif ($from) { "arrived from $from" } else { "arrived until $to" }
+    $text = if (-not $chosen -or $problem) { 'all dates' } elseif ($from -and $to) { "received between $from and $to" } elseif ($from) { "received from $from" } else { "received until $to" }
     [pscustomobject]@{ Chosen = $chosen; Active = ($chosen -and -not $problem); From = $(if ($chosen) { $from } else { '' }); To = $(if ($chosen) { $to } else { '' }); Problem = $problem; Text = $text }
 }
 
@@ -157,9 +157,39 @@ function Get-MbtGuiPeriodStoreSuffix {
     param([hashtable]$S)
     $p = Get-MbtGuiPeriod $S
     if (-not $p.Active) { return '' }
-    if ($p.From -and $p.To) { return "-arrived-$($p.From)_$($p.To)" }
-    if ($p.From) { return "-arrived-from-$($p.From)" }
-    return "-arrived-until-$($p.To)"
+    if ($p.From -and $p.To) { return "-received-$($p.From)_$($p.To)" }
+    if ($p.From) { return "-received-from-$($p.From)" }
+    return "-received-until-$($p.To)"
+}
+
+function Test-MbtGuiEverything {
+    <# The task takes everything in the places ticked in Where to look (no selection file); a state that does not say is the old way, the ticks. #>
+    param([hashtable]$S)
+    return ((Get-MbtGuiProp $S 'Task' '') -in 'export', 'mailcopy') -and ((Get-MbtGuiProp $S 'SelMode' 'ticks') -ne 'ticks')
+}
+
+function Get-MbtGuiEverythingArguments {
+    <# "Everything" as the command line says it: the mailbox places (-Mailbox Primary, Archive or All), the shared mailbox by its address, and the deleted items when the box is ticked. #>
+    param([hashtable]$S)
+    $kinds = @(@(Get-MbtGuiProp $S 'EvPlaces' @()) | ForEach-Object { [string](Get-MbtGuiProp $_ 'Kind' '') } | Where-Object { $_ -in 'Primary', 'Archive' } | Sort-Object -Unique)
+    $shared = [string](Get-MbtGuiProp $S 'Shared' '')
+    # the application reads every place of another mailbox (the command names it as the mailbox it works on); a delegated sign-in reads its Primary only
+    if ($shared -and (Get-MbtGuiProp $S 'AuthMode' 'user') -ne 'app') { '-Mailbox'; 'Primary'; '-MailboxId'; $shared }
+    else { '-Mailbox'; $(if ('Primary' -in $kinds -and 'Archive' -in $kinds) { 'All' } elseif ('Archive' -in $kinds) { 'Archive' } else { 'Primary' }) }
+    if ([bool](Get-MbtGuiProp $S 'RecoverableItems' $false)) { '-IncludeRecoverableItems' }
+}
+
+function Get-MbtGuiOwnMailboxIdArguments {
+    <# The ids of the signed-in account's own mailbox that were typed (Setup, Expert; the archive id of Where to look wins): -PrimaryMailboxId and -ArchiveMailboxId, as the Tenant section of the configuration gives them. Nothing for the application or for another mailbox. #>
+    param([hashtable]$S, [switch]$Other)
+    if ($Other -or (Get-MbtGuiProp $S 'AuthMode' 'user') -eq 'app') { return }
+    $primary = [string](Get-MbtGuiProp $S 'PrimaryIdValue' '')
+    $archive = [string](Get-MbtGuiProp $S 'ArchiveIdValue' '')
+    $typed = Get-MbtGuiProp $S 'ArchiveIds' $null
+    $key = ([string](Get-MbtGuiProp $S 'Mailbox' '')).Trim().ToLowerInvariant()
+    if ($typed -is [Collections.IDictionary] -and $key -and $typed.Contains($key) -and $typed[$key]) { $archive = [string]$typed[$key] }
+    if ($primary) { '-PrimaryMailboxId'; $primary }
+    if ($archive) { '-ArchiveMailboxId'; $archive }
 }
 
 function Get-MbtGuiCommonArguments {
@@ -193,12 +223,14 @@ function Get-MbtGuiCommand {
             $eml = $S.Dest -eq 'eml'
             $a = [Collections.Generic.List[string]]::new()
             # the temporary files of the export are in the job folder, not below the folder of the script
-            $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $S.Mailbox))
-            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $a.AddRange([string[]]@('-Mode', 'Export', '-UserPrincipalName', $(if ((Get-MbtGuiProp $S 'Shared' '') -and $S.AuthMode -eq 'app') { $S.Shared } else { $S.Mailbox })))
+            if (Test-MbtGuiEverything $S) { $a.AddRange([string[]]@(Get-MbtGuiEverythingArguments -S $S)) }
+            else { foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) } }
+            $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool](Get-MbtGuiProp $S 'Shared' ''))))
             # the period: the days as ISO text (the same whatever the language of Windows); a day left empty is no limit on that side
             $period = Get-MbtGuiPeriod $S
-            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
-            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ReceivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ReceivedTo', $period.To)) }
             $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt'))
             $a.AddRange([string[]]$tuning)
             if ($pst) {
@@ -229,6 +261,7 @@ function Get-MbtGuiCommand {
             $a.AddRange([string[]]@('-Mailbox', $S.TgtLoc))
             # a shared mailbox (or another user's) is given by its address
             if ($S.ImShared) { $a.AddRange([string[]]@('-MailboxId', $S.ImShared)) }
+            $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool]$S.ImShared)))
             if ($S.TgtMode -eq 'new' -and $S.TgtName) {
                 $problem = Test-MbtGuiFolderName $S.TgtName
                 if ($problem) { throw "The target folder name is refused: $problem" }
@@ -236,7 +269,7 @@ function Get-MbtGuiCommand {
             }
             elseif ($S.ImSrc -eq 'pst') { $a.Add('-MergeWellKnown') }
             if ($S.Mapping -and $S.ImSrc -ne 'eml') { $a.AddRange([string[]]@('-MappingFile', $S.Mapping)) }
-            if ($Job.SelectionFiles -and $S.ImSrc -eq 'store') { $a.AddRange([string[]]@('-SelectionFile', @($Job.SelectionFiles)[0])) }
+            if ($Job.SelectionFiles -and $S.ImSrc -eq 'store' -and (Get-MbtGuiProp $S 'ImSelMode' 'ticks') -eq 'ticks') { $a.AddRange([string[]]@('-SelectionFile', @($Job.SelectionFiles)[0])) }
             # the folders ticked in a PST or in a folder of .eml files
             if ((Get-MbtGuiProp $Job 'FolderFile') -and $S.ImSrc -in 'pst', 'eml') { $a.AddRange([string[]]@('-FolderFile', (Get-MbtGuiProp $Job 'FolderFile'))) }
             $a.AddRange([string[]]@('-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
@@ -247,18 +280,35 @@ function Get-MbtGuiCommand {
         'mailcopy' {
             # a mailbox into another in one job: the engine reads it into the store, then imports the store; one command, so that Pause and Continue work across the two parts
             $a = [Collections.Generic.List[string]]::new()
-            $a.AddRange([string[]]@('-Mode', 'Copy', '-UserPrincipalName', $S.Mailbox))
-            foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) }
+            $a.AddRange([string[]]@('-Mode', 'Copy', '-UserPrincipalName', $(if ((Get-MbtGuiProp $S 'Shared' '') -and $S.AuthMode -eq 'app') { $S.Shared } else { $S.Mailbox })))
+            $every = Test-MbtGuiEverything $S
+            if ($every) { $a.AddRange([string[]]@(Get-MbtGuiEverythingArguments -S $S)) }
+            else { foreach ($file in @($Job.SelectionFiles)) { $a.AddRange([string[]]@('-SelectionFile', $file)) } }
+            $a.AddRange([string[]]@(Get-MbtGuiOwnMailboxIdArguments -S $S -Other:([bool](Get-MbtGuiProp $S 'Shared' ''))))
             $period = Get-MbtGuiPeriod $S
-            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ArrivedFrom', $period.From)) }
-            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ArrivedTo', $period.To)) }
-            $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc))
+            if ($period.Active -and $period.From) { $a.AddRange([string[]]@('-ReceivedFrom', $period.From)) }
+            if ($period.Active -and $period.To) { $a.AddRange([string[]]@('-ReceivedTo', $period.To)) }
+            # both places of the source: the layout says where each part goes; one place: the place of the target
+            $both = ((Get-MbtGuiProp $S 'McFromKind' '') -eq 'All')
+            if ($both) { $a.AddRange([string[]]@('-TargetLayout', [string](Get-MbtGuiProp $S 'McLayout' 'Mirror'))) } else { $a.AddRange([string[]]@('-TargetMailbox', $S.TgtLoc)) }
             # the application has no mailbox of its own: it names the one that receives; a delegated sign-in writes into its own
             if ($S.AuthMode -eq 'app' -and $S.McTarget) { $a.AddRange([string[]]@('-TargetMailboxId', $S.McTarget.Trim())) }
+            # the id of the archive of the target, when it was typed (the lookup could not give it)
+            $targetArchive = Get-MbtGuiProp $S 'McArchive' $null
+            $targetKey = ([string](Get-MbtGuiProp $S 'McTarget' '')).Trim().ToLowerInvariant()
+            if ($S.AuthMode -eq 'app' -and $targetArchive -is [Collections.IDictionary] -and $targetKey -and $targetArchive.Contains($targetKey) -and $targetArchive[$targetKey] -and ($both -or $S.TgtLoc -eq 'Archive')) { $a.AddRange([string[]]@('-TargetArchiveMailboxId', [string]$targetArchive[$targetKey])) }
             if ($S.TgtMode -eq 'new' -and $S.TgtName) {
                 $problem = Test-MbtGuiFolderName $S.TgtName
                 if ($problem) { throw "The target folder name is refused: $problem" }
                 $a.AddRange([string[]]@('-TargetRoot', $S.TgtName))
+            }
+            if ($both) {
+                # the Archive part has its own folder; "the same folder names" is an empty one
+                if ((Get-MbtGuiProp $S 'TgtMode2' 'new') -eq 'new' -and (Get-MbtGuiProp $S 'TgtName2' '')) {
+                    $problem = Test-MbtGuiFolderName $S.TgtName2
+                    if ($problem) { throw "The target folder name is refused: $problem" }
+                    $a.AddRange([string[]]@('-TargetArchiveRoot', $S.TgtName2))
+                } elseif ($S.TgtMode -eq 'new' -and $S.TgtName) { $a.AddRange([string[]]@('-TargetArchiveRoot', '')) }
             }
             if ($S.Mapping) { $a.AddRange([string[]]@('-MappingFile', $S.Mapping)) }
             $a.AddRange([string[]]@('-StorePath', $Job.StorePath, '-TempPath', [IO.Path]::Combine($Job.Folder, 'temp'), '-NoPrompt', '-ReconcileDelaySeconds', [string]([int]$S.Reconcile * 60)))
@@ -346,6 +396,7 @@ function ConvertTo-MbtGuiShownArgument {
 
 function Format-MbtGuiCommandToken {
     param([string]$Text)
+    if ($Text -eq '') { return "''" }
     if ($Text -match '[\s;&()$''`"]') { return ("'" + $Text.Replace("'", "''") + "'") }
     return $Text
 }
@@ -568,6 +619,8 @@ function Write-MbtGuiRunReport {
         $text = '{0} items kept; {1} items outside the period were skipped (not an error)' -f (Get-MbtGuiProp $periodCounts 'kept' 0), $outside
         $undated = [long](Get-MbtGuiProp $periodCounts 'withoutDate' 0)
         if ($undated -gt 0) { $text += "; $undated items without a date were kept" }
+        $dateNote = [string](Get-MbtGuiProp $periodCounts 'periodNote' '')
+        if ($dateNote) { $text += "; date used: $dateNote" }
         $rows.Add([pscustomobject]@{ Kind = 'period'; Step = 'list'; Key = 'items outside the period'; State = 'skipped'; Done = $outside; Total = ''; Message = $text })
     }
     foreach ($w in $Run.Warnings) { $rows.Add([pscustomobject]@{ Kind = 'warning'; Step = $w.Step; Key = $w.Key; State = $w.Code; Done = ''; Total = ''; Message = $w.Msg }) }
@@ -627,10 +680,10 @@ function Get-MbtGuiReportPath {
 }
 
 # SIG # Begin signature block
-# MIImKwYJKoZIhvcNAQcCoIImHDCCJhgCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC+2A/Cg5FjJqg4
-# taHIfxJo/ZslgQyd/ZufDKVY4n69NKCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC3KcXFxZ0FUYq+
+# 0ckNU8ftiqxZsa/vt6NFu9Xg74iOPqCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -702,28 +755,28 @@ function Get-MbtGuiReportPath {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEjCCGA4CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBqpKcKUXlE
-# HniimTo5toz6hE3xhFnbvVgKGuhzB0e92jANBgkqhkiG9w0BAQEFAASCAgB5EoQU
-# wGxxVVbwBZ3UXPmKUjWf0Qt3v/rwYgt4XB5aDkwFNWSBVi4YCf9P9j0Nyf78mA2z
-# AM/xN8OL1xmlXYvXaEmD8V7s4/bfeprHrQPgtONFr8RzSAofQQAXsNL9C2LEQYVE
-# m1LJ389C32MoStq2Oxat+xZLcjJFaKJqCKtmAKTcSuIQ1YNI1gbMJSGgg6WmNDM2
-# guO3KywjMh8IiXXegflgjLVhtRF/+QAw97rwKXxdSaVWBM1FYK/pVQhx/HGQlIg9
-# evdwt+2uFO62at8/bYzK0QJcSIWjc+aOTTqnoF5/lRH3vO1zBHJbaeGc6r8G8hsP
-# 7zICZwfMZfABGznffaWb/6r9Er03zPZlCo+/5rDzCAroVcKDLEmdZ/eRlNvKFAbV
-# lRat+o2/J033NPxkHu4iCUqQik71FkVF/conyZ1VXCK8d7Z93w29zi54n7c3FWtW
-# a26mOJau5u0gX9DZj303KHREYaglTl0QaZrKrEFsuPWbCulXsWC/uQyB+2SrtVGm
-# Yx0w9ay3HuafhYD+ij+a55dINdHF22jT/6us5yWw+lqgTDvWjJKBpcaR2VPIm3RS
-# GM8PkdEpTAJ7D7NHBaCxho8z/3w1HJ3BR6FS6KnF+I/KBKXAT2g5pXz1zvEV/Riw
-# Shn+jj80Pf7dLFwhkxz/0i8hwdXPLLUL9E3736GCFM8wghTLBgorBgEEAYI3AwMB
-# MYIUuzCCFLcGCSqGSIb3DQEHAqCCFKgwghSkAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCD+d9r4IAjO
+# 20RDcFcX69amRzKItIOmHbJ9uAWzXrZzFjANBgkqhkiG9w0BAQEFAASCAgAwgxsT
+# nddp1hIOT5k3ksqbERzHLgY+4Pu5hD3Z9bvUZkvxEswkrUsBHXAf+pvJGJrlP9Bu
+# 4n1i+Z5f9LKZ0QYmeQN5KcjkCTAUsVaPl6fdbsbocAjyD1OCp0H8J2xn+ogFsSj/
+# 12sHDaZ5HasY9suFy6aqu8x7DI/l9FjXUbDEPufRs9eh3mM7s9gSNhPdmlxxr93D
+# R8SPVzYrFKWPgFFsZXwondxnThKQ8Ci+iD1yPl4HIKN+pB4UhrEgEbWhHc90LKiF
+# nvAWjdUesiei+Jfo1xyQvnb9eN0ILOB8GCPwYxh/xtANZBD4sqhygYPrGXzNb3Zw
+# 3M9KZxEt52+0x14EYwdUlikGGPxxSqyqi81jpNn4HgMnMWrC1asSbxVwJce4vBr+
+# ETQXjoIMCgboioEdUgSTzed7OckfkrOpWDQMMlbarBEMc+84m4LZEYpouM1UDejy
+# PYInahleVVfqO6UQnMZFWluKr1AubSepSgx/32ANU4IycC7tY92UTvQVDhs5cUNj
+# tMqiIO1i6q9W8c1VhdakV29X440Q0KK7EQrIzPiy9OMgQefEI8QTUME8z4Nz9jz5
+# cET7XKCGnTy2xRb2LE4M5NelzMBxRjX7ryM7g+rmtt3BM2J3ooatLVCJ93TSLVMv
+# nLJjX23JgD712p35QMnElIDi2brbfVTrghn8V6GCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIE4Qj9m1g4eX39W2PBhHwXIAub7B8l25o0YLbtL5orbzAgg3TlYywPt/
-# 4xgPMjAyNjExMjUwODAzMDRaMAMCAQECEF0OEA3NGX/+DdcUOWWI6ImgghGnMIIE
+# BAIBBQAEIE4cRfPNQACAvzKaajBVyB2eTnFYIpyB2ylpJ85c2IeuAggwT04QLlS9
+# EBgPMjAyNjExMjcwNTI3NTNaMAMCAQECEEkMtBc3JjLXUktJimBXNoKgghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -818,17 +871,17 @@ function Get-MbtGuiReportPath {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlcwggJTAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDMwNFowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIHfA
-# 0W7UPz2B3wVBs9GBJZXDzmpUqG5n95GpfkklbFEXMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1Mjc1M1owKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIAw+
+# ewOi9RfDH4Cm3yUu5f125gudztDo86f3hpovismzMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIESDBGAiEAgo8Ybcu+yEle6TVdOPjaB7k5Pdnn7UCagXpZZJrF7qoCIQDX
-# ugArOlMTeR+PobsmAM/p4n8Cs1S480hxzKFcgwHzpg==
+# zj0EAwIERzBFAiEAniAjg0UIkwOXRUatyKEmXeS5W6f3mz6ig0xvjn2xfnICIBYO
+# IY+6WSJhikgefp8Mtn8fUQgojTDdu9cFJmRKs/KD
 # SIG # End signature block

@@ -115,6 +115,7 @@ function Start-MbtGuiSignIn {
         $win = $null; if ($probe) { try { $win = & $probe } catch { $win = $null } }
         if ($win -and -not $win.Available) { $UseCode = $true; $s.SignInNote = "The Windows sign-in window cannot be used on this PC ($($win.Reason)). A code is used instead." }
     }
+    if ((Get-MbtGuiArchiveKey $s.Mailbox) -ne (Get-MbtGuiArchiveKey $addr)) { $s.ArchiveIds = @{}; $s.ArchiveState = $null; $s.ArchiveText = ''; $s.ArchiveProblem = '' }
     $s.Mailbox = $addr; $s.SigningIn = $true; $s.SignInError = ''; $s.CodeShown = $UseCode; $s.Code = $null; $s.SwitchToCode = $false
     $s.SignInCts = [Threading.CancellationTokenSource]::new()
     $codeFile = Get-MbtGuiDeviceCodeFile
@@ -149,25 +150,36 @@ function Step-MbtGuiSignInCode {
     }
 }
 
+function Get-MbtGuiArchiveKey {
+    <# The archive mailbox id typed for a mailbox is kept under its address, in lower case. #>
+    param([string]$Address)
+    return $Address.Trim().ToLowerInvariant()
+}
+
 function Read-MbtGuiLocations {
     $g = $script:Gui; $s = $g.S
     $s.Reading = $true
+    # the archive id typed for this mailbox (or for the other mailbox that is open, under its address) wins, then the ones of Setup (Expert), then the configuration file
+    $archiveKey = Get-MbtGuiArchiveKey $(if ($s.Shared) { $s.Shared } else { $s.Mailbox })
+    $ownIds = (-not $s.Shared -and $s.AuthMode -ne 'app')
+    $archiveId = if ($s.ArchiveIds.ContainsKey($archiveKey)) { [string]$s.ArchiveIds[$archiveKey] } elseif ($ownIds) { [string]$s.ArchiveIdValue } else { '' }
+    $primaryId = if ($ownIds) { [string]$s.PrimaryIdValue } else { '' }
     & $g.Engine.Locations $s.Mailbox $s.LocationsFile {
-        param($locs)
-        $s.Locations = @($locs); $s.Reading = $false
+        param($locs, $archive)
+        $s.Locations = @($locs); $s.ArchiveState = $archive; $s.Reading = $false
         foreach ($l in $s.Locations) { if (-not $s.LocationChecked.ContainsKey($l.Kind)) { $s.LocationChecked[$l.Kind] = $true } }
         Sync-MbtGuiLocationRoots
         Show-MbtGuiPage
     }.GetNewClosure() {
-        param($msg) $s.Reading = $false; $s.Locations = @(); $m = ConvertTo-MbtGuiMessage $msg; $s.SignInError = $m.Text; $s.SignInTech = $m.Tech; $s.Shared = ''; Show-MbtGuiPage
-    }.GetNewClosure() $s.Shared
+        param($msg) $s.Reading = $false; $s.Locations = @(); $s.ArchiveState = $null; $m = ConvertTo-MbtGuiMessage $msg; $s.SignInError = $m.Text; $s.SignInTech = $m.Tech; $s.Shared = ''; Show-MbtGuiPage
+    }.GetNewClosure() $s.Shared $null $archiveId $primaryId
 }
 
 function Sync-MbtGuiLocationRoots {
     <# The browser shows the locations that are ticked in "Where to look". #>
     $g = $script:Gui; $s = $g.S
     $browser = Get-MbtGuiBrowser 'export'
-    $want = @($s.Locations | Where-Object { $s.LocationChecked[$_.Kind] })
+    $want = @($s.Locations | Where-Object { $_.Kind -ne 'AuxArchive' -and $s.LocationChecked[$_.Kind] })
     & $g.Engine.Roots $want {
         param($roots)
         Set-MbtGuiBrowserRoots -Browser $browser -Roots @($roots)
@@ -181,7 +193,7 @@ function New-MbtGuiSignInCard {
     $g = $script:Gui; $s = $g.S
     if ($s.Signed) {
         $box = New-GuiTextBox -Text $s.Mailbox -ReadOnly -Automation 'Mailbox address'
-        $out = New-GuiButton -Text 'Sign out' -OnClick { & $g.Engine.SignOut; $s.Signed = $false; $s.Shared = ''; $s.ImShared = ''; $s.Locations = @(); $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() }; Show-MbtGuiPage }
+        $out = New-GuiButton -Text 'Sign out' -OnClick { & $g.Engine.SignOut; $s.Signed = $false; $s.Shared = ''; $s.ImShared = ''; $s.Locations = @(); $s.ArchiveState = $null; $s.ArchiveIds = @{}; $s.ArchiveText = ''; $s.ArchiveProblem = ''; $s.Code = $null; if ($g.Browsers.ContainsKey('export')) { Set-MbtGuiBrowserRoots -Browser $g.Browsers['export'] -Roots @() }; Show-MbtGuiPage }
         $out.Margin = [Windows.Thickness]::new(0)
         $row = New-GuiRow -Box $box -Button $out
         $tok = $s.Token
@@ -295,15 +307,90 @@ function New-MbtGuiSharedMailboxSection {
     return (New-GuiMore -Summary $title -Content $content.ToArray() -Open:([bool]$s[$key]))
 }
 
+function New-MbtGuiArchiveIdInput {
+    <# The box "Archive mailbox id", Look again, a problem line and the way to find the id: for a mailbox whose archive could not be looked up. OnText gets the box (a closure), OnLook is the click of Look again (a closure that reads the typed text from the state). #>
+    param([string]$Text, [string]$Problem, [string]$Mailbox, [Parameter(Mandatory)][scriptblock]$OnText, [Parameter(Mandatory)][scriptblock]$OnLook)
+    $out = [Collections.Generic.List[object]]::new()
+    $out.Add((New-GuiText 'Archive mailbox id' 'Label'))
+    $box = New-GuiTextBox -Text $Text -Automation 'Archive mailbox id' -OnChange $OnText
+    $look = New-GuiButton -Text 'Look again' -Small -Icon refresh -OnClick $OnLook
+    $look.Margin = [Windows.Thickness]::new(0, 6, 0, 0); $look.HorizontalAlignment = 'Left'
+    $out.Add($box); $out.Add($look)
+    if ($Problem) { $out.Add((New-GuiMessage -Kind bad -Icon warn -Text $Problem)) }
+    $out.Add((New-GuiText "Type the guid, or **MBX:<guid>@<tenant>**. An administrator finds it in Exchange Online PowerShell with **Get-MailboxLocation -User $Mailbox | Select MailboxGuid, MailboxLocationType** (the line MainArchive), or with **(Get-Mailbox $Mailbox).ArchiveGuid**." 'Hint'))
+    return $out.ToArray()
+}
+
+function New-MbtGuiArchiveLookupItem {
+    <# What "Where to look" says about the archive when it is not in the list: the mailbox has none, or it could not be looked up (why, and how to type its id). Nothing for a shared mailbox. #>
+    $g = $script:Gui; $s = $g.S
+    $state = [string](Get-MbtGuiProp $s.ArchiveState 'State' '')
+    if (-not $s.Signed -or @($s.Locations | Where-Object { $_.Kind -eq 'Archive' }).Count) { return @() }
+    if ($s.Shared -and $s.AuthMode -ne 'app') { return @(New-GuiText 'The archive of another mailbox can be read only with the application sign-in (Setup).' 'Hint') }
+    if ($state -eq 'None') { return @(New-GuiText 'This mailbox has no archive.' 'Muted' -Margin '0,8,0,0') }
+    if ($state -ne 'Unknown') { return @() }
+    $permission = if ($s.AuthMode -eq 'app') { 'the application permission' } else { 'the delegated permission' }
+    $out = [Collections.Generic.List[object]]::new()
+    $out.Add((New-GuiMessage -Kind warn -Icon warn -Text "**The archive could not be looked up.** If this mailbox has an archive, it is not in the list. Ask an administrator to grant the application $permission **User.Read.All**, or type the archive mailbox id below."))
+    $onText = { param($x, $e) $s.ArchiveText = $x.Text }.GetNewClosure()
+    $onLook = {
+        $text = ([string]$s.ArchiveText).Trim()
+        $key = Get-MbtGuiArchiveKey $(if ($s.Shared) { $s.Shared } else { $s.Mailbox })
+        $s.ArchiveProblem = ''
+        if ($text) {
+            $parsed = & $g.Engine.ParseMailboxId $text ([string](Get-MbtGuiProp $s.Token 'TenantId' ''))
+            if (-not $parsed.Ok) { $s.ArchiveProblem = [string]$parsed.Problem; Show-MbtGuiPage; return }
+            $s.ArchiveIds[$key] = [string]$parsed.Id
+        } else { $s.ArchiveIds.Remove($key) }
+        Read-MbtGuiLocations
+        Show-MbtGuiPage
+    }.GetNewClosure()
+    foreach ($c in @(New-MbtGuiArchiveIdInput -Text ([string]$s.ArchiveText) -Problem ([string]$s.ArchiveProblem) -Mailbox $s.Mailbox -OnText $onText -OnLook $onLook)) { $out.Add($c) }
+    return $out.ToArray()
+}
+
+function New-MbtGuiTargetArchiveItem {
+    <# What the page of the mailbox that receives a copy says about its archive: being looked up, none, found, or not known (with the box for its id). #>
+    param([Parameter(Mandatory)]$Ends)
+    $g = $script:Gui; $s = $g.S
+    $archive = $Ends.Archive
+    switch ($archive.State) {
+        'Reading' { return @(New-GuiText 'Looking up whether this mailbox has an archive...' 'Hint') }
+        'None' { return @(New-GuiText 'This mailbox has no archive.' 'Muted' -Margin '0,8,0,0') }
+        'Known' { if ($archive.Typed) { return @(New-GuiText 'The archive mailbox id you typed is used.' 'Hint') } else { return @() } }
+        'Unknown' {
+            $out = [Collections.Generic.List[object]]::new()
+            $out.Add((New-GuiMessage -Kind warn -Icon warn -Text '**The archive of this mailbox could not be looked up.** If it has an archive, only its Primary mailbox is offered. Ask an administrator to grant the application the permission **User.Read.All**, or type the archive mailbox id below.'))
+            $key = ([string]$Ends.To).Trim().ToLowerInvariant()
+            $onText = { param($x, $e) $s.McArchiveText = $x.Text }.GetNewClosure()
+            $onLook = {
+                $text = ([string]$s.McArchiveText).Trim()
+                $s.McArchiveProblem = ''
+                if ($text) {
+                    $parsed = & $g.Engine.ParseMailboxId $text ([string](Get-MbtGuiProp (Get-MbtGuiEffectiveSignIn -S $s) 'Tenant' ''))
+                    if (-not $parsed.Ok) { $s.McArchiveProblem = [string]$parsed.Problem; Show-MbtGuiPage; return }
+                    $s.McArchive[$key] = [string]$parsed.Id
+                } else { $s.McArchive.Remove($key) }
+                $g.McTargetArchive = $null
+                Start-MbtGuiTargetArchiveLookup
+                Show-MbtGuiPage
+            }.GetNewClosure()
+            foreach ($c in @(New-MbtGuiArchiveIdInput -Text ([string]$s.McArchiveText) -Problem ([string]$s.McArchiveProblem) -Mailbox $Ends.To -OnText $onText -OnLook $onLook)) { $out.Add($c) }
+            return $out.ToArray()
+        }
+        default { return @() }
+    }
+}
 function New-MbtGuiLocationsCard {
     $g = $script:Gui; $s = $g.S
     $items = @()
-    foreach ($l in $s.Locations) {
+    foreach ($l in @($s.Locations | Where-Object { $_.Kind -ne 'AuxArchive' })) {
         $kind = $l.Kind
         $opt = New-GuiOption -Type Check -Title $l.Label -Hint $l.Hint -Checked ([bool]$s.LocationChecked[$kind]) -OnChange { param($x, $e) $s.LocationChecked[$kind] = [bool]$x.IsChecked; Sync-MbtGuiLocationRoots }.GetNewClosure()
         $items += $opt
     }
-    if (-not $items.Count) { $items += New-GuiText $(if ($s.Reading) { 'Reading the locations...' } else { 'No location found.' }) 'Hint' }
+    if (-not $s.Reading) { $items += @(New-MbtGuiArchiveLookupItem) }
+    if (-not @($s.Locations).Count) { $items += New-GuiText $(if ($s.Reading) { 'Reading the locations...' } else { 'No location found.' }) 'Hint' }
     else {
         $items += New-GuiOption -Type Check -Title 'Include deleted items (Recoverable Items)' -Margin '0,10,0,0' -Checked ([bool]$s.RecoverableItems) `
             -Hint 'Off: only the folders you see in Outlook. On: the browser also shows the hidden folder where deleted mail waits. Changing this reloads the browser.' `
@@ -320,8 +407,7 @@ function New-MbtGuiLocationsCard {
         $items += New-GuiMore -Summary 'What are deleted items (Recoverable Items)?' -Content $what.ToArray()
     }
     if (@($s.Locations | Where-Object { $_.PSObject.Properties['Filling'] -and $_.Filling }).Count) {
-        $f = @($s.Locations | Where-Object { $_.PSObject.Properties['Filling'] -and $_.Filling })[0]
-        $items += New-GuiMessage -Kind warn -Icon warn -Text "**$($f.Label) is still being filled by Microsoft.** Some folders may be `"not ready`". The tool tries them again later and lists them; nothing is exported as empty."
+        $items += New-GuiText 'Some folders of the archive may not be ready yet: Microsoft is still moving them. The tool tries them again later and lists them; nothing is exported as empty.' 'Hint'
     }
     $pick = New-GuiButton -Text 'Load a locations file...' -Small -Icon open -OnClick {
         $f = Select-MbtGuiFile -Title 'Locations file (Get-MailboxLocation output)' -Filter 'Locations (*.csv;*.json;*.txt)|*.csv;*.json;*.txt|All files (*.*)|*.*'
@@ -330,7 +416,7 @@ function New-MbtGuiLocationsCard {
     $pick.Margin = [Windows.Thickness]::new(0, 6, 0, 0)
     $items += New-GuiMore -Summary 'The archive is missing from this list' -Content @((New-GuiText 'Microsoft does not tell us every archive. Ask your administrator to run **Get-MailboxLocation** for this user and save the result, then load it here.' 'Hint'), $pick)
     $items += New-MbtGuiSharedMailboxSection -Use export
-    return (New-GuiCard -Title 'Where to look' -Info "$(Format-MbtGuiQuantity @($s.Locations).Count 'location') found" -Content $items)
+    return (New-GuiCard -Title 'Where to look' -Info "$(Format-MbtGuiQuantity @($s.Locations | Where-Object { $_.Kind -ne 'AuxArchive' }).Count 'location') found" -Content $items)
 }
 
 #endregion
@@ -349,7 +435,7 @@ function Update-MbtGuiPeriodState {
     $g = $script:Gui; $s = $g.S
     $p = Get-MbtGuiPeriod $s
     if ($g.ContainsKey('PeriodHolder') -and $g.PeriodHolder) { $g.PeriodHolder.Content = $(if ($p.Problem) { New-GuiMessage -Kind bad -Icon x -Text $p.Problem } else { $null }) }
-    if ($g.Browsers.ContainsKey('export')) { Update-MbtGuiPeriodRow $g.Browsers['export'] }
+    if ($g.Browsers.ContainsKey('export')) { Update-MbtGuiPeriodRow $g.Browsers['export']; Update-MbtGuiRowsOutsidePeriod $g.Browsers['export'] }
     if ((Get-MbtGuiScreen) -eq 'exFrom') { Update-MbtGuiExportFromFooter }
 }
 
@@ -364,7 +450,7 @@ function Update-MbtGuiPeriodRow {
     if ($s.Task -notin 'export', 'mailcopy') { $row.Visibility = 'Collapsed'; return }
     $row.Visibility = 'Visible'
     $p = Get-MbtGuiPeriod $s
-    $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items that $($p.Text)" } else { '**Period:** all dates (recommended)' }
+    $text = if ($p.Problem -and $s.PeriodOpen) { '**Period:** check the days below' } elseif ($p.Problem) { "**Period:** $($p.Problem)" } elseif ($p.Active) { "**Period:** items $($p.Text)" } else { '**Period:** all dates (recommended)' }
     $t = New-GuiText $text 'Body' -NoWrap; $t.FontSize = 13; $t.VerticalAlignment = 'Center'
     $row.Children.Add($t) | Out-Null
     $change = New-GuiButton -Text $(if ($s.PeriodOpen) { 'Done' } else { 'Change' }) -Small -Name 'PeriodChange' -OnClick { Switch-MbtGuiPeriodDetail }
@@ -400,7 +486,7 @@ function Update-MbtGuiPeriodDetail {
     $g.PeriodHolder = $holder
     $problem = (Get-MbtGuiPeriod $s).Problem
     if ($problem) { $holder.Content = New-GuiMessage -Kind bad -Icon x -Text $problem }
-    $hint = New-GuiText '**Arrived** is the date the item was created in the mailbox. For mail that was migrated or imported into the mailbox, that is the date of the import, not the original date of the message. Both days are included; leave one empty for no limit on that side. Messages you tick one by one are always exported, whatever their date.' 'Hint'
+    $hint = New-GuiText '**Received** is the date shown in the list of messages. Items that have no received date (calendar items, contacts, tasks, notes) use the date they arrived in this mailbox; so does a folder that Microsoft does not let us read the received date of (and so does every folder when the sign-in has no Mail.Read permission). The end of the export says which. Both days are included, in your time zone; leave one empty for no limit on that side. Messages outside the period are greyed in the list. Messages you tick one by one are always exported, whatever their date.' 'Hint'
     $detailHost.Content = (New-GuiStack @($days, $holder, $hint))
 }
 
@@ -431,35 +517,38 @@ function Reset-MbtGuiPeriod {
 
 #region Export: From -------------------------------------------------------------------------------------
 
-function Get-MbtGuiCopySourceProblem {
-    <# Copy to another mailbox reads ONE place, the Primary mailbox or the Archive (the auxiliary archives follow the Archive): what is ticked must be in one. The sentence that says what to change, or $null. #>
-    param($Selection)
-    if (-not $Selection -or @($Selection.Entries).Count -eq 0) { return $null }
-    $kinds = @($Selection.Entries | ForEach-Object { ([string](Get-MbtGuiRootNode $_.Node).Kind).ToLowerInvariant() } | Sort-Object -Unique)
-    if ($kinds -contains 'aux') { return 'An auxiliary archive cannot be copied on its own: tick the folders of the Archive, its auxiliary archives follow it.' }
-    if ($kinds.Count -gt 1) { return 'Your ticks are in more than one place. A copy reads one place: tick in the Primary mailbox or in the Archive, and copy the other in another task.' }
-    return $null
+function Get-MbtGuiExportSelection {
+    <# What the export or the copy takes, from the choice above the tree: everything in the places ticked in Where to look, or what is ticked in the tree. Keeps the places for the command line (EvPlaces). #>
+    $g = $script:Gui; $s = $g.S
+    $browser = Get-MbtGuiBrowser 'export'
+    if ((Get-MbtGuiSelectionMode $browser) -eq 'all') {
+        $everything = Get-MbtGuiBrowserEverything $browser
+        $s.EvPlaces = @($everything.Places | Where-Object { $_.Kind -ne 'AuxArchive' } | ForEach-Object { @{ Kind = [string]$_.Kind; Id = [string]$_.Id } })
+        return $everything
+    }
+    $s.EvPlaces = @()
+    return (Get-MbtGuiSelection -Roots @($browser.Roots))
 }
 
 function Update-MbtGuiExportFromFooter {
     $g = $script:Gui
     if ((Get-MbtGuiScreen) -ne 'exFrom') { return }
-    $browser = Get-MbtGuiBrowser 'export'
-    $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
+    $sel = Get-MbtGuiExportSelection
     $period = Get-MbtGuiPeriod $g.S
-    $copyProblem = if ($g.S.Task -eq 'mailcopy') { Get-MbtGuiCopySourceProblem $sel }
-    $problem = if ($period.Problem) { $period.Problem } else { $copyProblem }
-    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and $sel.Items -gt 0 -and -not $problem) -Footer $(if ($problem -and $sel.Items -gt 0) { $problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed })
+    $problem = $period.Problem
+    $empty = Test-MbtGuiSelectionEmpty $sel
+    Update-MbtGuiPrimary -Enabled ($g.S.Signed -and -not $empty -and -not $problem) -Footer $(if ($problem -and -not $empty) { $problem } else { Format-MbtGuiSelectionFooter $sel $g.S.Signed -Period $period })
     $g.ExportSelection = $sel
 }
 
 function Build-MbtGuiExportFromPage {
     $g = $script:Gui; $s = $g.S
     $browser = Get-MbtGuiBrowser 'export'
-    $sel = Get-MbtGuiSelection -Roots @($browser.Roots)
+    Update-MbtGuiModeRow $browser
+    $sel = Get-MbtGuiExportSelection
     $g.ExportSelection = $sel
     $left = New-GuiStack @((New-MbtGuiSignInCard 'export'))
-    if ($s.Task -eq 'mailcopy') { $left.Children.Add((New-GuiMessage -Kind info -Icon send -Text '**Copy to another mailbox.** Tick what to copy, in one place: the Primary mailbox or the Archive. This mailbox is only read. The next page asks which mailbox receives the copy.')) | Out-Null }
+    if ($s.Task -eq 'mailcopy') { $left.Children.Add((New-GuiMessage -Kind info -Icon send -Text '**Copy to another mailbox.** Choose Everything, or tick what to copy: in the Primary mailbox, in the Archive, or in both. This mailbox is only read. The next page asks which mailbox receives the copy and where each part goes.')) | Out-Null }
     if ($s.Signed) { $left.Children.Add((New-MbtGuiLocationsCard)) | Out-Null; $left.Children.Add((New-MbtGuiSelectionCard $sel -Period (Get-MbtGuiPeriod $s))) | Out-Null }
     else { $left.Children.Add((New-MbtGuiSelectionCard $sel)) | Out-Null }
     if ($s.Signed) {
@@ -477,8 +566,9 @@ function Build-MbtGuiExportFromPage {
     $g.OnSelectionChanged = { Update-MbtGuiExportFromFooter }
     $periodProblem = (Get-MbtGuiPeriod $s).Problem
     $copy = ($s.Task -eq 'mailcopy')
-    $problem = if ($periodProblem) { $periodProblem } elseif ($copy) { Get-MbtGuiCopySourceProblem $sel }
-    Set-MbtGuiActions -Footer $(if ($problem -and $sel.Items -gt 0) { $problem } else { Format-MbtGuiSelectionFooter $sel $s.Signed }) -Label $(if ($copy) { 'Continue to the mailbox that receives' } else { 'Continue to destination' }) -Enabled ($s.Signed -and $sel.Items -gt 0 -and -not $problem) -OnClick { Move-MbtGuiStep 1 }
+    $problem = $periodProblem
+    $empty = Test-MbtGuiSelectionEmpty $sel
+    Set-MbtGuiActions -Footer $(if ($problem -and -not $empty) { $problem } else { Format-MbtGuiSelectionFooter $sel $s.Signed -Period (Get-MbtGuiPeriod $s) }) -Label $(if ($copy) { 'Continue to the mailbox that receives' } else { 'Continue to destination' }) -Enabled ($s.Signed -and -not $empty -and -not $problem) -OnClick { Move-MbtGuiStep 1 }
     return (New-GuiFillPage -Columns (New-GuiTwoColumns -Left $left -Right $right -Fill))
 }
 
@@ -536,8 +626,7 @@ function Build-MbtGuiExportToPage {
             (New-GuiText 'Largest PST file' 'Label'), $split,
             (New-GuiText 'A message is never cut in two. A file may be a little larger than the limit if one message does not fit. This choice applies to this run only.' 'Hint'),
             (New-GuiOption -Type Check -Title 'Keep the working store' -Hint 'Recommended. You can write the PST again, or import into a mailbox, without downloading again. Uses more disk space.' -Checked $s.KeepStore -OnChange { param($x, $e) $s.KeepStore = [bool]$x.IsChecked; Refresh-MbtGuiExportTo }),
-            (New-GuiOption -Type Check -Title 'Check every PST file when it is written' -Hint 'Recommended.' -Checked $s.CheckEach -OnChange { param($x, $e) $s.CheckEach = [bool]$x.IsChecked }),
-            (New-GuiOption -Type Check -Title 'One top folder per auxiliary archive' -Hint 'Off: auxiliary archives are merged into the Archive tree.' -Checked $s.SepAux -OnChange { param($x, $e) $s.SepAux = [bool]$x.IsChecked }))
+            (New-GuiOption -Type Check -Title 'Check every PST file when it is written' -Hint 'Recommended.' -Checked $s.CheckEach -OnChange { param($x, $e) $s.CheckEach = [bool]$x.IsChecked }))
         $content.Add($more)
     }
     $holder = [Windows.Controls.ContentControl]::new(); $holder.Name = 'ProblemHolder'
@@ -589,8 +678,9 @@ function Get-MbtGuiNodePath {
 }
 
 function Test-MbtGuiSelectionHasDeletedItems {
-    <# Is something below the folder Recoverable Items ticked? (The plan page says where those items are saved and where an import puts them.) #>
+    <# Is something below the folder Recoverable Items ticked? (The plan page says where those items are saved and where an import puts them.) Everything has them when the box "Include deleted items" is ticked. #>
     param($Selection)
+    if ($Selection.PSObject.Properties['Everything'] -and $Selection.Everything) { return [bool]$script:Gui.S.RecoverableItems }
     return [bool]@($Selection.Entries | Where-Object { (Get-MbtGuiNodePath $_.Node) -match ' / Recoverable Items( / |$)' }).Count
 }
 
@@ -598,6 +688,10 @@ function Get-MbtGuiPlanSelection {
     <# The selection as the plan page shows it: once the service has counted the plan and every size is known, that size replaces the unknown ones of the browse view. #>
     $g = $script:Gui; $s = $g.S; $sel = $g.ExportSelection
     $t = $s.PlanTotals
+    # Everything: once the service has counted the plan, its numbers replace the ones of the folders opened so far
+    if ($sel.PSObject.Properties['Everything'] -and $sel.Everything -and $s.PlanState -eq 'ok' -and $t) {
+        return [pscustomobject]@{ Everything = $true; Entries = @(); Places = $sel.Places; Items = [long]$t.Items; Bytes = [long]$t.Bytes; Folders = [int]$t.Folders; UnknownSize = [int]$t.UnknownSize; SubtreeUnread = $false }
+    }
     if ($s.PlanState -ne 'ok' -or -not $t -or $sel.UnknownSize -le 0 -or $t.UnknownSize -gt 0) { return $sel }
     return [pscustomobject]@{ Entries = $sel.Entries; Items = $sel.Items; Bytes = [long]$t.Bytes; Folders = $sel.Folders; UnknownSize = 0; SubtreeUnread = $sel.SubtreeUnread }
 }
@@ -623,8 +717,38 @@ function Get-MbtGuiNodeMailboxPath {
     return ($names -join '/')
 }
 
+function New-MbtGuiEverythingTable {
+    <# The plan table of Everything: one row for each place, with what the service counted for it, else what the folders opened so far give. #>
+    param($Selection)
+    $g = $script:Gui; $s = $g.S
+    $planned = @()
+    if ($s.PlanState -eq 'ok' -and $g.ContainsKey('PlanRun') -and $g.PlanRun) { $planned = @($g.PlanRun.Objects | Where-Object { $_.Step -eq 'plan' -and $_.State -ne 'refused' -and $_.Key -ne '(folders)' }) }
+    $browser = Get-MbtGuiBrowser 'export'
+    $rows = @(foreach ($place in @($Selection.Places)) {
+        $mine = @($planned | Where-Object { ([string]$_.Key).StartsWith("$($place.Kind)/", [StringComparison]::OrdinalIgnoreCase) })
+        $items = 0L; $bytes = 0L; $unknown = $false
+        if ($mine.Count) { foreach ($o in $mine) { if ($o.Total -gt 0) { $items += $o.Total }; if ($o.Bytes -ge 0) { $bytes += $o.Bytes } elseif ($o.Total -ne 0) { $unknown = $true } } }
+        else {
+            $root = @($browser.Roots | Where-Object { [string]$_.Id -eq [string]$place.Id })[0]
+            if ($root) { foreach ($d in $root.Descendants()) { if ($d.IsRoot -or $d.Count -le 0) { continue }; $items += $d.Count; if ($d.SizeBytes -lt 0) { $unknown = $true } else { $bytes += $d.SizeBytes } } }
+        }
+        $label = switch ([string]$place.Kind) { 'Primary' { $(if ($s.Shared) { "Shared mailbox $($s.Shared)" } else { 'Primary mailbox' }) } 'Archive' { 'Archive' } default { [string]$place.Label } }
+        $cell = [Windows.Controls.StackPanel]::new()
+        $cell.Children.Add((New-GuiText $label 'Body')) | Out-Null
+        $sm = New-GuiText $(if ($mine.Count) { 'everything in it, as the service counted it' } else { 'everything in it; the check counts it all' }) 'Small'; $sm.Margin = [Windows.Thickness]::new(0); $cell.Children.Add($sm) | Out-Null
+        , @($cell, $(if ($items -gt 0) { Format-MbtGuiCount $items } else { 'counted by the check' }), $(if ($unknown -and $bytes -le 0) { 'size unknown' } elseif ($unknown) { (Format-MbtGuiBytes $bytes) + ' + unknown' } elseif ($bytes -gt 0) { Format-MbtGuiBytes $bytes } else { '' }))
+    })
+    $parts = @()
+    if (@($rows).Count) { $parts += New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', '120', '110') -Right @(1, 2) } else { $parts += New-GuiText 'No place is ticked in Where to look.' 'Muted' }
+    $parts += New-GuiText $(if ($s.RecoverableItems) { 'Everything: the whole tree of each place, with the deleted items (Recoverable Items), as you ticked in Where to look.' } else { 'Everything: the whole tree of each place, without the deleted items (Recoverable Items), as chosen in Where to look.' }) 'Hint'
+    $period = Get-MbtGuiPeriod $s
+    if ($period.Active) { $parts += New-GuiText "**Period: items $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied to the received date while the items are listed." 'Hint' }
+    return (New-GuiStack $parts)
+}
+
 function New-MbtGuiPlanTable {
     param($Selection)
+    if ($Selection.PSObject.Properties['Everything'] -and $Selection.Everything) { return (New-MbtGuiEverythingTable $Selection) }
     $counted = Get-MbtGuiCountedSizes
     $period = Get-MbtGuiPeriod $script:Gui.S
     $anyUnknown = $false
@@ -655,7 +779,7 @@ function New-MbtGuiPlanTable {
     $tbl = New-GuiTable -Headers @('Where', 'Items', 'Size') -Rows @($rows) -Widths @('*', $(if ($period.Active) { '120' } else { '90' }), '110') -Right @(1, 2)
     if (-not @($rows).Count) { $tbl = New-GuiText 'Nothing ticked.' 'Muted' }
     $parts = @($tbl, (New-GuiText 'Every folder is checked against the export service just before the start. A folder that cannot be matched stops the plan; nothing is guessed.' 'Hint'))
-    if ($period.Active) { $parts += New-GuiText "**Period: items that $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied while the items are listed: the end of the export gives the exact numbers (kept, outside the period). Messages ticked one by one are always exported." 'Hint' }
+    if ($period.Active) { $parts += New-GuiText "**Period: items $($period.Text).** The numbers above are the totals of the folders, the most the export can take. The period is applied to the received date while the items are listed: the end of the export gives the exact numbers (kept, outside the period) and says if a folder or an item used the arrival date instead. Messages ticked one by one are always exported." 'Hint' }
     if ($anyUnknown) { $parts += New-GuiText 'Microsoft does not give the size of calendar, contact and task folders in advance. The check reads the items of a small one to find it; the size of a larger one is known once the export runs.' 'Hint' }
     return (New-GuiStack $parts)
 }
@@ -779,7 +903,9 @@ function New-MbtGuiExportPlanWhat {
     $sel = Get-MbtGuiPlanSelection
     $pst = $s.Dest -eq 'pst'
     $period = Get-MbtGuiPeriod $s
-    $steps = @($(if ($period.Active) { "Read the folder tree and list the items you chose, keeping the ones that $($period.Text)." } else { 'Read the folder tree and list the items you chose.' }), 'Download them into the export store, checking each one.')
+    $everything = [bool]($sel.PSObject.Properties['Everything'] -and $sel.Everything)
+    $chosen = if ($everything) { 'everything in the places you ticked' } else { 'the items you chose' }
+    $steps = @($(if ($period.Active) { "Read the folder tree and list $chosen, keeping the items $($period.Text)." } else { "Read the folder tree and list $chosen." }), 'Download them into the export store, checking each one.')
     if ($pst) { $steps += "Write the PST files ($($s.SplitGB) GB at most each) with the real folder tree."; $steps += 'Check every PST file.' }
     elseif ($s.Dest -eq 'eml') { $steps += 'Write one .eml file per message, in the real folder tree.' }
     else { $steps += 'Check the store.' }
@@ -788,9 +914,9 @@ function New-MbtGuiExportPlanWhat {
     $eta = Get-MbtGuiPlanEta -Task export -Bytes $sel.Bytes
     $etaText = if ($sel.Bytes -le 0 -and $sel.UnknownSize) { 'cannot be estimated yet: Microsoft does not give the size of calendar, contact and task folders in advance. It shows once the export runs.' } elseif ($sel.UnknownSize) { "**$($eta.Text)** for the folders whose size is known; the others add to it" } else { "**$($eta.Text)** (Microsoft may slow it; we refine as it runs)" }
     $shared = @(); if ($s.Shared) { $shared = @(, @('Mailbox', "$($s.Shared) (shared, opened as $($s.Mailbox))")) }
-    $periodFact = @(); if ($period.Active) { $periodFact = @(, @('Period', "items that $($period.Text) $([char]0x00B7) the exact numbers come when the items are listed")) }
+    $periodFact = @(); if ($period.Active) { $periodFact = @(, @('Period', "items $($period.Text) $([char]0x00B7) the exact numbers come when the items are listed")) }
     $facts = New-GuiFacts ($shared + $periodFact + @(@('Saved to', "$($s.OutFolder) ($(if ($pst) { 'PST files + working store' } elseif ($s.Dest -eq 'eml') { 'EML files + working store' } else { 'export store' }))"),
-        @('Size', "$(Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)) $([char]0x00B7) $(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $(if ($period.Active) { $etaText.TrimEnd('.', ' ') + '. It can be shorter: only the items of the period are downloaded.' } else { $etaText }) 'Body'))))
+        @('Size', "$(if ($sel.PSObject.Properties['Everything'] -and $sel.Everything) { 'Everything: ' })$(Format-MbtGuiSelectionItems $sel -WithNoun -AtMost:($period.Active)) $([char]0x00B7) $(if ($period.Active) { 'at most ' })$(Format-MbtGuiSelectionSize $sel)"), @('Time', (New-GuiText $(if ($period.Active) { $etaText.TrimEnd('.', ' ') + '. It can be shorter: only the items of the period are downloaded.' } else { $etaText }) 'Body'))))
     return (New-GuiCard -Title 'What will be done' -Content @($ol, $facts))
 }
 
@@ -830,10 +956,10 @@ function Build-MbtGuiExportPlanPage {
 #endregion
 
 # SIG # Begin signature block
-# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCwfwSyCefm/ge4
-# vmMYGPMo1FulB/HtIoV0tWmVDyaW7qCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDF+zAUbme6Gaub
+# 7t1kbo6VYMQvhXGHUXkoDGzRuee0p6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -905,28 +1031,28 @@ function Build-MbtGuiExportPlanPage {
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDBAW6VNitU
-# /fLBkr/aVZ9mbqIQDX8FWV9qXAkSIkhntjANBgkqhkiG9w0BAQEFAASCAgCT27a6
-# m8hLkrM1jqQ5ZcQ11Qt/NDfkw3rxICC8PwLgY+mZXZpTuNjxuKWTx4x0xxI95HUH
-# J4vWkdpyL/El75IWSA5h6LHDFfqjLkKQkPWaHPmsVWXGx5TB4efiB4xMfGbMYxRD
-# Pr55xuPCWshsrEQaor/COiRikN8ir0zdfFV8Hiw8HGpTMDVEMwGwsGxXwI2ijkc9
-# azVPkA/7qgD+5mtoJLIBlUcXuqX/UNryDjQeNK6aItpIsY1NkqfWulC0fZgs4rU7
-# IhRZg76kt/TSxenmxP43sXa+G3juIPOTx36YlQIO26spDxsCR543O20C25rpBm5y
-# Mw54wpmULLMoav497w8h/++LajKT8ltINlSwqXDkXZO3Fdqy+KO81xNqf/LKXVle
-# v7UUjYOxXA7ctsm1OKYsqRxVBmpX0FJMQP6SJSRJERXrjmleKQSBZHNqeuMworwk
-# 6fnhHz8f37fDy1I2nNcptNTVfkEek7W7B+YRXOMN4iGHs5UJcG8HZlPqiBpgXPWF
-# xH+UztDqdWPcuBZfWMhFAqnP1J8K+eolNOPSpgx/aPXWJj4JUF5LLTEWVrUhuiio
-# MlQ7PFT52RNhy9fDwzRhPfOJttJyZ2lz8+blzhVpldyUEZGVtUD/2hyY7cYLrkXI
-# 2YuJclXHwPDlrB8wHIvbRLs23m9aEVIngNyj1aGCFM4wghTKBgorBgEEAYI3AwMB
-# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCURNggPMCp
+# 8UP71ZHySlBHkaw5t8aL5UUnrJE2NNsEWjANBgkqhkiG9w0BAQEFAASCAgBkCDJb
+# Zr4pTinNAKzIoNLSWwuuhTSp+dLZriZ9XNiKFG5olmZrCfbZTCcIPptq60mv63ZM
+# lWv/IaRRzGwsC4/O3FdqLzQSdJUBqwxrxTl5TxEJdJ/zCzcw3qdES9qassBbnf+N
+# VOBEbCZPspTlwCX/TmRHZiuVh6hJ+uHam8gVkTQ9DKFUYG4OykP6v0JOBsKSxYTD
+# wcCvdKN3307KZe2800bP3cdw7tzhqzN8RGHlDty6r9h9bDCyBmIMxVmNxQABxsa0
+# teUmb/Uvglq9+zSD8Ctbzyl1wDyo05PIINPc7dOz1y0CBhsqL+1UiLPeopmLHWuN
+# Ie97itpwIQJQ1wMstpVnwQSUU9P4Y5qViEKrsLWAvc+qFcmMUxsEAG5MNGUoRyeY
+# r9oJI8plhtB4Gu7frPApUGKH7KpKyN1O8YDG6PM9BWnQjyB9PZzZPlezp+jD1dJC
+# DiawtYSNwpBc8/jI4iEK09qJ675IDhLY4I2t8vgbuIXTRnZrW7EJ29DnMWP+Eeu8
+# AgJgbs4gK1XsFapTZvmssmLbxp3gIRpPfBkLGKo/In+icdE2VaFPxaBjfXw1DLSt
+# U5H+CJykFgpvLyE8Jr+ouJMs8K9yZzlAEqFgF3MbghQh6Hs8Kt6Lteby2dJ1aDog
+# PM9mexTS/21Co13u9Nn6QNBlCruznMy7SmeVM6GCFM0wghTJBgorBgEEAYI3AwMB
+# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIEHUc4Eryh2vSdSylBjYbPzTcUJWAjWE6h88k8Sqdts6AggHPsut/vBk
-# CBgPMjAyNjExMjUwODAzMDlaMAMCAQECEH2rUUSsaFjoIq/XRZMm4KOgghGnMIIE
+# BAIBBQAEIMVCoQu2TDaSlvw8m2Iz9Liyp7yZpOpEY3Jp2TEyM1/jAggqUzN8bwXU
+# vhgPMjAyNjExMjcwNTI3NThaMAMCAQECED0/JURe8nrC/gJ8e60dYoegghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -1021,17 +1147,17 @@ function Build-MbtGuiExportPlanPage {
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTA4MDMwOVowKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIB69
-# /yt9cTQySVYN/OXtKEEIXjGRmpb92TZX5o+pZLnuMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1Mjc1OFowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIPtu
+# qlrldyljAM9CmEx/XaSawBSIzN88QMu5Tm9rxPNcMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERzBFAiB7uX0YAfFKDNt0pnY2mvHVxp8Av3T9vAVmL/3oBBF+pgIhALKs
-# jTC+dgh7EsVOIgX1CYal6OX3izVPiw/9t8y8Mhbc
+# zj0EAwIERjBEAiB2Aw/Ly4mBfqPj0foqgR9qWtYGfFjiZTlhvcUQE/RuLAIgX4QW
+# wNPWpwhgVqxkblwJhmdIK9nPRWmQ3dfXiiR03Rw=
 # SIG # End signature block

@@ -29,7 +29,7 @@
 
 .NOTES
     Author  : Nicolas Fabert
-    Version : 1.3.0
+    Version : 1.4.0
     History : see CHANGELOG.md
 
     This Script is a Personal project.
@@ -40,7 +40,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:ToolVersion = '1.3.0'
+$script:ToolVersion = '1.4.0'
 $script:ToolRoot = $PSScriptRoot
 function Get-PathReparseTag {
     <#
@@ -1210,7 +1210,7 @@ function Get-MbtGraphMailboxLocation {
     .SYNOPSIS
         What Microsoft Graph says about the mailboxes of a user: GET /beta/users/{upn}/settings/exchange (primaryMailboxId and
         inPlaceArchiveMailboxId), else GET /v1.0/... (primaryMailboxId only). Needs a session and the delegated permission User.Read.All.
-        No Graph API lists the AUXILIARY archives. Returns the locations found and, in Lookup, what each call answered.
+        No Graph API lists the AUXILIARY archives. Returns the locations found, in Lookup what each call answered, and in ArchiveAnswered whether the beta call (the only one that knows the archive) was readable.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$UserPrincipalName, [Parameter(Mandatory)][string]$TenantId)
@@ -1218,7 +1218,7 @@ function Get-MbtGraphMailboxLocation {
     $base = $s.Graph.Options.BaseUrl
     $beta = $base -replace '/v1\.0$', '/beta'
     $paths = Get-MbtExchangeSettingsPath -UserPrincipalName $UserPrincipalName -Session $s
-    $found = @(); $lookup = @()
+    $found = @(); $lookup = @(); $answered = $false
     foreach ($root in @($beta, $base) | Select-Object -Unique) {
         foreach ($path in $paths) {
             try {
@@ -1233,6 +1233,7 @@ function Get-MbtGraphMailboxLocation {
                         }
                     }
                     $lookup += $note
+                    if ($root -eq $beta) { $answered = $true }
                 } finally { $doc.Dispose() }
             } catch {
                 $ge = Get-MbtGraphException $_
@@ -1244,7 +1245,7 @@ function Get-MbtGraphMailboxLocation {
         }
         if ($found) { break }
     }
-    [pscustomobject]@{ Locations = $found; Lookup = $lookup }
+    [pscustomobject]@{ Locations = $found; Lookup = $lookup; ArchiveAnswered = $answered }
 }
 
 function Get-MbtMailboxLocation {
@@ -1260,6 +1261,9 @@ function Get-MbtMailboxLocation {
           4. The store (-Store): the locations recorded by earlier runs, and above all the auxiliary archives LEARNED from the redirects of
              the service (308 Location, ErrorArchiveFolderMovedPermanently, 409 "target session is expected in mailbox"), which always works.
         What is given (operator, parameters, Graph) beats what was guessed from a redirect. With a writable -Store the new locations are recorded.
+        -ArchiveStatus [ref] receives what is known about the main archive: State Known (an Archive location is in the result), None (Graph beta answered
+        and names no archive: the mailbox has none) or Unknown (Graph was not asked, was refused or has no session: the archive may exist), and in Detail
+        what Graph answered.
     #>
     [CmdletBinding()]
     param(
@@ -1272,18 +1276,23 @@ function Get-MbtMailboxLocation {
         [string]$ArchiveMailboxId,
         [string[]]$AuxArchiveMailboxId,
         [switch]$SkipGraph,
-        [switch]$NoSave
+        [switch]$NoSave,
+        [ref]$ArchiveStatus
     )
     begin { $piped = [System.Collections.Generic.List[object]]::new() }
     process { if ($null -ne $InputObject) { $piped.Add($InputObject) } }
     end {
         $found = [System.Collections.Generic.List[object]]::new()
+        $graphAnswered = $false
+        $graphDetail = if ($SkipGraph) { 'Microsoft Graph was not asked.' } elseif (-not ($script:Session -and $UserPrincipalName)) { 'There is no sign-in to ask Microsoft Graph.' } else { '' }
         if (-not $TenantId -and $script:Session -and $script:Session.TenantId) { $TenantId = $script:Session.TenantId }
         if ($Store) { Initialize-MbtEngine }
         # 1. Graph
         if (-not $SkipGraph -and $script:Session -and $UserPrincipalName) {
             $g = Get-MbtGraphMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $(if ($TenantId) { $TenantId } else { $script:Session.TenantId })
             foreach ($l in $g.Locations) { $found.Add($l) }
+            $graphAnswered = [bool]$g.ArchiveAnswered
+            $graphDetail = ($g.Lookup -join '; ')
             foreach ($n in $g.Lookup) { Write-Verbose "Graph: $n" }
             if (-not $g.Locations) { Write-Verbose 'Graph gave no mailbox id (User.Read.All is needed); the other sources are used. No Graph API lists the auxiliary archives.' }
         }
@@ -1330,6 +1339,10 @@ function Get-MbtMailboxLocation {
                 $obj = [pscustomobject]@{ Kind = $sl.Kind.ToString(); MailboxId = $sl.MailboxId; Source = $sl.Source; Detail = $sl.Detail; DiscoveredUtc = $sl.DiscoveredUtc; Learned = ($sl.Rank -lt [MailboxTransfer.StoreMailboxLocation]::RankGiven) }
                 $byId[$key] = $obj; $result.Add($obj)
             }
+        }
+        if ($ArchiveStatus) {
+            $state = if (@($result | Where-Object Kind -EQ 'Archive').Count) { 'Known' } elseif ($graphAnswered) { 'None' } else { 'Unknown' }
+            $ArchiveStatus.Value = [pscustomobject]@{ State = $state; Detail = $graphDetail }
         }
         $result | Sort-Object { $order[$_.Kind] }, DiscoveredUtc, MailboxId
     }
@@ -1477,14 +1490,15 @@ function Get-MbtBrowseLocation {
     <#
     .SYNOPSIS
         The locations of the user as the browse view takes them: Get-MbtMailboxLocation (Graph, operator file, parameters, the store) converted to
-        browse locations. Same parameters as Get-MbtMailboxLocation; nothing is recorded in the store.
+        browse locations. Same parameters as Get-MbtMailboxLocation (-ArchiveStatus included); nothing is recorded in the store.
     #>
     [CmdletBinding()]
     param(
         [string]$UserPrincipalName, [string]$TenantId, $Store, [string]$LocationsFile, [string]$PrimaryMailboxId, [string]$ArchiveMailboxId,
-        [string[]]$AuxArchiveMailboxId, [switch]$SkipGraph
+        [string[]]$AuxArchiveMailboxId, [switch]$SkipGraph, [ref]$ArchiveStatus
     )
     $p = @{ NoSave = $true }
+    if ($ArchiveStatus) { $p['ArchiveStatus'] = $ArchiveStatus }
     foreach ($k in 'UserPrincipalName', 'TenantId', 'Store', 'LocationsFile', 'PrimaryMailboxId', 'ArchiveMailboxId', 'AuxArchiveMailboxId') { if ($PSBoundParameters.ContainsKey($k)) { $p[$k] = $PSBoundParameters[$k] } }
     if ($SkipGraph) { $p['SkipGraph'] = $true }
     foreach ($l in @(Get-MbtMailboxLocation @p)) { New-MbtBrowseLocation -Kind $l.Kind -MailboxId $l.MailboxId -Source $l.Source }
@@ -2265,8 +2279,8 @@ function Import-MbtItem {
 function Resolve-MbtMailboxId {
     <#
     .SYNOPSIS
-        The physical id of the primary or archive mailbox: the id given, else (primary only) read from Graph, else an error that says
-        how to get it (no API lists the archive of a user: Exchange Online PowerShell, Get-MailboxLocation).
+        The physical id of the primary or archive mailbox: the id given, else (primary only) read from Graph, else found by its address through the
+        import-export API (Resolve-MbtMailboxAddress), else an error that says how to get it (no API lists the archive of a user: Exchange Online PowerShell, Get-MailboxLocation).
     #>
     [CmdletBinding()]
     param(
@@ -2287,17 +2301,27 @@ function Resolve-MbtMailboxId {
     }
     $given = if ($Mailbox -eq 'Primary') { $PrimaryMailboxId } elseif ($Mailbox -eq 'Archive') { $ArchiveMailboxId } else { $null }
     if ($given) { return ConvertTo-MbtMailboxId -Value $given -TenantId $TenantId }
-    $known = @(Get-MbtMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $TenantId -Store $Store -LocationsFile $LocationsFile -NoSave | Where-Object Kind -EQ $Mailbox)
+    $archiveStatus = $null
+    $known = @(Get-MbtMailboxLocation -UserPrincipalName $UserPrincipalName -TenantId $TenantId -Store $Store -LocationsFile $LocationsFile -NoSave -ArchiveStatus ([ref]$archiveStatus) | Where-Object Kind -EQ $Mailbox)
     if ($known.Count -eq 1) { return $known[0].MailboxId }
     if ($known.Count -gt 1) {
         throw ("$($known.Count) $Mailbox mailboxes are known for ${UserPrincipalName}: " + (($known | ForEach-Object { $_.MailboxId }) -join ', ') + '. Choose one with -MailboxId.')
     }
-    if ($Mailbox -eq 'Primary') { return Get-MbtPrimaryMailboxId -UserPrincipalName $UserPrincipalName -TenantId $TenantId }
+    if ($Mailbox -eq 'Primary') {
+        try { return Resolve-MbtMailboxAddress -Address $UserPrincipalName -TenantId $TenantId }
+        catch { throw ($_.Exception.Message + " For the mailbox of $UserPrincipalName itself, -PrimaryMailboxId MBX:<mailbox guid>@$TenantId does the same.") }
+    }
     if ($Mailbox -eq 'AuxArchive') {
         throw ("No auxiliary archive of $UserPrincipalName is known yet. Pass -MailboxId MBX:<mailbox guid>@$TenantId (Exchange Online PowerShell: Get-MailboxLocation -User $UserPrincipalName, " +
             "MailboxLocationType AuxArchive), or -LocationsFile with that output; they are also learned from the redirects of an Archive export or import.")
     }
-    throw ("The archive mailbox id of $UserPrincipalName is not known (Graph beta gives inPlaceArchiveMailboxId with User.Read.All, nothing else does): pass -ArchiveMailboxId MBX:<mailbox guid>@$TenantId " +
+    if ($archiveStatus -and $archiveStatus.State -eq 'None') {
+        throw ("$UserPrincipalName has no archive mailbox: Microsoft Graph answered and names none. Use -Mailbox Primary (or -TargetMailbox Primary). " +
+            "If the mailbox does have an archive, pass -ArchiveMailboxId MBX:<mailbox guid>@$TenantId.")
+    }
+    $permission = if (Test-MbtAppOnly) { 'the application permission User.Read.All to the application' } else { 'the delegated permission User.Read.All to the application' }
+    throw ("The archive of $UserPrincipalName could not be looked up, so its mailbox id is unknown" + $(if ($archiveStatus -and $archiveStatus.Detail) { " ($($archiveStatus.Detail))" }) + ". Ask an administrator to grant $permission " +
+        "(Microsoft Graph gives the archive id only with it), or pass -ArchiveMailboxId MBX:<mailbox guid>@$TenantId " +
         "(Exchange Online PowerShell: Get-MailboxLocation -User $UserPrincipalName, MailboxLocationType MainArchive) or -LocationsFile with that output.")
 }
 
@@ -2415,7 +2439,7 @@ function Write-MbtThrottleReport {
 function ConvertTo-MbtArrivalPeriod {
     <#
     .SYNOPSIS
-        The period of an export from the two bounds the operator gave (-ArrivedFrom, -ArrivedTo): a [MailboxTransfer.ArrivalPeriod], or $null when no bound is given.
+        The period of an export from the two bounds the operator gave (-ReceivedFrom, -ReceivedTo): a [MailboxTransfer.ArrivalPeriod], or $null when no bound is given.
     .DESCRIPTION
         A bound is text in ISO form, read the same way whatever the language of Windows: yyyy-MM-dd (a whole day of the local time zone: the start of the day for the first bound, the end of it
         for the last one) or yyyy-MM-ddTHH:mm[:ss] with an optional Z or +hh:mm (used as it is). A date and time value is used as it is. A bound that is not a date, or a start after the end, is an error
@@ -2436,8 +2460,50 @@ function ConvertTo-MbtArrivalPeriod {
     try { return [MailboxTransfer.ArrivalPeriod]::Parse($a, $b) }
     catch {
         $inner = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
-        throw "-ArrivedFrom / -ArrivedTo: $($inner.Message)"
+        throw "-ReceivedFrom / -ReceivedTo: $($inner.Message)"
     }
+}
+
+function Get-MbtReceivedDateAvailability {
+    <#
+    .SYNOPSIS
+        Can the received date of the messages be asked to the Mail API with this session? Available, and Reason when it cannot.
+    .DESCRIPTION
+        The period of an export is the received date of the messages (receivedDateTime of the Mail API), which needs Mail.Read or Mail.ReadBasic. A delegated token that holds neither cannot
+        give it: the period then filters on the arrival date in the mailbox. An application token with no role at all is not refused here (the permissions may come from Exchange RBAC for
+        Applications): the Mail API decides, folder by folder, and a folder it refuses is filtered on the arrival date and reported. No session: available.
+    #>
+    [CmdletBinding()]
+    param($Session = $script:Session)
+    $mail = 'Mail.Read', 'Mail.ReadBasic', 'Mail.ReadWrite'
+    $have = $null
+    if ($Session -and $Session.PSObject.Properties['Token'] -and $Session.Token) {
+        $token = $Session.Token
+        if (Test-MbtAppOnly $Session) { $roles = @($(if ($token.PSObject.Properties['Roles']) { $token.Roles })); if ($roles.Count) { $have = $roles } }
+        elseif ($token.PSObject.Properties['Scopes']) { $have = @($token.Scopes) }
+    }
+    if ($null -eq $have -or @($have | Where-Object { $_ -in $mail }).Count) { return [pscustomobject]@{ Available = $true; Reason = '' } }
+    return [pscustomobject]@{ Available = $false; Reason = 'the token has neither Mail.Read nor Mail.ReadBasic, so the Mail API cannot give the received date: grant Mail.Read (or Mail.ReadBasic) to the application and sign in again' }
+}
+
+function Get-MbtPeriodDateNote {
+    <#
+    .SYNOPSIS
+        Which date the period of an export used, from the results of its export jobs: Date (received, arrival or mixed) and Text (a sentence for the operator).
+    .DESCRIPTION
+        One result per mailbox location of the run; the folders and counts are added together. Without a result that has a period: Date and Text are empty.
+    #>
+    [CmdletBinding()]
+    param([object[]]$Result)
+    Initialize-MbtEngine
+    $with = @($Result | Where-Object { $_ -and $_.PSObject.Properties['PeriodDate'] -and $_.PeriodDate })
+    if (-not $with.Count) { return [pscustomobject]@{ Date = ''; Text = '' } }
+    $dates = @($with | ForEach-Object { [string]$_.PeriodDate } | Select-Object -Unique)
+    $date = if ($dates.Count -eq 1) { $dates[0] } else { 'mixed' }
+    $unavailable = [string]@($with | Where-Object { $_.ReceivedDateUnavailable } | Select-Object -First 1 | ForEach-Object { $_.ReceivedDateUnavailable })
+    $folders = [string[]]@($with | ForEach-Object { @($_.FoldersOnArrivalDate) } | Where-Object { $_ })
+    $onArrival = [long]($with | Measure-Object -Property ItemsOnArrivalDate -Sum).Sum
+    return [pscustomobject]@{ Date = $date; Text = [MailboxTransfer.PeriodNote]::Describe($date, $unavailable, $folders, $onArrival) }
 }
 
 function Export-MbtMailbox {
@@ -2468,7 +2534,7 @@ function Export-MbtMailbox {
         # Also export Recoverable Items (deleted items, purges, versions, holds), under the folder "Recoverable Items": -RecoverableItemsFolders names the folders (default Deletions, Purges, Versions, DiscoveryHolds)
         [switch]$IncludeRecoverableItems,
         [string[]]$RecoverableItemsFolders,
-        # Only the items that arrived in the mailbox inside this period are exported (a [MailboxTransfer.ArrivalPeriod]); items named one by one in -Plan are always taken
+        # Only the messages received inside this period are exported (a [MailboxTransfer.ArrivalPeriod]; the arrival date for what has no received date); items named one by one in -Plan are always taken
         $Period,
         [Parameter(Mandatory)][string]$TempPath,
         [int]$IntervalSeconds = 5
@@ -2482,7 +2548,11 @@ function Export-MbtMailbox {
     if ($Plan) { $o.Plan = $Plan }
     $o.IncludeRecoverableItems = [bool]$IncludeRecoverableItems
     if ($RecoverableItemsFolders) { $o.RecoverableItemsFolders = [string[]]$RecoverableItemsFolders }
-    if ($Period) { $o.Period = $Period }
+    if ($Period) {
+        $o.Period = $Period
+        $availability = Get-MbtReceivedDateAvailability -Session $s
+        if (-not $availability.Available) { $o.ReceivedDateUnavailable = $availability.Reason }
+    }
     $job = [MailboxTransfer.ExportJob]::Start($s.Api, $Store, $o)
     $null = Wait-MbtTransferJob -Job $job -IntervalSeconds $IntervalSeconds
     $r = $job.Result
@@ -2493,6 +2563,7 @@ function Export-MbtMailbox {
     if ($r.Period) {
         Write-MbtItem INFO ("period ({0}): {1} item(s) kept, {2} outside the period left out (not an error)" -f $r.Period.Describe(), (Format-MbtNumber $r.Inventoried), (Format-MbtNumber $r.ItemsOutsidePeriod))
         if ($r.ItemsWithoutDate -gt 0) { Write-MbtItem INFO ("{0} item(s) without a date were kept" -f (Format-MbtNumber $r.ItemsWithoutDate)) }
+        if ($r.PeriodDate) { Write-MbtItem $(if ($r.PeriodDate -eq 'received') { 'INFO' } else { 'WARN' }) ("period date: {0}" -f $r.PeriodDateText) }
     }
     if ($r.RecoverableFolders -gt 0) { Write-MbtItem INFO ("Recoverable Items: {0} folder(s) recorded under '{1}'. An import puts them in a normal folder named '{2}', never back into Recoverable Items." -f $r.RecoverableFolders, [MailboxTransfer.RecoverableItems]::TopName, [MailboxTransfer.RecoverableItems]::RestoredName) }
     if ($r.FoldersMoved -gt 0 -or $r.AuxMailboxes.Count -gt 0) {
@@ -2504,7 +2575,7 @@ function Export-MbtMailbox {
         Write-MbtItem INFO ("move in progress: {0} item(s) listed on both sides of a move were recorded once, {1} record(s) of items not exported yet followed the item to the mailbox that lists it now" -f $r.ItemsDeduplicated, $r.ItemsRehomed)
     }
     if ($r.FoldersDeferred.Count -gt 0) {
-        Write-MbtItem WARN ("{0} folder(s) DEFERRED, not exported (the service cannot read their content yet: a folder being moved to an auxiliary archive{1}); run the same command again later:" -f $r.FoldersDeferred.Count, $(if ($r.FoldersDeferredFast -gt 0) { "; $($r.FoldersDeferredFast) of them asked once because the location kept refusing, -NotReadyTrip" } else { '' }))
+        Write-MbtItem WARN ("{0} folder(s) DEFERRED, not exported (the service cannot read their content yet: a folder that Microsoft is still moving inside the archive{1}); run the same command again later:" -f $r.FoldersDeferred.Count, $(if ($r.FoldersDeferredFast -gt 0) { "; $($r.FoldersDeferredFast) of them asked once because the location kept refusing, -NotReadyTrip" } else { '' }))
         foreach ($d in $r.FoldersDeferred | Select-Object -First 50) { Write-MbtDetail $d.ToString() }
         if ($r.FoldersDeferred.Count -gt 50) { Write-MbtDetail "... $($r.FoldersDeferred.Count - 50) more" }
     }
@@ -2709,14 +2780,27 @@ function Show-MbtCopyPlan {
     param(
         [Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$SourceKind, [string]$What = 'the whole mailbox',
         [Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$TargetKind, [string]$TargetRoot, [string]$MappingFile,
-        [Parameter(Mandatory)][string]$StorePath, [long]$Items, [double]$Bytes, [switch]$SizeUnknown, [switch]$AtMost, [string]$Period, [switch]$AppOnly, [string]$SignedIn
+        [Parameter(Mandatory)][string]$StorePath, [long]$Items, [double]$Bytes, [switch]$SizeUnknown, [switch]$AtMost, [string]$Period, [switch]$AppOnly, [string]$SignedIn,
+        # a copy of the Primary and the Archive: one object per part (SourceKind, TargetKind, Root); the write line is then one line for each part
+        [object[]]$Parts
     )
     Write-MbtStep 'The copy in one plan'
     $size = if ($SizeUnknown -and $Bytes -le 0) { 'size not announced' } else { (Format-MbtBytes $Bytes) + $(if ($SizeUnknown) { ' announced, some folders give no size' } else { ' announced' }) }
     Write-MbtItem INFO ("read:  the {0} mailbox {1}, {2}{3}: {4}{5} items, {6}" -f $SourceKind, $Source, $What, $(if ($Period) { " ($Period)" } else { '' }), $(if ($AtMost) { 'at most ' } else { '' }), (Format-MbtNumber $Items), $size)
     Write-MbtItem INFO ("keep:  the export store $StorePath stays on disk after the copy: it is the resume point and the proof of what was read, and it can be imported again or opened in the console")
     $where = if ($MappingFile) { "following the mapping file $MappingFile" } elseif ($TargetRoot) { "below the folder '$TargetRoot'" } else { 'with the same folder names as the source' }
-    Write-MbtItem INFO ("write: the {0} mailbox {1}, {2}. Folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice" -f $TargetKind, $Target, $where)
+    if (@($Parts).Count -gt 1) {
+        $number = 0
+        foreach ($part in $Parts) {
+            $number++
+            $partWhere = if ($part.Root) { "below the folder '$($part.Root)'" } elseif ($MappingFile) { "following the mapping file $MappingFile" } else { 'with the same folder names as the source' }
+            Write-MbtItem INFO ("write: part {0}, the {1} of the source into the {2} mailbox {3}, {4}" -f $number, $part.SourceKind, $part.TargetKind, $Target, $partWhere)
+        }
+        Write-MbtItem INFO 'the parts are written one after the other, the Primary part first; folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice'
+    }
+    else {
+        Write-MbtItem INFO ("write: the {0} mailbox {1}, {2}. Folders are created when they are missing and items are only added: nothing is deleted, renamed or overwritten, and an item that was copied is never created twice" -f $TargetKind, $Target, $where)
+    }
     $seconds = Get-MbtCopyEstimate -Bytes $Bytes
     if ($seconds -gt 0) { Write-MbtItem INFO ("time:  {0}{1}, dominated by the import at the observed rate of about 4 GiB per hour per target mailbox (the reading before it is faster). The real time depends on the service" -f $(if ($SizeUnknown -or $AtMost) { 'at least ' } else { '' }), (Format-MbtCopyDuration $seconds)) }
     else { Write-MbtItem INFO 'time:  cannot be estimated (the service announces no size); the import goes at about 4 GiB per hour per target mailbox' }
@@ -3536,7 +3620,7 @@ Export-ModuleMember -Function @(
     'Test-MbtMailboxId', 'ConvertTo-MbtMailboxId', 'Get-MbtPrimaryMailboxId', 'Test-MbtMailboxAddress', 'Resolve-MbtMailboxAddress', 'Get-MbtAccessHint', 'Get-MbtMailboxLocation', 'Read-MbtMailboxLocationFile', 'Get-MbtGraphException', 'Get-MbtMailboxTree', 'Resolve-MbtFolder', 'Get-MbtFolderItems', 'New-MbtFolderPath',
     'Export-MbtItems', 'Open-MbtExportStore', 'Save-MbtFolderTree', 'Save-MbtItemList', 'Export-MbtItemsToStore', 'Get-MbtStoreItems', 'Import-MbtStoreItem',
     'Read-MbtFxStream', 'Show-MbtFxReport', 'Import-MbtItem'
-    'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
+    'Resolve-MbtMailboxId', 'Wait-MbtTransferJob', 'ConvertTo-MbtArrivalPeriod', 'Get-MbtReceivedDateAvailability', 'Get-MbtPeriodDateNote', 'Export-MbtMailbox', 'Import-MbtMapping', 'Import-MbtMailbox', 'Import-MbtPst', 'Export-MbtPstImportReport', 'Show-MbtPstImportPlan', 'Get-MbtImportUnknown', 'Resolve-MbtImportUnknown', 'Get-MbtStoreStatus', 'Show-MbtStoreStatus'
     'Get-MbtCopyChoiceKey', 'Get-MbtCopyStorePath', 'Get-MbtCopyJobName', 'Set-MbtCopyStoreKey', 'Get-MbtCopyEstimate', 'Format-MbtCopyDuration', 'Show-MbtCopyPlan'
     'New-MbtBrowseLocation', 'Get-MbtBrowseLocation', 'Get-MbtBrowser', 'Get-MbtBrowseFolder', 'Find-MbtBrowseFolder', 'Get-MbtBrowseItem', 'Get-MbtBrowsePreview'
     'New-MbtBrowseSelection', 'Add-MbtBrowseSelection', 'Save-MbtBrowseSelection', 'Read-MbtBrowseSelection', 'Save-MbtBrowseSelectionSet', 'Read-MbtBrowseSelectionSet', 'Resolve-MbtBrowsePlan', 'Add-MbtBrowseMoveInfo', 'Format-MbtBrowseTotals'
@@ -3552,10 +3636,10 @@ Export-ModuleMember -Function @(
 )
 
 # SIG # Begin signature block
-# MIImKQYJKoZIhvcNAQcCoIImGjCCJhYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImKgYJKoZIhvcNAQcCoIImGzCCJhcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBxGKcLnxrhoPid
-# kQcvsd94C7XKs58LRiM0+66qPcXNnaCCDW8wggZyMIIEWqADAgECAghkM1HTxzif
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBDaacJLpXpIRdW
+# pkdF84eP8vGB3AXOUqv8lJTNBQAWH6CCDW8wggZyMIIEWqADAgECAghkM1HTxzif
 # CDANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -3627,28 +3711,28 @@ Export-ModuleMember -Function @(
 # ULeH38N0Vr83psiJVuBSxQyt5nRVrpYz7FACq5gtXELkyViq/rGOlJKaRrgQ6WWq
 # eoIXqKhVFAdP/jAEm2M8ezoVYsUgPyKY2OcuecV9coulAcxUIUydx6qYiOfsGj5u
 # Dy7l4aYjvB771wkUMzUQwxzcDYXJtMMTaWRe6n9EemR67jc73u5CJyFg3PfA5WR1
-# wZislcdCZuS6MYIYEDCCGAwCAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
+# wZislcdCZuS6MYIYETCCGA0CAQEwgYwweDELMAkGA1UEBhMCVVMxDjAMBgNVBAgM
 # BVRleGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDE0MDIG
 # A1UEAwwrU1NMLmNvbSBDb2RlIFNpZ25pbmcgSW50ZXJtZWRpYXRlIENBIFJTQSBS
 # MQIQBof4ljXihJpmCqqt2mhAWzANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCD+SlkBXf9N
-# WZUUt37+Y7iEoLMb2xUHt+KfN2P+FE8z/zANBgkqhkiG9w0BAQEFAASCAgARBTfN
-# GmpGzOimE9eH/LhUqKGsNxcc0VJWvCpK8dWreEgnyKhWhux/JCNi7EegRRSFcuHP
-# Se0JHWoVI1Msvvniuw6gQ4wACGovzmALDOPeNkFuTYBDBzJAPoP0GGsePvHjqvNA
-# NfTK2P2+jlzEP52vVqesPZozbDNJYU3xrDyK4mnFpsn7R79e/pPGjpYYrEMMuCAr
-# vQD2n9PKAc/rbTe0iRPcwjo0fpJXot3dbMkYjNJ0htu4FfdijSV4GoVJQ1WLVlJ0
-# P2RdH949nI2SnUMQ/sA9DpeUqX4N4NU/0+kW70GdsD3eTgtCgHZt7f1njv38aCmM
-# EPf18KgGkZrJhuummd/MP+JQ4QqtasCWAtk/YSFI7kBcD6dy5edGi9VpzMfU/EC9
-# jB2AZMi9UJxis7K7s3RWLmvAVFuYSbRcYf0VEXSW2Q8njMDfx03aRDJCCbuQgSp7
-# lS/i5J4o2CrBvm+NExiS0a2XVkUtaDfOFzX6GbFG6iZpYATUwm17teXM1F9NgKBd
-# TEuJbFFBhQgzamDGYAXoyHXkcJE81+TzrnPOK864EvTDsV4Nxg4WzJR+uFurfQ54
-# jhZ1QHOnV60HIkxL7I34Pkbx+QmRztTlAOzpmvRWeKHs1i7HDB2G6KxrCIXrHeth
-# a3Vjei5WeLNgm69H/+vcyCWfnVvELh92ZdX1tqGCFM0wghTJBgorBgEEAYI3AwMB
-# MYIUuTCCFLUGCSqGSIb3DQEHAqCCFKYwghSiAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCCHmpXE68w
+# RzsLnz5jcSa/1cV5sz3jxbxM2DWp0as8ajANBgkqhkiG9w0BAQEFAASCAgAsw8nt
+# 5ZWQPq6IqyUdnsCsYCl0ECRMI5iiaUkCk0xnMYt4+ojULWwKOJZSK3MnQKYFF0IX
+# D4v1JyPtdXWmIOJics1udd7fRNrnbr/HsB6tVO/FEV/2oFUlzoYxx5D4+WBZ2R4C
+# 1gw1D7XbzeWh3iKTRvJBSQwfe1XQuJ0bTiqp76Q6waoIqIPoO9w2IFRjxD118kD6
+# 04M50m1dT1Z98D/jEhm7kY0N+JPQNi9ScKSI2pXYagw07tTxAxrD4D1UAQPGwGf2
+# ANTy2B0k0/xiCeOa8LoLgOQROhJmUoxYsJs7GANf0UPplZZuWEQ8Z5SAVXluPjga
+# kRwHHZ6ZW1LHXp5fHPQzO7JGGToOLJ4ERCKNROTsSZozlwFaGonLoIoEvXez5pOY
+# M6KUD+nd8kVYlEhMs9jmYTuiUMSG5+VHRnyW4B0hBZLDKAY+Y9FUKr0r8G+QTarg
+# 2VHnfH389LH7lsYlCBIaqEIc8uYoffZYNn5RUoArYPvdXHt7dfiE6J/XukK/ywdz
+# y6MZ8S8CLrB6suuz+nmrOa574ZUMwx2VjPdnbERhVCn+bua96MOieoW2Ht9iHWOo
+# 8/LlG6vSZxg/rM78A8s9FklNZF7mPco2lQujZKtkJC7gidevcOfzRJuVg2BcupjF
+# xYVrVpSeLb0V9542SBoOTYYDvqrrSa0UUZiO0KGCFM4wghTKBgorBgEEAYI3AwMB
+# MYIUujCCFLYGCSqGSIb3DQEHAqCCFKcwghSjAgEDMQ0wCwYJYIZIAWUDBAIBMIGJ
 # BgsqhkiG9w0BCRABBKB6BHgwdgIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUD
-# BAIBBQAEIOImIkYtV2BBV1RFqzvf7lHsN1cG8SyeHTbNWKUH3VERAggYgOZx/vnC
-# EhgPMjAyNjExMjUxNTM2NTdaMAMCAQECEDtUkKMgBdBHa1Zh4fjZTsigghGnMIIE
+# BAIBBQAEIHprJTSnqyWdqytDEL7pUIpq0EI/poxXLBfow6GxTkVuAghE1XN1rVfV
+# xRgPMjAyNjExMjcwNTI2NTlaMAMCAQECEGUDk1Tay3E0f46fcjJK/tygghGnMIIE
 # 8zCCAtugAwIBAgIQVEP4N71a7hgBhHK4XNqO4zANBgkqhkiG9w0BAQsFADByMQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMS4wLAYDVQQDDCVTU0wuY29tIFRpbWVzdGFtcGluZyBJ
@@ -3743,17 +3827,17 @@ Export-ModuleMember -Function @(
 # rDMtXndUg3qhJL4pA3ZUlo7w5lM5ml+A7ijr/3Gk2v4QRoDeE2ShmTXdHgtqo8L/
 # fT119mYcETycE2NYGRXsBl3N0rzDsHRr8P3TrprqhRrX04iS0P7eQ+lDxgS3yhGn
 # 3OzWGhDt9Gf2x1qe0/qdhFAVOkXxzMZz4Uat6xsAfzX0+/m8GEKW5Ojw/HY+kLvV
-# wzSPOzGCAlUwggJRAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
+# wzSPOzGCAlYwggJSAgEBMIGGMHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhh
 # czEQMA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMM
 # JVNTTC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4Y
 # AYRyuFzajuMwCwYJYIZIAWUDBAIBoIIBYDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcN
-# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNTE1MzY1N1owKAYJKoZIhvcNAQk0
-# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEICqR
-# 7+LYF9odzDlFvz/43b45q1u+Z6yAvC9y6xAX5b7WMIHIBgsqhkiG9w0BCRACLzGB
+# AQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTEyNzA1MjY1OVowKAYJKoZIhvcNAQk0
+# MRswGTALBglghkgBZQMEAgGhCgYIKoZIzj0EAwIwLwYJKoZIhvcNAQkEMSIEIFyh
+# 2qVBeUQPbdHpd3uofHamSx1IGXNoFB/ajE3PrdniMIHIBgsqhkiG9w0BCRACLzGB
 # uDCBtTCBsjCBrwQgV0/qF6r6XnxqK5sIyZixc15FCzhzykTmokygkw5j87AwgYow
 # dqR0MHIxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQMA4GA1UEBwwHSG91
 # c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLjAsBgNVBAMMJVNTTC5jb20gVGltZXN0
 # YW1waW5nIElzc3VpbmcgUlNBIENBIDICEFRD+De9Wu4YAYRyuFzajuMwCgYIKoZI
-# zj0EAwIERjBEAiBgBOJ4A7V4IJu+pR9D5fh+lpavyfIf0oJRbRSO+GXX5AIgdO3f
-# uCX/ezRoK3JAuUXV+qoPG932mHuKDZhC90Tdlw8=
+# zj0EAwIERzBFAiEA766+lvfUGmLXjV3Qbfk7CncJrtR8aECafsazYJz7PSYCICSz
+# OynYzNOAyUHRt6bK0w4REC7QVtRGTxF9TllkINEP
 # SIG # End signature block

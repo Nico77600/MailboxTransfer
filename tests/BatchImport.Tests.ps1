@@ -529,7 +529,7 @@ Describe 'The command line of an import batch' {
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; Folder = 'Inbox' }) } | Should -Throw '*belongs to -Mode Import*'
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; MappingFile = (Join-Path $TestDrive 'none.csv') }) } | Should -Throw '*-MappingFile not found*'
         { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; OutputPst = 'D:\p' }) } | Should -Throw '*-OutputPst belongs to*'
-        { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; ArrivedFrom = '2026-01-01' }) } | Should -Throw '*an import takes every item*'
+        { Invoke-Cli ($script:Common + @{ MailboxCsv = $csv; ReceivedFrom = '2026-01-01' }) } | Should -Throw '*an import takes every item*'
         { Invoke-Cli @{ Mode = 'ImportPst'; BatchName = 'X' } } | Should -Throw '*belong to -MailboxCsv*'
     }
     It 'the entry script of every stand-in batch is complete: a batch of a store and of .eml files is read the same way' {

@@ -1,7 +1,7 @@
 ---
 title: Mailbox Transfer
 subtitle: User guide
-version: 1.3.0
+version: 1.4.0
 author: Nicolas Fabert
 updated: 2026-11-25
 runtime: PowerShell 7.6+ (engine, window and command line)
@@ -47,7 +47,7 @@ Ask yourself one question. Then read the right column.
 | keep a copy of a mailbox, or of some of its folders, on my disk | **Browse and export** (chapter 4) | No. It only reads. |
 | put the mail of a PST file, an export, or `.eml` files into a mailbox | **Import** (chapter 5) | Yes. It only adds. |
 | Outlook says my PST file is damaged, or will not open it | **Check and repair a PST** (chapter 6) | No. It works on files. |
-| put the mail of one mailbox into another mailbox, in one task | **Copy to another mailbox** (chapter 8) | Yes. It only adds, to the second one. |
+| put the mail of one mailbox into another mailbox, in one task | **Copy to another mailbox** (chapter 8), with **The application** only | Yes. It only adds, to the second one. |
 | only look inside a PST file or an export | **Open an export or a PST** (chapter 7) | No. |
 
 ![The five task cards of the window: Browse and export, Import, Copy to another mailbox, Check and repair a PST, Open an export or a PST](images/readme-tasks-light.png)
@@ -99,7 +99,7 @@ The pictures and the commands use one example. Replace the names in the right co
 >
 > - **Export store**: a folder where this tool keeps what it downloaded from a mailbox, checked item by item. Only this tool reads it.
 > - **PST file**: one file that holds a mailbox's folders and messages. Outlook opens it. A big mailbox becomes several files: `adele.pst`, `adele-002.pst`…
-> - **Archive** and **auxiliary archive**: see the glossary. A mailbox can have an archive. A very big archive can be split by Microsoft into auxiliary archives.
+> - **Archive**: see the glossary. A mailbox can have an archive. When it is very big Microsoft splits it by itself; the console shows it, and the tool handles it, as one **Archive**.
 
 ![An export store (a folder with catalog.db and packs) next to PST files (adele.pst, adele-002.pst, a manifest)](images/readme-formats-light.png)
 
@@ -133,10 +133,10 @@ A mailbox is protected. The tool signs in as **you**, and can only do what **you
 
 | I want to… | Ask your administrator for… |
 |---|---|
-| **Browse and export** a mailbox | The sign-in set up (steps A and B below) with the **read** rights (`MailboxFolder.Read`, `MailboxItem.Read`, `MailboxItem.Export`). Add `Mail.Read` if you want to see subjects and senders while you browse. |
+| **Browse and export** a mailbox | The sign-in set up (steps A and B below) with the **read** rights (`MailboxFolder.Read`, `MailboxItem.Read`, `MailboxItem.Export`). Add `Mail.Read` if you want to see subjects and senders while you browse, and to filter an export on the **received date** of the messages (the period of section 4.4); without it the period follows the date the item arrived in the mailbox, and the job says so. |
 | **Import** into a mailbox | The same set-up with the **write** rights (`MailboxFolder.ReadWrite`, `MailboxItem.Read`, `MailboxItem.ImportExport`). For `.eml` files with the Exchange conversion option, also `Mail.ReadWrite`. |
 | Work in a **shared mailbox**, or in another person's mailbox | The **FullAccess** right on that mailbox: it is enough to browse and export. To **import** there, the tool must sign in without a person (step C below): ask for it. |
-| Skip typing the mailbox ids (optional) | `User.Read.All`. Without it you give the ids once (reference guide). |
+| Skip typing the mailbox ids (optional) | `User.Read.All`. Without it the tool cannot see the archive of a mailbox: the console says so and you type the archive id once (section 4.3, **If not**). |
 | **Check and repair a PST**, or **Open an export or a PST** | **Nothing.** These tasks work on files on your PC and never contact Microsoft. |
 
 ![Which task needs which permission: a table with one row per task and one column per permission](images/readme-permissions-light.png)
@@ -179,7 +179,7 @@ This section is for the administrator. It is done **once for the whole company**
 **Do:** download the tool, then put it on the PC.
 
 1. Open **https://github.com/Nico77600/MailboxTransfer/releases/latest** in your browser.
-2. Under **Assets**, click **`MailboxTransfer-1.3.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
+2. Under **Assets**, click **`MailboxTransfer-1.4.0.zip`** (the number may be newer). Do **not** click *Source code*: that is a copy of the repository, not the tool.
 3. Extract the ZIP into a folder such as `C:\Tools\MailboxTransfer` (right-click, *Extract All*). Write the files directly in that folder: `Start-MailboxTransferConsole.cmd` must be inside it, not one level deeper.
 4. Unblock the folder (one command, once):
 
@@ -244,9 +244,13 @@ The Setup page is the first page, each time you open the console. It answers one
 |---|---|
 | **This computer** | The **lights**. **Ready** at the top right means that everything the tool needs is in place. The five lights are: **PowerShell 7.6 or later**; **Sign-in component (MSAL)**, the part that talks to Microsoft's sign-in, which also says whether the **Windows sign-in window** is available (if it is not, with the reason, the console signs in with a code); **Work folder**, with its path and its free space (red, with the reason, if the folder cannot be created or written to, or if less than 5 GiB is free); **Network connection**, which says whether Microsoft's sign-in answers; **Files unblocked**, which says whether Windows marked the tool as downloaded. **Check again** looks again. |
 | **Files and folders** | The **configuration file** in use, the one you wrote in step 3. **Reload** reads it again, **Open** shows it in your editor. The **work folder** is where the tool keeps its jobs, its export stores and its logs. **Choose a folder...** picks another one **for this run only**. |
-| **Sign-in** | **Sign in as: Me (delegated, recommended)**: a Microsoft sign-in window opens over the console and you sign in as yourself. Or **The application (certificate)**: no window and no person, for scheduled or bulk jobs and for writing into a shared mailbox. Below, the **values for the sign-in** (the tenant, the application id and, for the certificate, its thumbprint) are **read from the configuration file**. **Change for this run** lets you type other values, **for this run only**: nothing is saved. A value changed this way is marked *modified · this run only*. |
+| **Sign-in** | **Sign in as: Me (delegated, recommended)**: a Microsoft sign-in window opens over the console and you sign in as yourself. The console then offers the tasks of **your** mailbox: the cards say *your mailbox (adele.vance@contoso.com)*, and **Copy to another mailbox** is not shown (a sign-in as you writes only into your own mailbox). Or **The application (certificate)**: no window and no person, for scheduled or bulk jobs, for writing into a shared mailbox and for copying a mailbox into another. Below, the **values for the sign-in** (the tenant, the application id and, for the certificate, its thumbprint) are **read from the configuration file**. **Change for this run** lets you type other values, **for this run only**: nothing is saved. A value changed this way is marked *modified · this run only*. With **Me**, the fold **Expert** holds two optional boxes, **Primary mailbox id** and **Archive mailbox id** (see below). |
 
 ![The Setup page with the application sign-in chosen: the values come from the configuration file; one of them is marked as changed for this run only](images/console-setup-application-light.png)
+
+**Expert: the ids of your mailbox.** Only with **Me**. When Microsoft cannot say which mailbox is yours or where your archive is (the permission *User.Read.All* is missing), the console says so and the archive may be missing from the list. Your administrator can give you the two ids (`Get-MailboxLocation -User <your address>`). Type them in the fold **Expert**: **Primary mailbox id** and **Archive mailbox id**, a bare guid or `MBX:<guid>@<tenant>`, in any case. They count like `PrimaryMailboxId` and `ArchiveMailboxId` of the `Tenant` section of the configuration file, and win over it. A box that is not an id says so in red. They apply to this run only; nothing is saved. The command line shown on the Verify page carries them (`-PrimaryMailboxId`, `-ArchiveMailboxId`).
+
+![The Expert fold of the Setup page: the two optional ids of your mailbox](images/console-setup-expert-light.png)
 
 **If not:** a **red** light tells you what to fix, in plain words. Fix it, click **Check again** (or close the window and open it again). If you cannot, stop and ask. **Check and repair a PST** and **Open an export or a PST** need no sign-in and no network: they work even if the network light is red.
 
@@ -288,37 +292,41 @@ You will look inside a mailbox, tick what to keep, and save it on your disk. **P
 
 ### 4.3 Task · From: pick the places to look
 
-**Do:** in the box **Where to look**, tick the places you want: **Primary mailbox**, **Archive**, and any **Auxiliary archive** found. A line under each says how many items and how big.
+**Do:** in the box **Where to look**, tick the places you want: **Primary mailbox** and **Archive**. A line under each says how many items and how big. The Archive is one place, however Microsoft stores it.
 
 **You should see:** the list of folders appears in the middle after a moment.
 
 **If not:**
 
-- *An amber note: "Auxiliary archive 1 is still being filled by Microsoft".* Normal on a very big archive. Some folders will say **not ready**. The tool tries them again later. Nothing is exported as empty. See chapter 10, topic 3.
-- *The archive is missing from the list.* Click **The archive is missing from this list**. Your administrator can give you its id once (see the reference guide).
-- *A shared mailbox.* Click **A shared mailbox, or another user's mailbox** and type its address. You need the FullAccess right (chapter 2).
+- *A small note: "Some folders of the archive may not be ready yet".* Normal on a very big archive. Some folders will say **not ready**. The tool tries them again later. Nothing is exported as empty. See chapter 10, topic 3.
+- *The archive is missing from the list.* Look under **Primary mailbox**. If it says **This mailbox has no archive**, there is nothing to find. If it says **The archive could not be looked up**, the tool is not allowed to ask Microsoft: ask your administrator to grant the application the permission `User.Read.All` (delegated when you sign in as yourself, application when you sign in as the application), or ask for the archive mailbox id once. Type it in **Archive mailbox id** (the guid, or `MBX:<guid>@<tenant>`) and click **Look again**. Your administrator finds it in Exchange Online PowerShell with `Get-MailboxLocation -User <address> | Select MailboxGuid, MailboxLocationType` (the line *MainArchive*), or with `(Get-Mailbox <address>).ArchiveGuid`. Without a typed id, the box **The archive is missing from this list** explains how to load a locations file.
+- *A shared mailbox.* Click **A shared mailbox, or another user's mailbox** and type its address. You need the FullAccess right (chapter 2). With **The application**, every place of that address is listed, its archive too (the same lookup as for your own mailbox, and the same box **Archive mailbox id** when Microsoft cannot say). As **Me** only its Primary mailbox is listed, and a muted line says why: *The archive of another mailbox can be read only with the application sign-in (Setup).*
 
 **Deleted items (optional).** Tick **Include deleted items (Recoverable Items)** if you also need what was deleted and emptied from *Deleted Items* in Outlook. Exchange keeps it for a while (14 days, up to 30) in a hidden folder, and the browser then shows it like any other folder. Choose it before you tick: changing the box reloads the browser. The details (the four folders inside) are in the [reference guide](MailboxTransfer-Guide.md#recoverable-items).
 
 ### 4.4 Task · From: browse and tick
 
-**Do:** click folders in the tree on the left of the browser. Click a folder's **checkbox** to take the whole folder, or open it and tick single messages on the right.
+**Do:** above the tree, choose what you take: **Everything (recommended)** or **Only what I tick**. *Everything* is the whole tree of the places you ticked in **Where to look**: you need not tick anything, and **Continue** is ready as soon as a place is ticked. For *Only what I tick*, click folders in the tree on the left of the browser. Click a folder's **checkbox** to take the whole folder, or open it and tick single messages on the right.
 
-**You should see:** the box **Your selection** (and the line at the bottom of the window) counts the items, the size and the folders you ticked. A half-filled checkbox means "some of this folder".
+**You should see:** with *Everything*, the line under the browser and at the bottom of the window says **Everything: Primary + Archive**, with the number of items counted so far (the check of the Verify page counts them all). If you had ticked folders before, they are kept but **ignored**, and a blue line says so; choose *Only what I tick* to use them again. With *Only what I tick*, the box **Your selection** (and the line at the bottom of the window) says, for instance, **3 folders ticked: 1,240 items**, with the size. A half-filled checkbox means "some of this folder".
 
-![Browsing a mailbox. 1: the box Mailbox. 2: the box Where to look. 3: the folders (a number is the count of items) and, beside them, the messages of the open folder with their checkboxes. 4: the reading pane: click a message to read it. 5: the box Include deleted items (Recoverable Items); your selection is counted under the browser and in the line at the bottom. 6: the Period line, under the browser](images/console-from-browse-light.png)
+![Browsing a mailbox with Everything chosen: the whole of the places ticked in Where to look](images/console-from-everything-light.png)
 
-**If not:** if you see *headers only until export* for an auxiliary archive, it is normal: Microsoft gives only sizes and dates for it until it is exported. If the messages show no subject, the permission `Mail.Read` is missing: you can still export, but you cannot see the subjects.
+![Browsing a mailbox. 1: the box Mailbox. 2: the box Where to look. 3: the folders (a number is the count of items) and, beside them, the messages of the open folder with their checkboxes. 4: the reading pane: click a message to read it. 5: the box Include deleted items (Recoverable Items); your selection is counted under the browser and in the line at the bottom. 6: the Period line, under the browser. 7: the choice Everything or Only what I tick](images/console-from-browse-light.png)
+
+**If not:** if a folder of the Archive shows only sizes and dates, with no subject, it is normal: Microsoft gives the details of some folders of a very big archive only when they are exported. If the messages show no subject, the permission `Mail.Read` is missing: you can still export, but you cannot see the subjects.
 
 > [!NOTE]
 > **This is read only.** Browsing never changes the mailbox. Deleted items you ticked are exported like any folder, but saved **apart**, under a folder named *Recoverable Items*, never mixed with your normal folders.
 
-**Only some dates (optional).** Under the browser, the line under your selection says **Period: all dates (recommended)**. Click **Change** to open two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The line then says *Period: items that arrived between 2026-01-01 and 2026-03-31*; **Done** closes the day boxes and **All dates** puts everything back. The same period applies to everything you ticked, in every place you looked in. If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
+**Only some dates (optional).** Under the browser, the line under your selection says **Period: all dates (recommended)**. Click **Change** to open two day boxes, **From** and **To**: pick the first and the last day (both days are included), or leave one empty for no limit on that side. The line then says *Period: items received between 2026-10-28 and 2026-11-01*; **Done** closes the day boxes and **All dates** puts everything back. The same period applies to everything you ticked, in every place you looked in. While a period is chosen, the messages of the list whose date is outside it are **greyed** and say *outside the period*, so that what you see is what goes (a message you tick one by one goes anyway). If the first day is after the last day, a red line says so and **Continue to destination** stays grey until you fix it.
 
-![The Period line opened. 1: the line, with Done and All dates. 2: the day boxes From and To. 3: what arrived means](images/console-from-period-light.png)
+![The Period line opened. 1: the line, with Done and All dates. 2: the day boxes From and To. 3: what received means](images/console-from-period-light.png)
 
 > [!NOTE]
-> **What "arrived" means.** It is the date the item was created in the mailbox, the one Microsoft gives when it lists the items. For mail that was **migrated or imported** into the mailbox, it is the date of that import, not the original date of the message. A day is a whole day of the time zone of this PC. An item that has no date at all is **kept**, and counted.
+> **What "received" means.** It is the **received date** of the message, the one the list shows and a mail client shows. In an archive it is not the date the message was moved there, and for mail that was migrated or imported it is not the date of the import: the period follows the date you see. Asking for it needs the permission **Mail.Read** (or **Mail.ReadBasic**), the one that gives the subjects in the list. A day is a whole day of the time zone of this PC, and the dates of the list and of the reading pane are shown in that same time zone (as Outlook does), so a message at 23:30 on a day is on that day. An item that has no date at all is **kept**, and counted.
+>
+> **Items that are not messages** (calendar items, contacts, tasks, notes) have no received date: they keep the date they **arrived** in the mailbox, which is the date Microsoft gives when it lists them. The same goes for a **folder that Microsoft does not let us read the received date of** and for **every folder when the sign-in has no Mail.Read permission**: nothing is lost and nothing stops, but the period then follows the arrival date there (in an archive: the date the item was moved to it), and the end of the job says it in the sentence **Date used**, with the folders and the reason.
 >
 > **Messages you tick one by one are always exported**, whatever their date: the period applies to the items listed from the folders you ticked. The items left out are **skipped, not an error**: they do not make the job "Not finished", and the end of the job says how many there were.
 
@@ -360,7 +368,7 @@ Click **Continue to Verify**.
 > **The time is a range, not a promise.** *Between 2 min and 6 min* means exactly that. Microsoft decides the speed. See chapter 9.
 
 > [!NOTE]
-> **With a period, the numbers are "at most".** Microsoft cannot say how many items of a folder arrived in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31`). The period is applied while the items are listed; the exact numbers come at the end of the job.
+> **With a period, the numbers are "at most".** Microsoft cannot say how many messages of a folder were received in a period without listing them, so the plan shows the totals of the folders (*at most 1,208 items*), says the period in **What will be done**, and adds the two days to the command line (`-ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31`). The period is applied to the received date while the items are listed; the exact numbers come at the end of the job.
 
 ![The Verify page of an export with a period. 1: the checks. 2: the Period line of what will be done. 3: the note under what is in it. 4: the command line with the two days. 5: the Start button](images/console-verify-export-period-light.png)
 
@@ -420,7 +428,7 @@ In **Continue a job**, **Continue** on an export first shows the **Resume** page
 | **Needs a decision** | amber | An item needs your choice (chapter 5, step 7). |
 | **Error** | red | The job stopped. Read the message. Your files are kept. |
 
-With a period, the page also says it: *Period: items that arrived between 2026-01-01 and 2026-03-31. 1,208 items kept, 4,612 outside the period (skipped, not an error)*, and, if there were some, how many items had no date and were kept. The same numbers are in the report of the job (the tiles **Items kept**, **Outside the period**, **Kept without a date**) and in the page of all the jobs.
+With a period, the page also says it: *Period: items received between 2026-01-01 and 2026-03-31. 1,208 items kept, 4,612 outside the period (skipped, not an error). Date used: received date of the messages*, and, if there were some, how many items had no date and were kept. When the arrival date was used for some folders, or everywhere because the sign-in has no Mail.Read, the sentence says so, with the folders and the reason, and the message is orange. The same numbers are in the report of the job (the tiles **Items kept**, **Outside the period**, **Kept without a date**) and in the page of all the jobs.
 
 Under the result, **What to do next** offers buttons for the logical next step: after a finished export, **Import into a mailbox** and **How to open the PST in Outlook**; after a stopped one, **Continue**. **The same from the command line** shows the commands that were run, with **Copy**. **Reports and log** opens the report, the log or the folder. The report is a page for your browser, **report.html**, written at the end of every job: the result, the numbers, every step with its start, end and duration, what happened in time order (waits for Microsoft, sleeps of the PC, warnings, errors), one row for each folder, and what to do next. It needs no network and can be sent as it is. **report.csv** stays next to it for a spreadsheet; a job made by an older version has only the CSV. **Start another task** (bottom right) goes back to the Task page.
 
@@ -454,13 +462,15 @@ You put mail from a PST file, an export store or `.eml` files **into a mailbox**
 
 ![Importing: the source. 1: the file you picked and what the check found. 2: what is inside, with a tick for each folder](images/console-import-from-light.png)
 
-**Some folders only.** Tick the folders to import in the tree (a PST or a folder of `.eml` files); nothing ticked means everything. The plan counts only what you ticked.
+**Everything, or some folders only.** Above the tree, **Everything (recommended)** imports the whole of the source. Choose **Only what I tick** and tick the folders to import in the tree (a PST or a folder of `.eml` files, or an export store): a ticked folder takes the folders below it, and the plan counts only what you ticked. Nothing ticked in *Only what I tick* still means everything, as before.
 
 **If not:** an amber line *the file has errors*: the file is damaged. Go to chapter 6, **Check and repair**, first. Or import anyway: the items that cannot be read are listed and skipped. See chapter 10, topic 13.
 
 ### 5.2 Task · To: sign in, pick the mailbox and the folder
 
-**Do:** sign in as in 4.2. Pick **Primary mailbox** or **Archive**. Then choose where the folders go: **a new folder** (recommended, named for you, such as *Imported archive-2019 2026-11-12*), or **the same folder names** (merges into existing folders). Click **Continue to Verify**.
+**Do:** sign in as in 4.2. With **Me**, the import goes into **your own mailbox**, the one you sign in to: the page says so and has no box for another address. Pick **Primary mailbox** or **Archive**. Then choose where the folders go: **a new folder** (recommended, named for you, such as *Imported archive-2019 2026-11-12*), or **the same folder names** (merges into existing folders). Click **Continue to Verify**.
+
+![Importing as Me: the import goes into your own mailbox, Primary or Archive; no other address can be typed](images/console-import-to-me-light.png)
 
 **You should see:** the page shows the mailbox, and for an archive its size and the quota when known.
 
@@ -637,63 +647,87 @@ You only want to look. Nothing is written. Nothing to ask your administrator.
 <!-- icon: mail -->
 ## 8. E · Copy to another mailbox
 
-You copy a mailbox, or some of its folders, or only the mail of some days, **into another mailbox**, in **one task**. The mailbox you copy from is **only read**. The other one only **gets new items**: nothing is deleted, nothing is overwritten. **Ask first:** the write rights in the table "What to ask your administrator" of chapter 2.
+You copy a mailbox, or some of its folders, or only the mail of some days, **into another mailbox**, in **one task**. You can copy the **Primary mailbox**, the **Archive**, or **both at once**. The mailbox you copy from is **only read**. The other one only **gets new items**: nothing is deleted, nothing is overwritten. **Ask first:** the write rights in the table "What to ask your administrator" of chapter 2.
 
 > [!CAUTION]
 > **A copy writes to a real mailbox.** Do the first one into a **test mailbox**. The tool cannot undo it: it never deletes. To remove what was added you have to delete it yourself in the mailbox.
 
-**How it works.** The task is two jobs that the tool chains for you. First the items are **read from the mailbox and saved in a store on this PC** (the same store as an export). Then the **store is added to the other mailbox** (the same way as an import). There is no direct copy from one mailbox to the other: the store in the middle is what lets you **stop and continue**, and it stays on the PC afterwards as **the proof** of what was read. The first part is quick; the second is the slow one (Microsoft accepts about 4 GiB per hour into one mailbox, chapter 9).
+**How it works.** The task is two jobs that the tool chains for you. First the items are **read from the mailbox and saved in a store on this PC** (the same store as an export). Then the **store is added to the other mailbox** (the same way as an import). When you copy both the Primary and the Archive, **one store** holds both and it is added **once for each part**, the Primary part first. There is no direct copy from one mailbox to the other: the store in the middle is what lets you **stop and continue**, and it stays on the PC after the copy as the proof of what was read.
 
-**Who may write where.** With **Me** (delegated), you write into **your own mailbox only**: Microsoft refuses a write into another person's mailbox or into a shared mailbox, even with Full Access. You may **read** any mailbox you can open (your own, a colleague's, a shared one). So the usual cases are: *a shared mailbox into my own mailbox*, *my primary mailbox into my archive*, and *my archive into my primary mailbox*. To write into **someone else's** mailbox, choose **The application** in Setup (chapter 2, step C): then you type the mailbox that receives the copy, and the application must be allowed to use it.
+**Who may write where.** A sign-in as **you (Me)** writes into **your own mailbox only**: Microsoft refuses a write into another person's mailbox or into a shared mailbox, even with Full Access. So the card **Copy to another mailbox** is shown only when you chose **The application (certificate)** in Setup, which reads and writes the mailboxes of its scope. (To copy something into your own mailbox as Me, use **Browse and export**, then **Import**.) A copy that was started with the application stays in the list **Continue a job** when you work as Me, with the line *This job needs the application sign-in*: choose the application in Setup, then continue it.
+
+![With the application, the What page offers Copy to another mailbox](images/console-task-application-light.png)
+
+![As Me, the What page names your mailbox, does not offer Copy to another mailbox, and a copy that was started with the application says that it needs the application sign-in](images/console-jobs-me-light.png)
 
 ### 8.1 Task · What and From: pick what to copy
 
-**Do:** on the Setup page click **Choose a task**, click the card **Copy to another mailbox**, **Continue**. On the **From** page sign in and tick, exactly as in 4.2 to 4.4: the mailbox, the places to look in, the folders and the messages. Tick the folders and messages of **one place only**. The line **Period** under the browser keeps only the mail that arrived on some days (4.4).
+**Do:** on the Setup page choose **The application**, click **Choose a task**, click the card **Copy to another mailbox**, **Continue**. On the **From** page sign in and choose, exactly as in 4.2 to 4.4: the mailbox, the places to look in, and **Everything** or **Only what I tick**. **Everything** copies the whole of the places ticked in **Where to look**; with **Only what I tick** you tick folders and messages in the **Primary mailbox**, in the **Archive**, or in **both**. The line **Period** under the browser keeps only the mail that arrived on some days (4.4).
 
-**You should see:** the same browser as for an export, with a blue note: *Tick what to copy, in one place*. Click **Continue to the mailbox that receives**.
+**You should see:** the same browser as for an export, with a blue note: *Choose Everything, or tick what to copy: in the Primary mailbox, in the Archive, or in both*. Click **Continue to the mailbox that receives**.
 
-![Copy to another mailbox: what to copy. 1: the mailbox you copy from. 2: the places you can look in. 3: the browser, with the folders and messages ticked. 4: the period](images/console-copy-from-light.png)
+![Copy to another mailbox: what to copy. The Primary mailbox and the Archive are both ticked](images/console-copy-from-both-light.png)
 
-**If not:** if you ticked in two places (for instance the primary mailbox **and** the archive), the button stays grey and the line at the bottom says *Your ticks are in more than one place*: untick one place, and copy the other in a second task. An **auxiliary archive** cannot be copied on its own: tick the folders of the **Archive**, its auxiliary archives follow it.
+With one place ticked, the page is the same, and the next page asks for one destination:
 
-### 8.2 Task · To: pick the mailbox that receives, and the folder
+![Copy to another mailbox: what to copy. 1: the mailbox you copy from. 2: the places you can look in. 3: the browser, with the folders and messages ticked. 4: the period. 5: the choice Everything or Only what I tick](images/console-copy-from-light.png)
 
-**Do:** with **Me**, the page says that the copy goes into your own mailbox. Pick **Primary mailbox** or **Archive**. Then choose where the folders go: **a new folder** (recommended, named for you, such as *Copy of projects 2026-11-12*), or **the same folder names**. With **The application**, type the **address of the mailbox that receives the copy** first. Click **Continue to Verify**.
+**If not:** the button stays grey until a place is ticked (with Everything) or something is ticked (with Only what I tick).
 
-**You should see:** *Where to copy*, with the mailbox you copy from and its place at the top right.
+### 8.2 Task · To: pick the mailbox that receives, and where each part goes
 
-![Copy to another mailbox: where to put it. 1: what you ticked. 2: the mailbox that receives, here your own. 3: the part of the mailbox. 4: the new folder and its name](images/console-copy-to-light.png)
+**Do:** type the **address of the mailbox that receives the copy**; the page looks up whether it has an **archive**. Then choose where it goes.
 
-**If not:** a grey button with *This is the mailbox you copy from*: a copy writes into **another place**. Pick the other part (Primary or Archive), or another mailbox with **The application**. A folder name the tool cannot use (empty, starting with a dash, two slashes in a row) is said in an amber line.
+- **One place** (only the Primary, or only the Archive, is copied): pick **Primary mailbox** or **Archive** of the mailbox that receives, then the folder: **a new folder** (recommended, named for you, such as *Copy of projects 2026-11-12*; if a folder of that name already exists, it is used as it is), or **the same folder names**.
+- **Both places**: the page asks **Where does each part go?**
+  - **Mirror (recommended)**: the Primary part goes into a folder of the **Primary** mailbox of the target, the Archive part into a folder of its **Archive**. This is what the page proposes when the target has an archive.
+  - **All into the Primary mailbox**, or **All into the Archive**: both parts go into one place.
+  - For **each part** you choose its folder, as above: a new folder named for you (the Archive part is proposed as *... (Archive)*), or the same folder names.
+
+**The target has no archive.** *Mirror* and *All into the Archive* are not offered and the page says *The Archive part goes into the Primary mailbox*. If Microsoft **cannot tell** (the permission `User.Read.All` is missing), the page says so and shows the box **Archive mailbox id**, as in 4.3: type the guid or `MBX:<guid>@<tenant>` and click **Look again**; until then only the Primary is offered.
+
+Click **Continue to Verify**.
+
+![Copy to another mailbox: where to put it, with both places. The layout is Mirror; each part has its own folder](images/console-copy-to-both-light.png)
+
+![The target has no archive: the Archive part goes into the Primary mailbox](images/console-copy-to-both-noarchive-light.png)
+
+![Copy of one place: where to put it. 1: what you ticked. 2: the mailbox that receives, typed with the application. 3: the part of the mailbox. 4: the new folder and its name](images/console-copy-to-light.png)
+
+![The archive of the target could not be looked up: type its archive mailbox id](images/console-copy-to-both-archive-unknown-light.png)
+
+**If not:** a grey button with *This is the mailbox you copy from*: a copy writes into **another place**, and a part may not write into the place it reads. A folder name the tool cannot use (empty, starting with a dash, two slashes in a row) is said in an amber line.
 
 > [!WARNING]
 > **Two copies into "the same folder names" can create duplicates.** The tool adds items; it does not compare with what is already there. Use **a new folder** each time. The copy itself never adds the same item twice, even if you run it again.
 
 ### 8.3 Verify: read the checks, tick the box
 
-**Do:** read the page. Under the big address of the mailbox, tick the box that names **what, from where, into where**. Then click **Start the copy into** that mailbox.
+**Do:** read the page. Under the big address of the mailbox, tick the box that names **what, from where, into where**, for instance *I checked: copy everything from Primary + Archive of alex@contoso.com into Primary / Archive of adele.vance@contoso.com · Primary part: new folder ...; Archive part: new folder ...*. Then click **Start the copy into** that mailbox.
 
-**You should see:** on the left the **Checks** (the plan checked with the service, the sign-in, *A different place*, *You write into your own mailbox*, the disk space for the store), then **What will be done** in six numbered steps (both parts), the **store** that will stay on the PC, the number of items and the size, and **the time**, mostly the second part. On the right **Before anything is written**: the target in big letters, the number of items, an amber line *Adds only*, and a box with an empty square and one sentence, for example *I checked: copy 1,208 items from projects@contoso.com · Primary into adele.vance@contoso.com · Primary · new folder Copy of projects 2026-11-12*.
+**You should see:** on the left the **Checks** (the plan checked with the service, the sign-in, *A different place*, *The application writes into the target*, the disk space for the store), then **What will be done** in numbered steps (both parts), the **store** that will stay on the PC, the number of items and the size, and **the time**, mostly the second part. With *Everything*, the table says so, and the numbers are the ones the service counted. On the right **Before anything is written**: the target in big letters with the folder of **each part**, and the box. **Start** stays grey until you tick it.
 
-![The copy, before you tick. 1: the checks. 2: the two parts as numbered steps and the store that stays. 3: the target, in big letters. 4: the box that names what, from where and into where. 5: Start, grey until you tick](images/console-verify-copy-light.png)
+![The copy of both places, after you ticked the box: Start is ready](images/console-verify-copy-both-light.png)
 
-Tick the box: the line at the bottom says *Ready. Nothing is written before you press Start.* and **Start** turns crimson.
+For one place the page is the same with one destination: 
 
-![The copy, after you ticked the box: Start is ready](images/console-verify-copy-ticked-light.png)
+![The copy of one place, before you tick. 1: the checks. 2: the steps and the store that stays. 3: the target, in big letters. 4: the box that names what, from where and into where. 5: Start, grey until you tick](images/console-verify-copy-light.png)
+
+![The copy of one place, after you ticked the box: Start is ready](images/console-verify-copy-ticked-light.png)
 
 **If not:** if you go **Back** and change the mailbox, the folder, the period or anything the plan depends on, the tick **clears** and you tick again. **The same from the command line** shows the exact command (one `-Mode Copy` command); **Expert mode** holds the numbers you do not need.
 
 ### 8.4 Run: wait
 
-**Do:** nothing. The nine steps of the two parts are in one list: *Read the folder tree*, *List the items you chose*, *Download the items*, *Check the downloads*, then, once the store is complete, *Verify the export store*, *Create the folders*, *Send the items*, *Check the uncertain items*, *Final check*. The folders of the part that runs are on the right.
+**Do:** nothing. The steps are in one list: *Read the folder tree*, *List the items you chose*, *Download the items*, *Check the downloads*, then, once the store is complete, *Verify the export store*, *Create the folders*, *Send the items*, *Check the uncertain items*, *Final check*. When you copy both places, these five steps come **twice**, the second time for the **Archive part** (their titles end with *(Primary part)* and *(Archive part)*). The folders of the part that runs are on the right.
 
 **You should see:** the first part, then the second part with the line *Why is it slow?* The time left is measured again when the second part starts.
 
 ![The first part of a copy: the items are read into the store](images/console-run-copy-reading-light.png)
 
-![The second part of a copy: the items are added to the mailbox. The steps of the first part are done](images/console-run-copy-light.png)
+![A copy of both places: the Primary part is done, the Archive part is being added](images/console-run-copy-both-light.png)
 
-To stop on purpose, click **Stop and keep progress**, or the small **Pause** button on the running step: it works in both parts. **Continue** starts only what is left: a part that is finished is not done again, and no item is added twice.
+To stop on purpose, click **Stop and keep progress**, or the small **Pause** button on the running step: it works in every part. **Continue** starts only what is left: a part that is finished is not done again, and no item is added twice. A part that stops (a stop, an item that failed or is uncertain) keeps the next one waiting: **Continue** finishes it, then does the next.
 
 In **Continue a job**, **Continue** on a copy first shows the **Resume** page, which says which part it resumes: the reading of the source mailbox, or, when that is complete, the adding of the items to the target mailbox (chapter 5.6).
 
@@ -701,28 +735,29 @@ In **Continue a job**, **Continue** on a copy first shows the **Resume** page, w
 
 ### 8.5 Next steps: look in Outlook, keep or delete the store
 
-**Do:** read the page, then open the mailbox that received the copy in Outlook, or Outlook on the web, and find the new folder (for example *Copy of projects 2026-11-12*).
+**Do:** read the page, then open the mailbox that received the copy in Outlook, or Outlook on the web, and find the new folder or folders (for example *Copy of projects 2026-11-12*, and *... (Archive)*).
 
-**You should see:** the **items read** and the **items in the mailbox**, the folders created, and the **store** that was kept. The **received date** of the messages is the original one; the creation and last-modified dates are the time of the copy (Exchange sets them).
+**You should see:** the **items read** and the **items in the mailbox**, the folders created (both parts together), and the **store** that was kept. The **received date** of the messages is the original one; the creation and last-modified dates are the time of the copy (Exchange sets them).
 
-![The end of a copy: complete](images/console-done-copy-complete-light.png)
+![The end of a copy of both places: complete](images/console-done-copy-both-complete-light.png)
 
-The **store stays** on the PC: it is the proof of what was read, and the point where a stopped copy goes on. **Open the store** looks inside it like a mailbox. When you no longer need it, delete its folder (its path is on the page). Running the same copy again does **not** read the mailbox again and adds nothing: the tool sees that the first part is complete and that every item is done. To take what arrived since, run it again from the command line with `-Force`.
+The **store stays** on the PC: it is the proof of what was read, and the point where a stopped copy goes on. **Open the store** looks inside it like a mailbox. When you no longer need it, delete its folder (its path is on the page). Running the same copy again does **not** read the mailbox again and adds nothing: the tool sees that the first part is complete and that every item is done. To take what arrived since, run the command with `-Force`.
 
 ![A copy that is not finished: nothing is lost, the button says Continue](images/console-done-copy-partial-light.png)
 
 **If not:** if some items **could not be read** (a folder that is not ready at Microsoft, an item that failed), the tool does not wait for them: it adds what was read, ends *not finished*, and the next run does only what is left. If some items are **uncertain** (Microsoft did not answer), see 5.7: the same decision card.
-
 ### From the command line
 
 The same task is one command, `-Mode Copy`. You can look at the plan first, then run it:
 
 ```powershell
 .\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -TargetRoot 'Copy of projects' -WhatIf
-.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -Folder Inbox/Projects -TargetRoot 'Copy of projects' -ArrivedFrom 2026-01-01
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -MailboxId projects@contoso.com -Folder Inbox/Projects -TargetRoot 'Copy of projects' -ReceivedFrom 2026-01-01
+# the Primary and the Archive together, with the application: each part into its own place and folder
+.\Invoke-MailboxTransfer.ps1 -Mode Copy -AppOnly -UserPrincipalName alex@contoso.com -Mailbox All -TargetMailboxId adele.vance@contoso.com -TargetLayout Mirror -TargetRoot 'Mail of Alex' -TargetArchiveRoot 'Archive of Alex'
 ```
 
-`-WhatIf` prints **one plan for both parts**: what is read, the store, where it goes and how long it takes. The same command again continues where it stopped. The reference guide, chapter 7.7, lists every parameter and rule.
+`-WhatIf` prints **one plan for both parts**: what is read, the store, where it goes and how long it takes. The same command again continues where it stopped. `-Mailbox All` copies the Primary and the Archive; `-TargetLayout` is `Mirror` (default), `Primary` or `Archive`; `-TargetRoot` is the folder of the Primary part and `-TargetArchiveRoot` the folder of the Archive part. The reference guide, chapter 7.7, lists every parameter and rule.
 
 <!-- icon: clock -->
 ## 9. Long jobs: what to expect
@@ -755,7 +790,7 @@ You can stop at any time, close the window, switch the PC off. **Nothing is lost
 ### Exporting many mailboxes
 
 > [!NOTE]
-> On the command line, `-ArrivedFrom 2026-01-01 -ArrivedTo 2026-03-31` keeps only the items that arrived between two days (the same as the **Period** box of the console, section 4.4). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps **one period for a mailbox**: running the same export again with another period is refused (use another `-StorePath`); the console gives an export with a period a folder of its own, so it never meets another one.
+> On the command line, `-ReceivedFrom 2026-01-01 -ReceivedTo 2026-03-31` keeps only the messages received between two days (the same as the **Period** box of the console, section 4.4; `-ArrivedFrom` and `-ArrivedTo` are accepted as other names). With a list of mailboxes, the same period applies to every mailbox of the batch. A store keeps **one period for a mailbox**: running the same export again with another period is refused (use another `-StorePath`); the console gives an export with a period a folder of its own, so it never meets another one.
 
 If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand. You write the list in a **CSV file** (one mailbox on each line) and start **one command**. The tool makes an ordinary export job for each mailbox, one after the other (or up to 4 at a time), and keeps one **batch** that remembers where it is. If the night goes wrong, you run the same command again and only what is left is done. This is for the **command line**: the console shows a batch, read only, but does not start one. The same way works for **imports**: see *Importing many mailboxes* below.
 
@@ -764,7 +799,7 @@ If tomorrow you have to export 500 mailboxes, you do not start 500 jobs by hand.
 | Column | Needed | What it says |
 |---|---|---|
 | `UserPrincipalName` | yes | The address of the mailbox. |
-| `Location` | no | `Primary`, `Archive` or `Both` (the primary mailbox, the archive and, for an auto-expanding archive, its auxiliary archives). Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
+| `Location` | no | `Primary`, `Archive` or `Both` (the primary mailbox and the archive, with everything Microsoft stores in it). Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
 | `OutputPst` | no | Where this mailbox goes as PST: a `.pst` file, or a folder (the file is then named after the address). Empty: the `-OutputPst` of the command. A relative path starts from the folder of the CSV file. |
 | `SelectionFile` | no | A selection saved by the console or by `-Mode Browse -SaveSelection`: only what it ticks is exported, and its mailbox is the one it names (`Location` is not used). |
 | `Notes` | no | Anything you want. It is ignored, like any other column the tool does not know. |
@@ -872,12 +907,14 @@ If you have to copy 40 mailboxes into 40 others (a migration to a new tenant nam
 | Column | Needed | What it says |
 |---|---|---|
 | `SourceAddress` | yes | The address of the mailbox the items are **read** from. |
-| `SourceLocation` | no | `Primary` or `Archive`: which mailbox of that address is read. Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
+| `SourceLocation` | no | `Primary`, `Archive` or `All` (the Primary **and** the Archive): which mailbox of that address is read. Empty: `-Mailbox` of the command, `Primary` unless you say otherwise. |
 | `TargetAddress` | yes | The address of the mailbox the items are **added** to. |
-| `TargetLocation` | no | `Primary` or `Archive`. Empty: `-TargetMailbox` of the command, `Primary` unless you say otherwise. |
+| `TargetLocation` | no | `Primary` or `Archive`. Empty: `-TargetMailbox` of the command, `Primary` unless you say otherwise. Left empty on a line that copies both places. |
+| `TargetLayout` | no | For a line that copies both places: `Mirror` (the Primary part into the target Primary, the Archive part into its Archive), `Primary` or `Archive` (both parts into one place). Empty: `-TargetLayout` of the command, `Mirror` unless you say otherwise. |
 | `TargetRoot` | no | The folder the items are created **below** (for instance `Copied/2026`). Empty: `-TargetRoot` of the command. Empty everywhere: the folder names of the source are kept. |
-| `SelectionFile` | no | What to copy, written by the browse view or by the console, **in one place** (a Primary mailbox or an Archive). It names the folders; `SourceLocation` is then not used. A relative path starts from the folder of the CSV file. |
-| `Notes` | no | Anything you want. It is ignored. Any **other** column is a mistake: it is reported. |
+| `TargetArchiveRoot` | no | For a line that copies both places: the folder the **Archive part** is created below. Empty: `-TargetArchiveRoot` of the command, else `TargetRoot`. |
+| `SelectionFile` | no | What to copy, written by the browse view or by the console, **in one place** or in the **Primary and the Archive**. It names the folders; `SourceLocation` is then not used. A relative path starts from the folder of the CSV file. |
+| `Notes` | no | Anything you want. It is ignored. Any **other** column is a mistake: it is reported. A list written for an earlier version, without the new columns, is read as before. |
 
 ```text
 SourceAddress;SourceLocation;TargetAddress;TargetLocation;TargetRoot;Notes
@@ -896,7 +933,7 @@ The whole file is checked **before anything starts**, and every problem is print
 .\Invoke-MailboxTransfer.ps1 -Mode Copy -ResumeBatch Move1
 ```
 
-`-Mailbox`, `-TargetMailbox` and `-TargetRoot` are the defaults of the lines that leave the column empty. The options that choose what to read (`-Folder`, `-ArrivedFrom`, `-ArrivedTo`, `-IncludeRecoverableItems`) and the usual ones (`-MappingFile`, `-Force`, `-Concurrency`, `-MaxAttempts`...) apply to every line. What belongs to one copy (`-SelectionFile`, `-MailboxId`, `-TargetMailboxId`, `-StorePath` of one store, `-JobName`) is refused: it is in the list. `-StorePath` is here the **folder that holds the stores** of the batch.
+`-Mailbox`, `-TargetMailbox` and `-TargetRoot` are the defaults of the lines that leave the column empty. The options that choose what to read (`-Folder`, `-ReceivedFrom`, `-ReceivedTo`, `-IncludeRecoverableItems`) and the usual ones (`-MappingFile`, `-Force`, `-Concurrency`, `-MaxAttempts`...) apply to every line. What belongs to one copy (`-SelectionFile`, `-MailboxId`, `-TargetMailboxId`, `-StorePath` of one store, `-JobName`) is refused: it is in the list. `-StorePath` is here the **folder that holds the stores** of the batch.
 
 **Lines that share a mailbox wait for each other.** Two lines that write into **the same target mailbox location** never run together, whatever `-ParallelMailboxes` says. Two lines that **read the same source location** do not either: a source copied into two targets is read **once** (one store, kept for the second line), and Microsoft slows down a mailbox that is read by two jobs at a time. Different mailboxes run side by side. The plan says how many lines wait.
 
@@ -981,7 +1018,7 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 |---|---|---|---|
 | 1 | *Microsoft slowed us down 7 times* | **Throttling.** Microsoft asks us to wait. The tool waits exactly as long as asked and goes slower, then faster again. Not an error. | Nothing. This is the reason a big import takes hours. |
 | 2 | *Checking…* or *Needs your decision* | **Uncertain item.** An item was sent, no answer came. | Chapter 5.7. |
-| 3 | *Not ready*, an amber note, the end says *Not finished* | **Auxiliary archive being filled.** Microsoft moves folders over hours and refuses to list them meanwhile. | Nothing now. Press **Continue** later (the same day is usually enough). Nothing is exported as empty. |
+| 3 | *Not ready*, an amber note, the end says *Not finished* | **A very big archive is being rearranged.** Microsoft moves folders over hours and refuses to list them meanwhile. | Nothing now. Press **Continue** later (the same day is usually enough). Nothing is exported as empty. |
 | 4 | *"AUX" is a name Windows keeps for itself* | A file name such as `AUX`, `CON`, `NUL`, `COM1`… is reserved by Windows. Outlook crashes on such a PST. | Type another name. |
 | 5 | Many items **Refused**, *The mailbox is full* | The archive or the mailbox has no more room (the limit is set by Microsoft and your company). | Import into another mailbox, or ask your administrator for more room. |
 | 6 | A code box, *The code has expired. Get a new code.* | The sign-in code is valid for 15 minutes. | Click for a new code. Type it at the web address shown, on any device. If Microsoft says *public client* (error AADSTS7000218), your administrator must switch on **Allow public client flows** (chapter 2, step A). |
@@ -1015,8 +1052,6 @@ Three columns: **I see**, **It means**, **Do this**. The numbers are the topics 
 
 ![Eight words in pictures: mailbox, archive, export store, PST file, plan, throttling, uncertain item, job](images/guide-dictionary-light.png)
 
-![An archive that grew: the main archive and an auxiliary archive, with a folder being moved](images/guide-aux-archive-light.png)
-
 ![What happens to an item that is sent and not answered](images/guide-uncertain-light.png)
 
 ![A PST split into parts of 50 GB](images/guide-pst-split-light.png)
@@ -1028,15 +1063,14 @@ Every word below is a word you see on the screen or in this guide, explained wit
 | **Mailbox** | Your mail, calendar and contacts on Microsoft's servers. | The box **Sign in** on the **From** page. |
 | **Primary mailbox** | The main mailbox of a person. | **Where to look**, first line. |
 | **Archive** | A second mailbox for old mail. | **Where to look**, second line. |
-| **Auxiliary archive** | An extra archive that Microsoft adds by itself when an archive is full. | **Where to look**, third line, and in the folder tree. |
-| **Not ready** | Microsoft is still moving a folder into an auxiliary archive. It cannot be read yet. | An amber note and the words *not ready* on the Run page. |
+| **Not ready** | Microsoft is still moving a folder inside a very big archive. It cannot be read yet. | An amber note and the words *not ready* on the Run page. |
 | **Item** | One thing in a mailbox: a message, an appointment, a contact. | The counts next to each folder. |
 | **Recoverable Items** | A hidden folder where deleted mail waits (14 days by default, up to 30). | The box **Include deleted items**, and the folder in the browser. |
 | **Shared mailbox** | A mailbox used by several people, with no password of its own. | The link **A shared mailbox, or another user's mailbox**. |
 | **Export store** | A folder with what this tool downloaded, checked. | The **To** page, *Export store only*. |
 | **PST file** | A file Outlook opens that holds a mailbox. | The **To** page, *PST files*. |
 | **Selection** | What you ticked. | **Your selection**, on the **From** page. |
-| **Period** | The days between which an item must have arrived in the mailbox to be exported. *All dates* is the default. | The line **Period**, under the browser of the **From** page. |
+| **Period** | The days between which a message must have been received to be exported (the date the list shows). *All dates* is the default. | The line **Period**, under the browser of the **From** page. |
 | **Plan** | The list of what will be done, with the time. Nothing starts before you press Start. | The **Verify** page. |
 | **Job** | One run: an export, an import, a check. | **Continue a job** on the **Task** page. |
 | **Continue** | Run the same job again. Only what is left is done. | The **Task** page, and the **Next steps** page. |

@@ -155,7 +155,7 @@ Describe 'The overview of all the jobs' {
 
     It 'gives the items left out by the period of an export, and none for a job that has no period (also after the cache)' {
         $w = Join-Path $TestDrive 'period'
-        $null = New-TestJob $w '20261110-1000-export-aaaa' @{ counts = @{ done = 40; failed = 0; bytes = 900; kept = 40; outsidePeriod = 25; withoutDate = 1 }; period = @{ text = 'arrived between 2026-03-01 and 2026-03-31' } } 30 -Files 'report.html'
+        $null = New-TestJob $w '20261110-1000-export-aaaa' @{ counts = @{ done = 40; failed = 0; bytes = 900; kept = 40; outsidePeriod = 25; withoutDate = 1 }; period = @{ text = 'received between 2026-03-01 and 2026-03-31' } } 30 -Files 'report.html'
         $null = New-TestJob $w '20261111-1000-export-bbbb' @{ counts = @{ done = 7; failed = 0; bytes = 10 } } 12
         foreach ($pass in 1, 2) {
             $o = Get-OverviewData (Get-OverviewPage $w)
