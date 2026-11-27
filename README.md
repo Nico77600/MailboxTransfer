@@ -46,7 +46,7 @@ Moving a mailbox is easy until it is 50 GB. A mail client stops when the PC slee
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="package/docs/images/readme-why-dark.png">
-  <img alt="Three ideas: a mailbox (primary, archive, auxiliary archives); a PST file or an export store (checked, in parts, you can look inside); another mailbox (items are only added, nothing is deleted)" src="package/docs/images/readme-why-light.png">
+  <img alt="Three ideas: a mailbox (primary and archive); a PST file or an export store (checked, in parts, you can look inside); another mailbox (items are only added, nothing is deleted)" src="package/docs/images/readme-why-light.png">
 </picture>
 
 - **You see before you copy.** Browse the mailbox like a mailbox, tick folders or messages, read the plan, then start. Nothing is changed in the mailbox unless you import, and an import only adds.
