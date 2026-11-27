@@ -2,7 +2,7 @@
 
 All notable changes of Mailbox Transfer. Author: Nicolas Fabert. Versions follow `MAJOR.MINOR.PATCH`: a MAJOR version changes the command line or the configuration file, a MINOR version adds a feature, a PATCH version fixes a defect.
 
-## [1.4.0] — Unreleased
+## 1.4.0 — 2026-11-27
 
 ### Added
 - **Copy the Primary and the Archive together**: one copy reads both places into one store and adds them in two parts, each into the place and the folder you choose (`-Mailbox All`, `-TargetLayout Mirror|Primary|Archive`, `-TargetArchiveRoot`; the same columns in the CSV of a batch). A target without an archive takes both into the Primary.
